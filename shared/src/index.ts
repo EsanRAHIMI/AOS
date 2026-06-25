@@ -1,0 +1,23 @@
+/**
+ * @factory/shared — single import surface for all kernel services.
+ *
+ * Build-time only: services import contracts, schemas, constants and helpers
+ * from here. At runtime, deployed containers communicate over HTTP using these
+ * contracts, never by importing each other's code.
+ */
+export * from './constants/index.js';
+export * from './schemas/index.js';
+export * as contracts from './contracts/index.js';
+export * from './env/index.js';
+export * from './logging/index.js';
+export * from './utils/index.js';
+export * from './http/index.js';
+export * from './auth/index.js';
+export * from './manifest/index.js';
+export * from './db/index.js';
+export * from './storage/index.js';
+export * from './events/index.js';
+export * from './registry/index.js';
+export * from './discovery/index.js';
+export * from './agentrun/index.js';
+export { setTestDb } from './db/index.js';

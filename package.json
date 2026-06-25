@@ -1,0 +1,23 @@
+{
+  "name": "autonomous-os-kernel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous Agentic Operating System Kernel — a scalable, modular, observable, multi-agent, multi-service factory kernel.",
+  "engines": {
+    "node": ">=22 <25",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r --filter=./shared --filter=./services/* run build",
+    "build:shared": "pnpm --filter @factory/shared run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "dev": "echo 'Run a specific service: pnpm --filter <service> run dev'",
+    "clean": "pnpm -r exec rm -rf dist node_modules .turbo"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.15.0"
+  }
+}

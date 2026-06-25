@@ -1,0 +1,24 @@
+{
+  "name": "@factory/dashboard-web",
+  "version": "0.1.0",
+  "description": "Real-time control room for the Autonomous OS Kernel: agents, services, tasks, approvals, infrastructure requests, live events.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 4100",
+    "build": "next build",
+    "start": "next start -p 4100",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^16.2.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0"
+  }
+}

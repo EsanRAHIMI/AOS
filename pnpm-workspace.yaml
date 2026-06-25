@@ -1,0 +1,7 @@
+# pnpm workspace — local/shared code organization only.
+# Each service remains independently deployable; runtime cross-service
+# communication uses HTTP + internal tokens, never shared runtime coupling.
+packages:
+  - "shared"
+  - "packages/*"
+  - "services/*"

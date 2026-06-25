@@ -1,0 +1,23 @@
+{
+  "name": "@factory/architect-agent",
+  "version": "0.1.0",
+  "description": "System and service architecture: designs services, defines boundaries, API contracts, database collections, event flows, env vars, and deployment requirements.",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --watch --import tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@factory/shared": "workspace:*",
+    "@factory/service-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.15.0"
+  }
+}

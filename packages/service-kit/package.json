@@ -1,0 +1,24 @@
+{
+  "name": "@factory/service-kit",
+  "version": "0.1.0",
+  "description": "Reusable Fastify bootstrap for Autonomous OS Kernel backend services: standard factory endpoints, internal-token auth, registry self-registration, event publishing, graceful lifecycle.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@factory/shared": "workspace:*",
+    "fastify": "^5.8.0",
+    "@fastify/cors": "^10.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.15.0"
+  }
+}

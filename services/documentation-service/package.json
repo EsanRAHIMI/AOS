@@ -1,0 +1,23 @@
+{
+  "name": "@factory/documentation-service",
+  "version": "0.1.0",
+  "description": "First-class documentation store: maintains project/service/agent docs, decision and phase logs, and token-efficient summaries for future agents.",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --watch --import tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@factory/shared": "workspace:*",
+    "@factory/service-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.15.0"
+  }
+}

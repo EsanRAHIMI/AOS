@@ -1,0 +1,97 @@
+/**
+ * __SERVICE_NAME__ — entry point.
+ *
+ * Boots a standard factory service: validates env, connects MongoDB Atlas,
+ * registers with the service-registry, exposes the standard factory endpoints,
+ * and runs this agent's task handler. Independently deployable on Dokploy.
+ */
+import {
+  loadEnv,
+  BaseEnvSchema,
+  MongoEnvSchema,
+  LlmEnvSchema,
+  connectMongo,
+  collection,
+  COLLECTIONS,
+  EVENT_TYPES,
+  genId,
+  nowIso,
+  type AgentRun,
+} from '@factory/shared';
+import { createFactoryService, type TaskHandler } from '@factory/service-kit';
+import { manifest } from './factory/manifest.js';
+
+const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema).merge(LlmEnvSchema));
+
+/**
+ * Core task handler. Records a traceable agent run, emits lifecycle events, and
+ * delegates to the agent's domain logic. Replace the placeholder planning block
+ * with real reasoning/tooling as the agent matures.
+ */
+const handleTask: TaskHandler = async (req, ctx) => {
+  const taskId = req.taskId ?? genId('task');
+  const agentRunId = genId('arun');
+  const startedAt = nowIso();
+
+  const run: AgentRun = {
+    agentRunId,
+    agentId: manifest.serviceId,
+    serviceId: manifest.serviceId,
+    taskId,
+    status: 'running',
+    steps: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+    startedAt,
+    finishedAt: null,
+    error: null,
+  };
+  await collection<AgentRun>(COLLECTIONS.AGENT_RUNS).insertOne(run);
+  await ctx.publisher.publish({
+    type: EVENT_TYPES.AGENT_RUN_STARTED,
+    taskId,
+    payload: { agentRunId, goal: req.goal },
+  });
+
+  // --- domain logic placeholder -----------------------------------------
+  // Specialist agents override this by replacing the handler. For now we
+  // acknowledge the goal and produce a traceable, persisted run.
+  ctx.log.info({ taskId, goal: req.goal }, '__SERVICE_ID__ received task');
+  const summary = `__SERVICE_NAME__ acknowledged goal: ${req.goal}`;
+
+  await collection<AgentRun>(COLLECTIONS.AGENT_RUNS).updateOne(
+    { agentRunId },
+    { $set: { status: 'succeeded', finishedAt: nowIso(), steps: 1, summary } },
+  );
+  await ctx.publisher.publish({
+    type: EVENT_TYPES.AGENT_RUN_FINISHED,
+    taskId,
+    payload: { agentRunId, status: 'succeeded', summary },
+  });
+
+  return { taskId, accepted: true, agentRunId };
+};
+
+async function main(): Promise<void> {
+  await connectMongo({ uri: env.MONGODB_URI, dbName: env.MONGODB_DB_NAME });
+
+  const service = await createFactoryService({
+    manifest,
+    port: env.SERVICE_PORT,
+    internalToken: env.FACTORY_INTERNAL_TOKEN,
+    adminToken: env.FACTORY_ADMIN_TOKEN,
+    registryUrl: env.SERVICE_REGISTRY_URL,
+    eventBusUrl: env.EVENT_BUS_URL,
+    logLevel: env.LOG_LEVEL,
+    taskHandler: handleTask,
+  });
+
+  await service.listen();
+}
+
+main().catch((err) => {
+  // Fail fast and loud on startup errors.
+  console.error('fatal startup error', err);
+  process.exit(1);
+});
