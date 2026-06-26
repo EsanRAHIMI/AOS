@@ -122,6 +122,10 @@ async function main(): Promise<void> {
   await collection<ExpansionProposal>(COLLECTIONS.EXPANSION_PROPOSALS).createIndex({ proposalId: 1 }, { unique: true });
   await collection<Evaluation>(COLLECTIONS.CAPABILITY_EVALUATIONS).createIndex({ evaluationId: 1 }, { unique: true });
   await collection<LlmTrace>(COLLECTIONS.LLM_TRACES).createIndex({ traceId: 1 }, { unique: true });
+  await collection(COLLECTIONS.STRATEGIC_PLANS).createIndex({ planId: 1 }, { unique: true });
+  await collection(COLLECTIONS.PLAN_SCORES).createIndex({ scoreId: 1 }, { unique: true });
+  await collection(COLLECTIONS.POLICY_DECISIONS).createIndex({ policyDecisionId: 1 }, { unique: true });
+  await collection(COLLECTIONS.DECISION_MEMORIES).createIndex({ decisionId: 1 }, { unique: true });
   await seedCapabilities();
 
   const service = await createFactoryService({

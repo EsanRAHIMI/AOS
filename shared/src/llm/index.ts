@@ -127,6 +127,7 @@ export interface GenerateStructuredOpts<T> {
   fallback: () => T;
   maxAttempts?: number;
   fast?: boolean;
+  promptVersion?: string;
 }
 
 export interface StructuredResult<T> {
@@ -231,6 +232,7 @@ export class LlmRouter {
       agentId: opts.agentId,
       taskId: opts.taskId ?? null,
       taskType: opts.taskType,
+      promptVersion: opts.promptVersion ?? 'v0',
       provider: this.providerName,
       model,
       system,

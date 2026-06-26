@@ -47,6 +47,10 @@ import {
   type RepairTask,
   type RepairDiagnosis,
   type RepairPlan,
+  type StrategicPlan,
+  type PlanScore,
+  type PolicyDecision,
+  type DecisionMemory,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -75,6 +79,10 @@ async function main(): Promise<void> {
   const repairTasks = collection<RepairTask>(COLLECTIONS.REPAIR_TASKS);
   const repairDiagnoses = collection<RepairDiagnosis>(COLLECTIONS.REPAIR_DIAGNOSES);
   const repairPlans = collection<RepairPlan>(COLLECTIONS.REPAIR_PLANS);
+  const strategicPlans = collection<StrategicPlan>(COLLECTIONS.STRATEGIC_PLANS);
+  const planScores = collection<PlanScore>(COLLECTIONS.PLAN_SCORES);
+  const policyDecisions = collection<PolicyDecision>(COLLECTIONS.POLICY_DECISIONS);
+  const decisionMemories = collection<DecisionMemory>(COLLECTIONS.DECISION_MEMORIES);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -530,6 +538,41 @@ async function main(): Promise<void> {
         if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'no repair plan for incident'));
         const result = await delegateExecuteRepair(plan.repairPlanId, req.body?.baseUrl);
         return reply.send(result);
+      });
+
+      // --- Phase 7: Strategic Reasoning ----------------------------------
+      app.get<{ Querystring: { taskId?: string } }>('/v1/strategic-plans', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const f = req.query.taskId ? { taskId: req.query.taskId } : {};
+        return success(await strategicPlans.find(f, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      app.get<{ Params: { id: string } }>('/v1/strategic-plans/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const plan = await strategicPlans.findOne({ planId: req.params.id }, { projection: { _id: 0 } });
+        if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'plan not found'));
+        const score = await planScores.findOne({ planId: plan.planId }, { projection: { _id: 0 } });
+        return success({ plan, score });
+      });
+      app.get<{ Querystring: { taskId?: string } }>('/v1/plan-scores', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const f = req.query.taskId ? { taskId: req.query.taskId } : {};
+        return success(await planScores.find(f, { projection: { _id: 0 } }).sort({ total: -1 }).limit(200).toArray());
+      });
+      app.get<{ Querystring: { taskId?: string } }>('/v1/policy-decisions', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const f = req.query.taskId ? { taskId: req.query.taskId } : {};
+        return success(await policyDecisions.find(f, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      app.get<{ Querystring: { taskId?: string } }>('/v1/decision-memory', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const f = req.query.taskId ? { taskId: req.query.taskId } : {};
+        return success(await decisionMemories.find(f, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      app.get<{ Params: { id: string } }>('/v1/llm-traces/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const t = await llmTraces.findOne({ traceId: req.params.id }, { projection: { _id: 0 } });
+        if (!t) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'trace not found'));
+        return success(t);
       });
 
       // --- System status --------------------------------------------------

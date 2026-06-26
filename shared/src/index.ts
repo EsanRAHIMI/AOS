@@ -35,3 +35,7 @@ export * from './activation/index.js';
 export * from './deployment/index.js';
 // Phase 6 — Autonomous Repair & Execution
 export * from './repair/index.js';
+// Phase 7 — Strategic Reasoning & Policy-Governed Execution
+export * from './planner/index.js';
+export * from './scoring/index.js';
+export * from './policy/index.js';

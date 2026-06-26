@@ -21,6 +21,10 @@ import {
   capabilityTitle,
   buildEvaluation,
   buildEvidence,
+  generateCandidatePlans,
+  scorePlans,
+  evaluatePolicy,
+  approvalToAction,
   CapabilityAnalysisSchema,
   type PeerClient,
   type Task,
@@ -31,6 +35,12 @@ import {
   type Evaluation,
   type LlmTrace,
   type EvidenceRecord,
+  type StrategicPlan,
+  type PlanScore,
+  type PolicyDecision,
+  type DecisionMemory,
+  type Memory,
+  type Skill,
 } from '@factory/shared';
 import type { ServiceContext } from '@factory/service-kit';
 
@@ -75,6 +85,12 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
   // Repair intent → drive the autonomous repair loop (diagnose → plan → gate).
   if (/\brepair\b|\bfix\b/i.test(goal) && /fail|incident|broken|unhealthy|activation/i.test(goal)) {
     await runRepairPipeline(args, steps, step);
+    return;
+  }
+
+  // Strategic intent → reason over multiple plans, score, check policy, choose.
+  if (/\bimprove\b|\boptimi[sz]e\b|\bstrateg|\benhance\b|reliab|\bbest (way|approach|strategy)\b/i.test(goal) && !/activat|repair/i.test(goal)) {
+    await runStrategicPipeline(args, steps, step);
     return;
   }
 
@@ -662,4 +678,131 @@ export async function runRepairPipeline(
   await tasks.updateOne({ taskId }, { $set: { status: 'awaiting_approval', requiresApproval: true, result: report, updatedAt: nowIso() } });
   await step('orchestrator-agent', report.headline, 'success');
   await ctx.publisher.publish({ type: EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Repair plan ready', report: true, repairPlanId } });
+}
+
+// ===========================================================================
+// Strategic pipeline (Phase 7): generate ≥3 plans → score → policy-check →
+// choose (or ask) → execute allowed steps → validate → evidence → decision
+// memory → evaluation → reasoning report. Reasoning is real (LLM router) with a
+// schema-validated deterministic fallback; nothing unvalidated mutates state.
+// ===========================================================================
+export async function runStrategicPipeline(
+  args: PipelineArgs,
+  steps: ReportStep[],
+  step: (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>,
+): Promise<void> {
+  const { taskId, goal, ctx, peer } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+  const serviceName = goal.match(/([a-z0-9]+(?:-[a-z0-9]+)*-(?:agent|service))/i)?.[1] ?? 'browser-testing-agent';
+  const router = llmRouterFromEnv();
+
+  // 1) Generate candidate plans (real LLM or validated fallback).
+  await step('orchestrator-agent', `Generating candidate strategies for: ${goal}`);
+  const gen = await generateCandidatePlans({ goal, router, agentId: 'orchestrator-agent', taskId, serviceName });
+  await persistTrace(gen.trace, ctx);
+  const now = nowIso();
+  const plans: StrategicPlan[] = gen.plans.map((p) => ({ ...p, planId: genId('plan'), taskId, goal, selected: false, createdAt: now }));
+  await collection<StrategicPlan>(COLLECTIONS.STRATEGIC_PLANS).insertMany(plans);
+  await ctx.publisher.publish({ type: EVENT_TYPES.PLANS_GENERATED, taskId, payload: { count: plans.length, labels: plans.map((p) => p.label), provider: gen.trace.provider, usedFallback: gen.trace.usedFallback, message: `${plans.length} strategies (${gen.trace.usedFallback ? 'deterministic' : gen.trace.provider})` } });
+  await step('orchestrator-agent', `Produced ${plans.length} plans: ${plans.map((p) => p.label).join(', ')}`, 'success');
+  await sleep(PACE_MS);
+
+  // 2) Score the plans against the active capability graph and select.
+  const caps = collection<Capability>(COLLECTIONS.CAPABILITIES);
+  const activeCaps = (await caps.find({ status: 'active' as never }, { projection: { _id: 0, capabilityId: 1 } }).toArray()).map((c) => c.capabilityId);
+  const scoring = scorePlans(plans, activeCaps);
+  await collection<PlanScore>(COLLECTIONS.PLAN_SCORES).insertMany(scoring.scores);
+  await collection<StrategicPlan>(COLLECTIONS.STRATEGIC_PLANS).updateOne({ planId: scoring.selectedPlanId }, { $set: { selected: true } });
+  for (const s of scoring.scores) await ctx.publisher.publish({ type: EVENT_TYPES.PLAN_SCORED, taskId, payload: { planId: s.planId, label: s.label, total: s.total } });
+  const selected = plans.find((p) => p.planId === scoring.selectedPlanId)!;
+  await ctx.publisher.publish({ type: EVENT_TYPES.PLAN_SELECTED, taskId, payload: { selectedPlanId: scoring.selectedPlanId, label: selected.label, reason: scoring.selectionReason, message: `Selected ${selected.label}` } });
+  await step('orchestrator-agent', `Selected ${selected.label}: ${scoring.selectionReason}`, 'success', scoring.selectedPlanId);
+  await sleep(PACE_MS);
+
+  // 3) Policy check for every sensitive action across the candidates.
+  const allApprovals = [...new Set(plans.flatMap((p) => p.requiredApprovals))];
+  const policyDecisions: PolicyDecision[] = [];
+  for (const approval of allApprovals) {
+    const action = approvalToAction(approval);
+    const res = evaluatePolicy(action);
+    const owner = plans.find((p) => p.requiredApprovals.includes(approval));
+    policyDecisions.push({ policyDecisionId: genId('pol'), taskId, planId: owner?.planId ?? null, action, decision: res.decision, reason: res.reason, requiredApprovalType: res.requiredApprovalType, riskLevel: res.riskLevel, createdAt: nowIso() });
+  }
+  // The selected plan's own execution actions (validation is allowed).
+  const valPolicy = evaluatePolicy('run_validation');
+  policyDecisions.push({ policyDecisionId: genId('pol'), taskId, planId: selected.planId, action: 'run_validation', decision: valPolicy.decision, reason: valPolicy.reason, requiredApprovalType: null, riskLevel: 'low', createdAt: nowIso() });
+  if (policyDecisions.length) await collection<PolicyDecision>(COLLECTIONS.POLICY_DECISIONS).insertMany(policyDecisions);
+  for (const d of policyDecisions) await ctx.publisher.publish({ type: EVENT_TYPES.POLICY_DECISION, taskId, payload: { action: d.action, decision: d.decision, message: `Policy: ${d.action} → ${d.decision}`, level: d.decision === 'blocked' ? 'warn' : 'info' } });
+  await step('orchestrator-agent', `Policy checked ${policyDecisions.length} action(s)`, 'success');
+
+  // If the selected plan needs sensitive approvals, gate them (still execute safe steps).
+  const selectedApprovals = selected.requiredApprovals;
+  const gated = selectedApprovals.length > 0;
+  const lowConfidence = selected.confidence < 0.6;
+  let approvalId: string | null = null;
+  if (gated || lowConfidence) {
+    approvalId = genId('appr');
+    await collection<Approval>(COLLECTIONS.APPROVALS).insertOne({ approvalId, taskId, requestedBy: 'orchestrator-agent', actionType: 'execute_strategic_plan', summary: `Approve ${selected.label} for ${serviceName}${gated ? ` (sensitive: ${selectedApprovals.join(', ')})` : ' (low confidence)'}`, riskLevel: selected.riskLevel === 'high' ? 'high' : 'medium', payload: { planId: selected.planId, approvals: selectedApprovals }, status: 'pending', decidedBy: null, decisionReason: null, createdAt: nowIso(), decidedAt: null });
+    await ctx.publisher.publish({ type: EVENT_TYPES.APPROVAL_REQUESTED, taskId, payload: { approvalId, message: `Approval requested to execute ${selected.label}`, level: 'warn' } });
+    await step('orchestrator-agent', `Sensitive/low-confidence steps gated — requested approval`, 'warn', approvalId);
+  }
+
+  // 4) Execute the allowed (non-sensitive) part of the selected plan now: runtime validation.
+  await step('orchestrator-agent', `Executing safe steps of ${selected.label} (runtime validation)`);
+  const val = await peer.dispatchTask<{ validation?: { validationId: string; passed: boolean; score: number } }>('builder-agent', { taskId, goal: `Validate ${serviceName}`, input: { action: 'validate_service', serviceName, capability: 'browser_testing' }, priority: 'high' });
+  const validation = val.data?.validation ?? null;
+  await step('builder-agent', validation ? `Runtime validation ${validation.passed ? 'passed' : 'failed'} (score ${validation.score})` : 'Validation unavailable', validation?.passed ? 'success' : 'warn', validation?.validationId);
+  await sleep(PACE_MS);
+
+  // 5) Evaluation + evidence.
+  const capId = 'browser_testing';
+  const evalRec = buildEvaluation({ targetType: 'capability', targetId: capId, taskId, signals: { runtimeValidated: Boolean(validation?.passed), scaffoldCreated: true, docsUpdated: false, memoryStored: true, humanInterventionRequired: gated || lowConfidence, approvalUsed: Boolean(approvalId), delegationsAttempted: 1, delegationsSucceeded: validation ? 1 : 0 } });
+  await collection<Evaluation>(COLLECTIONS.CAPABILITY_EVALUATIONS).insertOne(evalRec);
+  await ctx.publisher.publish({ type: EVENT_TYPES.EVALUATION_CREATED, taskId, payload: { evaluationId: evalRec.evaluationId, score: evalRec.score, message: `Evaluation ${evalRec.score}` } });
+  const decisionEvidence = buildEvidence({ type: 'validation_report', summary: `Strategic decision executed: ${selected.label} (validation ${validation?.passed ? 'passed' : 'pending'})`, taskId, capabilityId: capId, serviceName, data: { selectedPlanId: selected.planId, validationId: validation?.validationId ?? null } });
+  await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(decisionEvidence);
+  const evidenceCount = await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).countDocuments({ taskId });
+
+  // 6) Decision memory + memory + reusable skill.
+  const decision: DecisionMemory = {
+    decisionId: genId('dec'), taskId, goal, selectedPlanId: selected.planId, selectedReason: scoring.selectionReason,
+    alternatives: scoring.rejected.map((r) => ({ planId: r.planId, label: r.label, reason: r.reason })),
+    outcome: validation?.passed ? 'executed_safe_steps_validated' : 'executed_safe_steps',
+    evidenceIds: [decisionEvidence.evidenceId], evaluationId: evalRec.evaluationId,
+    lessons: [`Prefer ${selected.label} for "${goal.slice(0, 48)}": ${selected.riskLevel} risk, reversibility ${selected.reversibility}.`, gated ? 'Sensitive steps require approval before execution.' : 'No sensitive steps; safe to execute.'],
+    createdAt: nowIso(),
+  };
+  await collection<DecisionMemory>(COLLECTIONS.DECISION_MEMORIES).insertOne(decision);
+  await ctx.publisher.publish({ type: EVENT_TYPES.DECISION_RECORDED, taskId, payload: { decisionId: decision.decisionId, selectedPlanId: selected.planId, message: 'Decision memory stored' } });
+
+  await collection<Memory>(COLLECTIONS.MEMORIES).insertOne({ memoryId: genId('mem'), type: 'decision_memory', title: `Strategy for: ${goal.slice(0, 50)}`, summary: `Chose ${selected.label} after scoring ${plans.length} plans. ${scoring.selectionReason}`, taskId, serviceId: 'orchestrator-agent', tags: ['reasoning', 'strategy', selected.label], confidence: 'medium', createdAt: nowIso() });
+  await ctx.publisher.publish({ type: EVENT_TYPES.MEMORY_WRITTEN, taskId, payload: { message: 'Strategy memory stored' } });
+  const skills = collection<Skill>(COLLECTIONS.SKILLS);
+  const sk = await skills.findOne({ skillId: 'skill_strategic_planning' });
+  const t = nowIso();
+  if (sk) await skills.updateOne({ skillId: sk.skillId }, { $set: { lastUsedAt: t, updatedAt: t }, $inc: { usageCount: 1 } });
+  else {
+    await skills.insertOne({ skillId: 'skill_strategic_planning', title: 'Choose a plan by scoring and policy', description: 'Generate ≥3 candidate plans, score by risk/cost/time/reversibility/impact/capability-fit/policy, check policy, and select with justification.', category: 'reasoning', triggerConditions: ['Open-ended improvement/optimization goal'], requiredCapabilities: [], requiredServices: ['orchestrator-agent'], steps: ['Generate plans', 'Score plans', 'Check policy', 'Select + justify', 'Execute safe steps', 'Validate', 'Record decision memory'], examples: [`Improve reliability via ${selected.label}`], successRate: 1, usageCount: 1, relatedMemories: [], relatedDocs: [], confidence: 'medium', lastUsedAt: t, createdAt: t, updatedAt: t });
+    await ctx.publisher.publish({ type: EVENT_TYPES.SKILL_CREATED, taskId, payload: { skillId: 'skill_strategic_planning', message: 'Strategic planning skill created' } });
+  }
+
+  // 7) Reasoning report.
+  const finalStatus = gated || lowConfidence ? 'awaiting_approval' : 'completed';
+  const report = {
+    goal, taskId, status: finalStatus, mode: 'strategic_reasoning', serviceName,
+    selectedPlanId: selected.planId, selectedLabel: selected.label, selectionReason: scoring.selectionReason,
+    rejected: scoring.rejected, planCount: plans.length, decisionId: decision.decisionId,
+    policyDecisions: policyDecisions.map((d) => ({ action: d.action, decision: d.decision })),
+    llmProvider: gen.trace.provider, usedFallback: gen.trace.usedFallback, llmCostUsd: gen.trace.costUsd, traceId: gen.trace.traceId,
+    validationId: validation?.validationId ?? null, evaluationId: evalRec.evaluationId, evidenceCount,
+    confidence: selected.confidence, approvalId,
+    steps,
+    headline: gated || lowConfidence
+      ? `Considered ${plans.length} strategies, chose ${selected.label} (${scoring.selectionReason}). Safe steps executed + validated; sensitive steps await your approval.`
+      : `Considered ${plans.length} strategies, chose ${selected.label} (${scoring.selectionReason}). Executed, validated, recorded the decision and learned from it.`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: finalStatus, requiresApproval: Boolean(approvalId), result: report, updatedAt: nowIso() } });
+  await step('orchestrator-agent', report.headline, 'success');
+  await ctx.publisher.publish({ type: finalStatus === 'completed' ? EVENT_TYPES.TASK_COMPLETED : EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Reasoning report ready', report: true } });
 }

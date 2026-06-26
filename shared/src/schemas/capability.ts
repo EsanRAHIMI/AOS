@@ -140,6 +140,7 @@ export const LlmTraceSchema = z.object({
   agentId: z.string(),
   taskId: z.string().nullable().default(null),
   taskType: z.string(),
+  promptVersion: z.string().default('v0'),
   provider: z.enum(['anthropic', 'openai', 'mock']),
   model: z.string(),
   system: z.string().default(''),

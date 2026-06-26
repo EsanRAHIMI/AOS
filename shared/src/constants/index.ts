@@ -148,6 +148,11 @@ export const COLLECTIONS = {
   // Phase 6 — Autonomous Repair & Execution
   REPAIR_DIAGNOSES: 'repair_diagnoses',
   REPAIR_PLANS: 'repair_plans',
+  // Phase 7 — Strategic Reasoning & Policy-Governed Execution
+  STRATEGIC_PLANS: 'strategic_plans',
+  PLAN_SCORES: 'plan_scores',
+  POLICY_DECISIONS: 'policy_decisions',
+  DECISION_MEMORIES: 'decision_memories',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -206,6 +211,12 @@ export const EVENT_TYPES = {
   REPAIR_PLAN_CREATED: 'repair.plan.created',
   REPAIR_EXECUTED: 'repair.executed',
   INCIDENT_RESOLVED: 'incident.resolved',
+  // Phase 7 — Strategic Reasoning & Policy-Governed Execution
+  PLANS_GENERATED: 'reasoning.plans.generated',
+  PLAN_SCORED: 'reasoning.plan.scored',
+  PLAN_SELECTED: 'reasoning.plan.selected',
+  POLICY_DECISION: 'reasoning.policy.decision',
+  DECISION_RECORDED: 'reasoning.decision.recorded',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
