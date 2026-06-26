@@ -1,40 +1,67 @@
-# Dependencies
+# =============================================================================
+# Autonomous OS Kernel — gitignore
+# Use patterns WITHOUT a leading path (e.g. dist/, not */dist/) so they match
+# at ANY depth: services/dashboard-web/.next/, packages/service-kit/dist/, etc.
+# =============================================================================
+
+# --- Dependencies ---
 node_modules/
 .pnpm-store/
 
-# Build output
+# --- Build / compile output (all packages & services) ---
 dist/
 build/
-.next/
 out/
+.next/
+.turbo/
 *.tsbuildinfo
 
-# Env & secrets — never commit real values
+# --- Generated / local runtime artifacts ---
+generated-services/
+tmp/
+.cache/
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+
+# --- Environment & secrets (NEVER commit real values) ---
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .env.*.local
 *.pem
 *.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+**/secrets/
 
-# Logs
+# Keep templates — explicit allow after .env rules
+!.env.example
+!**/.env.example
+
+# --- Logs ---
 logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# OS / editor
+# --- OS / editor ---
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+*.swp
+*.swo
+*~
 
-# Test / coverage
-coverage/
-.nyc_output/
-
-# Local scratch
-tmp/
-.cache/
-
-# pnpm store probe artifacts on network mounts
+# --- pnpm store probe artifacts on network mounts ---
 _tmp_*
