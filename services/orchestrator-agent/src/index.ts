@@ -24,15 +24,33 @@ import {
   PeerClient,
   genId,
   nowIso,
+  buildSeedCapabilities,
   type Task,
   type Approval,
   type AgentRun,
+  type Capability,
+  type ExpansionProposal,
+  type CapabilityGap,
+  type Evaluation,
+  type LlmTrace,
 } from '@factory/shared';
 import { createFactoryService, type TaskHandler, type ServiceContext } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
-import { runPipeline } from './pipeline.js';
+import { runPipeline, runBuildPipeline } from './pipeline.js';
 
 const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema).merge(LlmEnvSchema));
+
+/** Idempotently seed the capability graph with the kernel's built-in abilities. */
+async function seedCapabilities(): Promise<void> {
+  const caps = collection<Capability>(COLLECTIONS.CAPABILITIES);
+  for (const c of buildSeedCapabilities()) {
+    await caps.updateOne(
+      { capabilityId: c.capabilityId },
+      { $setOnInsert: c },
+      { upsert: true },
+    );
+  }
+}
 
 const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
   const taskId = req.taskId ?? genId('task');
@@ -61,8 +79,15 @@ const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
     payload: { agentRunId, message: 'Orchestrator received goal', goal: req.goal },
   });
 
+  // Choose pipeline: build-from-approved-proposal, or analyze-then-delegate.
+  const action = (req.input as Record<string, unknown> | undefined)?.action;
+  const pipeline =
+    action === 'build_from_proposal'
+      ? runBuildPipeline({ taskId, goal: req.goal, ctx, peer, input: req.input })
+      : runPipeline({ taskId, goal: req.goal, ctx, peer, input: req.input });
+
   // Run the pipeline in the background; respond immediately for a live timeline.
-  void runPipeline({ taskId, goal: req.goal, ctx, peer })
+  void pipeline
     .then(async () => {
       await collection<AgentRun>(COLLECTIONS.AGENT_RUNS).updateOne(
         { agentRunId },
@@ -92,6 +117,12 @@ const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
 async function main(): Promise<void> {
   await connectMongo({ uri: env.MONGODB_URI, dbName: env.MONGODB_DB_NAME });
   await collection<Approval>(COLLECTIONS.APPROVALS).createIndex({ approvalId: 1 }, { unique: true });
+  await collection<Capability>(COLLECTIONS.CAPABILITIES).createIndex({ capabilityId: 1 }, { unique: true });
+  await collection<CapabilityGap>(COLLECTIONS.CAPABILITY_GAPS).createIndex({ gapId: 1 }, { unique: true });
+  await collection<ExpansionProposal>(COLLECTIONS.EXPANSION_PROPOSALS).createIndex({ proposalId: 1 }, { unique: true });
+  await collection<Evaluation>(COLLECTIONS.CAPABILITY_EVALUATIONS).createIndex({ evaluationId: 1 }, { unique: true });
+  await collection<LlmTrace>(COLLECTIONS.LLM_TRACES).createIndex({ traceId: 1 }, { unique: true });
+  await seedCapabilities();
 
   const service = await createFactoryService({
     manifest,

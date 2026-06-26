@@ -13,6 +13,7 @@
 | Service Registry | service-registry | infra | 4108 | registry.simorx.com | Knows every service |
 | Event Bus Service | event-bus-service | infra | 4111 | events.simorx.com | Persist + SSE fan-out |
 | File Asset Service | file-asset-service | infra | 4112 | assets.simorx.com | S3 files + metadata |
+| Browser Testing Agent | browser-testing-agent | agent | 4116 | browser-testing.simorx.com | Validate UI (Playwright/HTTP), screenshots, evidence |
 
 ## Planned (Phase 2+)
 reviewer-agent (4106), qa-agent (4107), monitor-agent (4113),

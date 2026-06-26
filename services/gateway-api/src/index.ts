@@ -29,6 +29,15 @@ import {
   type Approval,
   type InfrastructureRequest,
   type SystemEvent,
+  type Capability,
+  type CapabilityGap,
+  type ExpansionProposal,
+  type Evaluation,
+  type LlmTrace,
+  type Skill,
+  type RuntimeValidation,
+  type GitHubOperation,
+  type EvidenceRecord,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -41,6 +50,15 @@ async function main(): Promise<void> {
   const approvals = collection<Approval>(COLLECTIONS.APPROVALS);
   const infra = collection<InfrastructureRequest>(COLLECTIONS.INFRASTRUCTURE_REQUESTS);
   const events = collection<SystemEvent>(COLLECTIONS.EVENTS);
+  const capabilities = collection<Capability>(COLLECTIONS.CAPABILITIES);
+  const gaps = collection<CapabilityGap>(COLLECTIONS.CAPABILITY_GAPS);
+  const proposals = collection<ExpansionProposal>(COLLECTIONS.EXPANSION_PROPOSALS);
+  const evaluations = collection<Evaluation>(COLLECTIONS.CAPABILITY_EVALUATIONS);
+  const llmTraces = collection<LlmTrace>(COLLECTIONS.LLM_TRACES);
+  const skills = collection<Skill>(COLLECTIONS.SKILLS);
+  const validations = collection<RuntimeValidation>(COLLECTIONS.RUNTIME_VALIDATIONS);
+  const githubOps = collection<GitHubOperation>(COLLECTIONS.GITHUB_OPERATIONS);
+  const evidence = collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -229,6 +247,136 @@ async function main(): Promise<void> {
         if (!guard(req)) return deny(reply);
         const limit = Math.min(Number(req.query.limit ?? 100), 500);
         const rows = await events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(limit).toArray();
+        return success(rows);
+      });
+
+      // --- Phase 3: Capability graph reads -------------------------------
+      app.get('/v1/capabilities', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await capabilities.find({}, { projection: { _id: 0 } }).sort({ category: 1, title: 1 }).toArray();
+        return success(rows);
+      });
+      app.get<{ Params: { id: string } }>('/v1/capabilities/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const c = await capabilities.findOne({ capabilityId: req.params.id }, { projection: { _id: 0 } });
+        if (!c) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'capability not found'));
+        return success(c);
+      });
+      app.get('/v1/gaps', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await gaps.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+        return success(rows);
+      });
+      app.get('/v1/expansion-proposals', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await proposals.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+        return success(rows);
+      });
+      app.get('/v1/evaluations', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await evaluations.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+        return success(rows);
+      });
+      app.get('/v1/skills', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await skills.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(200).toArray();
+        return success(rows);
+      });
+      app.get<{ Querystring: { limit?: string } }>('/v1/llm-traces', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const limit = Math.min(Number(req.query.limit ?? 100), 500);
+        const rows = await llmTraces.find({}, { projection: { _id: 0, prompt: 0, completion: 0, system: 0 } }).sort({ createdAt: -1 }).limit(limit).toArray();
+        return success(rows);
+      });
+
+      // --- Phase 3: Expansion proposal decision (approve→build) -----------
+      app.post<{ Params: { id: string }; Body: { action: string; reason?: string } }>(
+        '/v1/expansion-proposals/:id/decision',
+        async (req, reply) => {
+          if (!guard(req)) return deny(reply);
+          const action = req.body?.action ?? '';
+          const statusMap: Record<string, ExpansionProposal['status']> = {
+            approve: 'approved',
+            convert_to_build: 'approved',
+            reject: 'rejected',
+            request_changes: 'changes_requested',
+          };
+          const status = statusMap[action];
+          if (!status) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
+
+          const proposal = await proposals.findOneAndUpdate(
+            { proposalId: req.params.id },
+            { $set: { status, updatedAt: nowIso() } },
+            { returnDocument: 'after', projection: { _id: 0 } },
+          );
+          if (!proposal) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'proposal not found'));
+          await ctx.publisher.publish({
+            type: EVENT_TYPES.EXPANSION_DECIDED,
+            taskId: proposal.sourceTaskId,
+            payload: { proposalId: proposal.proposalId, status, message: `Expansion ${status}: ${proposal.proposedServiceName}` },
+          });
+
+          // Approving an expansion converts it into a build task for the orchestrator.
+          if (status === 'approved') {
+            const now = nowIso();
+            const buildTask: Task = {
+              taskId: genId('task'),
+              goal: `Build approved expansion: ${proposal.proposedServiceName}`,
+              status: 'queued',
+              priority: 'high',
+              createdBy: 'gateway-api',
+              assignedServiceId: null,
+              parentTaskId: proposal.sourceTaskId,
+              requiresApproval: false,
+              tags: ['expansion', proposal.missingCapability],
+              error: null,
+              createdAt: now,
+              updatedAt: now,
+            };
+            await tasks.insertOne(buildTask);
+            await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: buildTask.taskId, payload: { goal: buildTask.goal } });
+            const orchestrator = await ctx.registry.resolve('orchestrator-agent');
+            const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
+            try {
+              await fetch(`${orchestratorUrl}/.factory/task`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
+                body: JSON.stringify({ taskId: buildTask.taskId, goal: buildTask.goal, input: { action: 'build_from_proposal', proposalId: proposal.proposalId }, priority: 'high' }),
+              });
+              await tasks.updateOne({ taskId: buildTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
+            } catch (e) {
+              ctx.log.warn({ err: e }, 'build forward failed; build task remains queued');
+            }
+            return success({ proposal, buildTaskId: buildTask.taskId });
+          }
+          return success({ proposal });
+        },
+      );
+
+      // --- Phase 4: Reality Execution reads ------------------------------
+      app.get('/v1/validations', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await validations.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+        return success(rows);
+      });
+      app.get<{ Params: { id: string } }>('/v1/validations/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const v = await validations.findOne({ validationId: req.params.id }, { projection: { _id: 0 } });
+        if (!v) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'validation not found'));
+        const ev = await evidence.find({ taskId: v.taskId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+        return success({ validation: v, evidence: ev });
+      });
+      app.get('/v1/github', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rows = await githubOps.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+        return success(rows);
+      });
+      app.get<{ Querystring: { taskId?: string; capabilityId?: string } }>('/v1/evidence', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const filter: Record<string, string> = {};
+        if (req.query.taskId) filter.taskId = req.query.taskId;
+        if (req.query.capabilityId) filter.capabilityId = req.query.capabilityId;
+        const rows = await evidence.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(300).toArray();
         return success(rows);
       });
 

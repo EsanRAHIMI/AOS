@@ -28,6 +28,7 @@ export const SERVICE_IDS = {
   EVENT_BUS_SERVICE: 'event-bus-service',
   FILE_ASSET_SERVICE: 'file-asset-service',
   INTERNET_RESEARCH_SERVICE: 'internet-research-service',
+  BROWSER_TESTING_AGENT: 'browser-testing-agent',
 } as const;
 
 export type ServiceId = (typeof SERVICE_IDS)[keyof typeof SERVICE_IDS];
@@ -54,6 +55,7 @@ export const SERVICE_PORTS: Record<ServiceId, number> = {
   'monitor-agent': 4113,
   'report-agent': 4114,
   'internet-research-service': 4115,
+  'browser-testing-agent': 4116,
 };
 
 /** Production subdomain per service. Derived from ROOT_DOMAIN. */
@@ -74,6 +76,7 @@ export const SERVICE_SUBDOMAINS: Record<ServiceId, string> = {
   'event-bus-service': `events.${ROOT_DOMAIN}`,
   'file-asset-service': `assets.${ROOT_DOMAIN}`,
   'internet-research-service': `research.${ROOT_DOMAIN}`,
+  'browser-testing-agent': `browser-testing.${ROOT_DOMAIN}`,
 };
 
 /** Classifies a service for the registry and dashboard. */
@@ -132,6 +135,10 @@ export const COLLECTIONS = {
   CAPABILITY_EVALUATIONS: 'capability_evaluations',
   EXPANSION_PROPOSALS: 'expansion_proposals',
   LLM_TRACES: 'llm_traces',
+  // Phase 4 — Reality Execution Layer
+  RUNTIME_VALIDATIONS: 'runtime_validations',
+  GITHUB_OPERATIONS: 'github_operations',
+  EVIDENCE_RECORDS: 'evidence_records',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -170,6 +177,14 @@ export const EVENT_TYPES = {
   SKILL_CREATED: 'skill.created',
   SKILL_UPDATED: 'skill.updated',
   LLM_TRACE_RECORDED: 'llm.trace.recorded',
+  // Phase 4 — Reality Execution Layer
+  VALIDATION_STARTED: 'validation.started',
+  VALIDATION_COMPLETED: 'validation.completed',
+  EVIDENCE_RECORDED: 'evidence.recorded',
+  GITHUB_OPERATION: 'github.operation',
+  CAPABILITY_VALIDATED: 'capability.validated',
+  CAPABILITY_ACTIVATED: 'capability.activated',
+  BROWSER_TEST_COMPLETED: 'browser.test.completed',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

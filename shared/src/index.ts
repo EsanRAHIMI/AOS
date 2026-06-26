@@ -21,3 +21,12 @@ export * from './registry/index.js';
 export * from './discovery/index.js';
 export * from './agentrun/index.js';
 export { setTestDb } from './db/index.js';
+// Phase 3 — Self-Expanding Capability Engine
+export * from './capability/index.js';
+export * from './llm/index.js';
+export * from './evaluation/index.js';
+export * from './generator/index.js';
+// Phase 4 — Reality Execution Layer
+export * from './validation/index.js';
+export * from './github/index.js';
+export * from './evidence/index.js';

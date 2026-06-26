@@ -53,3 +53,13 @@ HTTP only, so every service stays independently deployable on Dokploy.
 Orchestrator needs: ARCHITECT_AGENT_URL, BUILDER_AGENT_URL, DEVOPS_AGENT_URL,
 MEMORY_AGENT_URL, DOCUMENTATION_SERVICE_URL.
 Gateway needs: ORCHESTRATOR_AGENT_URL.
+
+## Phase 4 — Reality Execution env
+| Var | Purpose |
+|---|---|
+| GITHUB_TOKEN / GITHUB_OWNER / GITHUB_REPO | enable real GitHub delivery (else "prepared" mode) |
+| GITHUB_DEFAULT_BRANCH | base branch for PRs (default `main`) |
+| ALLOW_BUILD_VALIDATION | `true` to also run tsc typecheck during validation (opt-in) |
+| REPO_SERVICES_ROOT | where in-repo services live (builder/devops validate/deliver) |
+| SERVICES_ROOT | where the generator writes new services |
+| WORKSPACE_ROOT | repo root for filtered build/typecheck during validation |

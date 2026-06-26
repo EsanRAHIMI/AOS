@@ -7,3 +7,5 @@ export * from './event.js';
 export * from './approval.js';
 export * from './memory.js';
 export * from './s3-object.js';
+export * from './capability.js';
+export * from './reality.js';

@@ -48,4 +48,19 @@ export const gateway = {
     call<unknown>(`/v1/approvals/${id}/decision`, { method: 'POST', body: JSON.stringify({ action, reason }) }),
   confirmInfra: (id: string) =>
     call<unknown>(`/v1/infrastructure/${id}/confirm`, { method: 'POST' }),
+  // Phase 3 — Self-Expanding Capability Engine
+  capabilities: () => call<unknown[]>('/v1/capabilities'),
+  capability: (id: string) => call<unknown>(`/v1/capabilities/${id}`),
+  gaps: () => call<unknown[]>('/v1/gaps'),
+  expansionProposals: () => call<unknown[]>('/v1/expansion-proposals'),
+  evaluations: () => call<unknown[]>('/v1/evaluations'),
+  skills: () => call<unknown[]>('/v1/skills'),
+  llmTraces: (limit = 100) => call<unknown[]>(`/v1/llm-traces?limit=${limit}`),
+  decideExpansion: (id: string, action: string, reason?: string) =>
+    call<{ buildTaskId?: string }>(`/v1/expansion-proposals/${id}/decision`, { method: 'POST', body: JSON.stringify({ action, reason }) }),
+  // Phase 4 — Reality Execution Layer
+  validations: () => call<unknown[]>('/v1/validations'),
+  validation: (id: string) => call<{ validation: unknown; evidence: unknown[] }>(`/v1/validations/${id}`),
+  githubOps: () => call<unknown[]>('/v1/github'),
+  evidence: (query = '') => call<unknown[]>(`/v1/evidence${query}`),
 };

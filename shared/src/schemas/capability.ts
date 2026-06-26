@@ -7,7 +7,16 @@ import { IsoDate } from './common.js';
  * supports each ability, where it's weak, and how it grows.
  * ======================================================================== */
 
-export const CapabilityStatus = z.enum(['active', 'proposed', 'generated', 'deprecated', 'failed']);
+/** Capability lifecycle (Phase 4): proposed → approved → generated → validated → active. */
+export const CapabilityStatus = z.enum([
+  'proposed',
+  'approved',
+  'generated',
+  'validated',
+  'active',
+  'deprecated',
+  'failed',
+]);
 export type CapabilityStatus = z.infer<typeof CapabilityStatus>;
 
 export const MaturityLevel = z.enum(['concept', 'early', 'stable', 'mature']);
@@ -117,6 +126,13 @@ export const EvaluationSchema = z.object({
   createdAt: IsoDate,
 });
 export type Evaluation = z.infer<typeof EvaluationSchema>;
+
+/** Structured output contract for goal → required-capability analysis (LLM or fallback). */
+export const CapabilityAnalysisSchema = z.object({
+  requiredCapabilities: z.array(z.string()).min(1),
+  rationale: z.string().default('keyword analysis'),
+});
+export type CapabilityAnalysis = z.infer<typeof CapabilityAnalysisSchema>;
 
 /** A persisted LLM interaction: prompt, completion, validation, cost. */
 export const LlmTraceSchema = z.object({

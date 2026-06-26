@@ -1,0 +1,26 @@
+{
+  "name": "@factory/browser-testing-agent",
+  "version": "0.1.0",
+  "description": "Permission-governed browser testing agent: open a URL and assert title/status/text/selector, capture a screenshot. Playwright when available, HTTP fallback otherwise.",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --watch --import tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@factory/shared": "workspace:*",
+    "@factory/service-kit": "workspace:*"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.49.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.15.0"
+  }
+}

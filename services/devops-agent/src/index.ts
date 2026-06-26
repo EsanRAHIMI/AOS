@@ -20,12 +20,20 @@ import {
   nowIso,
   startAgentRun,
   finishAgentRun,
+  gitHubDeliveryFromEnv,
+  buildEvidence,
   type InfrastructureRequest,
+  type GitHubOperation,
+  type EvidenceRecord,
 } from '@factory/shared';
+import { join } from 'node:path';
 import { createFactoryService, type TaskHandler } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
 
 const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema));
+
+const REPO_SERVICES_ROOT = process.env.REPO_SERVICES_ROOT ?? join(process.cwd(), '..');
+const STANDARD_FILES = ['package.json', 'tsconfig.json', 'README.md', '.env.example', 'src/index.ts', 'src/factory/manifest.ts'];
 
 function slugify(goal: string): string {
   const base = goal.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
@@ -41,10 +49,41 @@ function derivePort(slug: string): number {
 
 const handleTask: TaskHandler = async (req, ctx) => {
   const taskId = req.taskId ?? 'unknown';
+  const input = (req.input ?? {}) as Record<string, unknown>;
   const runId = await startAgentRun({ agentId: manifest.serviceId, serviceId: manifest.serviceId, taskId });
+
+  // --- GitHub delivery: branch + commit (+PR) for a generated/validated service ---
+  if (input.action === 'github_deliver') {
+    const serviceName = String(input.serviceName);
+    const capabilityId = input.capability ? String(input.capability) : null;
+    const servicePath = input.servicePath ? String(input.servicePath) : join(REPO_SERVICES_ROOT, serviceName);
+    await ctx.publisher.publish({ type: EVENT_TYPES.AGENT_RUN_STARTED, taskId, payload: { agentRunId: runId, message: `GitHub delivery for ${serviceName}` } });
+
+    const delivery = gitHubDeliveryFromEnv();
+    const operation = await delivery.deliver({
+      serviceName,
+      servicePath,
+      files: STANDARD_FILES,
+      commitMessage: `feat(${serviceName}): add generated service for capability ${capabilityId ?? 'n/a'}`,
+      taskId,
+      proposalId: input.proposalId ? String(input.proposalId) : null,
+      capabilityId,
+    });
+    await collection<GitHubOperation>(COLLECTIONS.GITHUB_OPERATIONS).insertOne(operation);
+    const ev = buildEvidence({ type: 'github_commit', summary: `GitHub ${operation.mode}: branch ${operation.branchName} (${operation.status})`, taskId, capabilityId, serviceName, data: { branchName: operation.branchName, status: operation.status, mode: operation.mode, pullRequestUrl: operation.pullRequestUrl, filesChanged: operation.filesChanged } });
+    await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(ev);
+    await ctx.publisher.publish({ type: EVENT_TYPES.GITHUB_OPERATION, taskId, payload: { operationId: operation.operationId, branchName: operation.branchName, status: operation.status, mode: operation.mode, message: `GitHub ${operation.mode}: ${operation.branchName}` } });
+    await ctx.publisher.publish({ type: EVENT_TYPES.EVIDENCE_RECORDED, taskId, payload: { evidenceId: ev.evidenceId, evidenceType: ev.type, message: ev.summary } });
+
+    await finishAgentRun(runId, { status: 'succeeded', summary: `GitHub delivery ${operation.status} (${operation.branchName})` });
+    return { taskId, accepted: true, agentRunId: runId, operation: { operationId: operation.operationId, branchName: operation.branchName, status: operation.status, mode: operation.mode, pullRequestUrl: operation.pullRequestUrl } };
+  }
+
   await ctx.publisher.publish({ type: EVENT_TYPES.AGENT_RUN_STARTED, taskId, payload: { agentRunId: runId, message: 'DevOps preparing infrastructure request' } });
 
-  const slug = slugify(req.goal);
+  // Prefer an explicit serviceName (build-from-proposal path); else derive from goal.
+  const explicit = (req.input as Record<string, unknown> | undefined)?.serviceName;
+  const slug = explicit ? String(explicit) : slugify(req.goal);
   const port = derivePort(slug);
   const requestId = genId('infra');
   const now = nowIso();
@@ -56,7 +95,7 @@ const handleTask: TaskHandler = async (req, ctx) => {
     reason: `Required to fulfill goal: ${req.goal}`,
     dokploy: {
       appName: slug,
-      domain: `${slug.replace(/-service$/, '')}.${ROOT_DOMAIN}`,
+      domain: `${slug.replace(/-(agent|service)$/, '')}.${ROOT_DOMAIN}`,
       port,
       repository: 'github.com/<owner>/autonomous-os-kernel',
       rootDirectory: `services/${slug}`,
@@ -87,6 +126,8 @@ const handleTask: TaskHandler = async (req, ctx) => {
 async function main(): Promise<void> {
   await connectMongo({ uri: env.MONGODB_URI, dbName: env.MONGODB_DB_NAME });
   await collection<InfrastructureRequest>(COLLECTIONS.INFRASTRUCTURE_REQUESTS).createIndex({ requestId: 1 }, { unique: true });
+  await collection<GitHubOperation>(COLLECTIONS.GITHUB_OPERATIONS).createIndex({ operationId: 1 }, { unique: true });
+  await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).createIndex({ evidenceId: 1 }, { unique: true });
   const service = await createFactoryService({
     manifest,
     port: env.SERVICE_PORT,

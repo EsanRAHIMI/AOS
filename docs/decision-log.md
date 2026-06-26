@@ -2,6 +2,65 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-26 — Phase 4 reality execution layer
+
+### D-022 No claim without evidence; capability lifecycle gated on proof
+`generated → validated` requires the runtime validation to pass; `validated → active`
+requires the service-registry to confirm a reachable manifest. Every promotion and outcome
+produces an `evidence_records` entry. The dashboard surfaces evidence on task/capability/
+validation pages.
+
+### D-021 GitHub delivery is feature-branch + PR only; prepared fallback offline
+`GitHubDelivery` never pushes to the base branch — it creates a feature branch + PR (review
+before merge), so it needs no extra approval gate. Real GitHub REST runs when `GITHUB_TOKEN`+
+`GITHUB_OWNER`+`GITHUB_REPO` are set; otherwise a deterministic "prepared" operation records
+the branch/files + git instructions. Pushing to main / prod deploy remain approval-gated.
+
+### D-020 Validation co-located in the builder (owns the generated files)
+The validation engine is a shared module run inside the builder-agent, which has the generated
+files on its filesystem (avoids a cross-container shared volume). Static checks always run;
+build/typecheck are opt-in via `ALLOW_BUILD_VALIDATION` so production containers don't shell out.
+
+### D-019 Browser agent: Playwright with HTTP fallback, internal-only by default
+`browser-testing-agent` uses `playwright-core` (optional dep, no browser auto-download) and
+falls back to an HTTP-level check when no browser is present — still producing a real,
+evidence-backed result. Targets are restricted to internal/owned hosts (`localhost`,
+`*.simorx.com`); external targets require approval.
+
+### D-018 browser_testing seeded as `generated`
+Reflects the Phase 3 outcome (the agent was designed/generated). Phase 4 activates it. New
+capability gaps can still be demoed with other capabilities (e.g. email, web research).
+
+## 2026-06-26 — Phase 3 self-expanding capability engine
+
+### D-017 LLM router with deterministic fallback; nothing unvalidated mutates state
+`generateStructured(schema, { fallback })` returns only Zod-validated data. With no
+provider key (local/test) the deterministic fallback is used and is itself validated.
+This satisfies "an agent uses the LLM router for structured reasoning" while guaranteeing
+no raw LLM text can mutate system state. Traces persist to `llm_traces` with cost/tokens.
+
+### D-016 Capability analysis lives in the orchestrator; capability data in shared graph
+The gap detector is part of goal handling (orchestrator owns decomposition). The capability
+graph + gaps + proposals + evaluations are plain MongoDB collections read via the gateway —
+no new always-on service required, keeping independent deployability intact. A dedicated
+capability-service can be extracted later if needed.
+
+### D-015 Expansion is approval-gated; approval converts a proposal into a build task
+Detecting a missing capability never silently fails — it creates a proposal in
+`waiting_approval`. Approving (gateway) emits `expansion.decided` and dispatches a
+`build_from_proposal` task to the orchestrator. Sensitive self-expansion stays governed.
+
+### D-014 Generator writes standard services to a configurable SERVICES_ROOT
+The builder-agent scaffolds via `shared/generator` into `SERVICES_ROOT` (default a sandbox
+dir, not the live repo) so a running container never clobbers source. Generated services are
+real, build cleanly, and use the standard factory endpoints. GitHub-commit delivery is a
+later refinement.
+
+### D-013 Evaluation is deterministic from signals
+`buildEvaluation` scores 10 dimensions from observed signals (docs updated, memory stored,
+scaffold created, delegations succeeded, runtime validated, …) so the system never
+hallucinates progress; recommendations flag what's missing (e.g. runtime validation).
+
 ## 2026-06-26 — Phase 2 first autonomous loop
 
 ### D-012 Test-only DB seam (`setTestDb`)

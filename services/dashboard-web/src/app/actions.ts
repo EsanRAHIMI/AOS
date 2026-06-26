@@ -32,3 +32,24 @@ export async function confirmInfraAction(formData: FormData): Promise<void> {
   await gateway.confirmInfra(id);
   revalidatePath('/infrastructure');
 }
+
+export async function approveExpansionAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  const res = await gateway.decideExpansion(id, 'approve');
+  revalidatePath('/expansion-proposals');
+  revalidatePath('/tasks');
+  revalidatePath('/capabilities');
+  if (res?.buildTaskId) redirect(`/tasks/${res.buildTaskId}`);
+}
+
+export async function rejectExpansionAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  await gateway.decideExpansion(id, 'reject', 'Rejected from dashboard');
+  revalidatePath('/expansion-proposals');
+}
+
+export async function requestChangesExpansionAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  await gateway.decideExpansion(id, 'request_changes', 'Changes requested from dashboard');
+  revalidatePath('/expansion-proposals');
+}
