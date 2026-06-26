@@ -25,6 +25,11 @@ import {
   genId,
   nowIso,
   buildSeedCapabilities,
+  buildScoringProfile,
+  buildSeedRoles,
+  buildSeedPermissions,
+  buildSeedUsers,
+  DEFAULT_SCORING_WEIGHTS,
   type Task,
   type Approval,
   type AgentRun,
@@ -33,6 +38,10 @@ import {
   type CapabilityGap,
   type Evaluation,
   type LlmTrace,
+  type ScoringProfile,
+  type Role,
+  type Permission,
+  type RbacUser,
 } from '@factory/shared';
 import { createFactoryService, type TaskHandler, type ServiceContext } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -44,12 +53,22 @@ const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema).merge(LlmEnvSchema));
 async function seedCapabilities(): Promise<void> {
   const caps = collection<Capability>(COLLECTIONS.CAPABILITIES);
   for (const c of buildSeedCapabilities()) {
-    await caps.updateOne(
-      { capabilityId: c.capabilityId },
-      { $setOnInsert: c },
-      { upsert: true },
-    );
+    await caps.updateOne({ capabilityId: c.capabilityId }, { $setOnInsert: c }, { upsert: true });
   }
+}
+
+/** Seed governance: scoring profile v1 (active), RBAC roles/permissions/users. */
+async function seedGovernance(): Promise<void> {
+  const profiles = collection<ScoringProfile>(COLLECTIONS.SCORING_PROFILES);
+  if ((await profiles.countDocuments({})) === 0) {
+    await profiles.insertOne(buildScoringProfile(1, DEFAULT_SCORING_WEIGHTS, { status: 'active', reason: 'seed', approvedBy: 'system' }));
+  }
+  const roles = collection<Role>(COLLECTIONS.ROLES);
+  for (const r of buildSeedRoles()) await roles.updateOne({ roleId: r.roleId }, { $setOnInsert: r }, { upsert: true });
+  const perms = collection<Permission>(COLLECTIONS.PERMISSIONS);
+  for (const p of buildSeedPermissions()) await perms.updateOne({ permissionId: p.permissionId }, { $setOnInsert: p }, { upsert: true });
+  const users = collection<RbacUser>(COLLECTIONS.USERS);
+  for (const u of buildSeedUsers()) await users.updateOne({ userId: u.userId }, { $setOnInsert: u }, { upsert: true });
 }
 
 const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
@@ -126,7 +145,12 @@ async function main(): Promise<void> {
   await collection(COLLECTIONS.PLAN_SCORES).createIndex({ scoreId: 1 }, { unique: true });
   await collection(COLLECTIONS.POLICY_DECISIONS).createIndex({ policyDecisionId: 1 }, { unique: true });
   await collection(COLLECTIONS.DECISION_MEMORIES).createIndex({ decisionId: 1 }, { unique: true });
+  await collection(COLLECTIONS.SCORING_PROFILES).createIndex({ profileId: 1 }, { unique: true });
+  await collection(COLLECTIONS.OUTCOME_REVIEWS).createIndex({ reviewId: 1 }, { unique: true });
+  await collection(COLLECTIONS.SCORING_CHANGE_PROPOSALS).createIndex({ proposalId: 1 }, { unique: true });
+  await collection(COLLECTIONS.AUDIT_LOGS).createIndex({ auditId: 1 }, { unique: true });
   await seedCapabilities();
+  await seedGovernance();
 
   const service = await createFactoryService({
     manifest,

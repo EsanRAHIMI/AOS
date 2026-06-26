@@ -3,6 +3,21 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { gateway } from '@/lib/gateway';
 
+export async function decideScoringProposalAction(formData: FormData): Promise<void> {
+  await gateway.decideScoringProposal(String(formData.get('id')), String(formData.get('action')));
+  revalidatePath('/scoring-change-proposals');
+  revalidatePath('/scoring-profiles');
+  revalidatePath('/audit-logs');
+  revalidatePath('/governance');
+}
+
+export async function decidePolicyProposalAction(formData: FormData): Promise<void> {
+  await gateway.decidePolicyProposal(String(formData.get('id')), String(formData.get('action')));
+  revalidatePath('/policy-change-proposals');
+  revalidatePath('/policy-rules');
+  revalidatePath('/audit-logs');
+}
+
 export async function createTaskAction(formData: FormData): Promise<void> {
   const goal = String(formData.get('goal') ?? '').trim();
   if (!goal) return;

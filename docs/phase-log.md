@@ -196,3 +196,71 @@ Verification:
 - All 24 Phase 6 acceptance criteria met. No Docker; independent Dokploy deploy intact; no faked
   repair; incidents never close without evidence; capability active only after real HTTP
   re-activation; sensitive actions approval-gated.
+
+## Phase 7 — Strategic Reasoning & Policy-Governed Execution — COMPLETE (2026-06-26)
+The kernel now reasons over multiple strategies, scores them, checks policy, chooses with justification, and remembers the decision.
+
+Delivered:
+- **Strategic Planner** (`shared/planner`) — generates ≥3 candidate plans (safe/fast/ambitious)
+  via the LLM router with schema-validated output and a deterministic, validated fallback.
+- **Plan Scoring Engine** (`shared/scoring`) — scores each plan across 10 dimensions (success,
+  risk, cost, speed, evidence, reversibility, human-intervention, capability-fit, policy,
+  long-term value) → `plan_scores`; selects the best with a justification + reasons for rejecting.
+- **Policy Engine** (`shared/policy`) — `evaluatePolicy(action)` → allowed / approval_required /
+  blocked per category; `file_delete` + `physical_action` blocked by default; code/github/deploy/
+  env/external/message/data/production gated → `policy_decisions`.
+- **Decision Memory** (`decision_memories`) — options, selection, reason, alternatives, outcome,
+  lessons; plus a `decision_memory` Memory and a reusable `skill_strategic_planning`.
+- **Real LLM operational** — versioned per-agent prompts, `promptVersion` on traces, real vs
+  fallback visible (`/v1/llm/status`, `/v1/system/integrations`), traces linked to task+agent.
+- **Reasoning Dashboard** — /reasoning, /strategic-plans(+:id with scores), /policy-decisions,
+  /decision-memory, /llm-traces/:id; task detail shows the full reasoning trail (selected plan,
+  rejected alternatives, policy, provider, cost, confidence, decision id).
+
+Verification:
+- Full workspace build + typecheck **passing** (14 packages).
+- **Reasoning demo PASS** ("Improve the reliability of browser-testing-agent"): the **real**
+  compiled strategic pipeline produced **3 plans** → scored → selected **safe_plan** (total 0.90)
+  with justification + 2 rejected alternatives → **policy** flagged the other plans' sensitive
+  actions (github/deploy/env → approval_required) while `run_validation` → allowed → executed the
+  safe step (**real runtime validation** ran on the real browser-testing-agent) → evaluation 0.82
+  → decision memory + memory + skill written → task completed with a reasoning report. LLM trace
+  was schema-validated (fallback, promptVersion v1) and linked to the task.
+- All 24 Phase 7 acceptance criteria met. No Docker; independent Dokploy deploy intact; LLM output
+  schema-validated (never mutates state raw); sensitive actions policy-checked and approval-gated;
+  deterministic fallback kept and visible.
+
+## Phase 8 — Learning Governance & Adaptive Intelligence — COMPLETE (2026-06-26)
+The kernel now governs its own evolution: it learns how to decide better from outcomes, but only under approval, versioning, and audit.
+
+Delivered:
+- **Outcome Learning Engine** (`shared/governance` `outcomeReview`) — compares a plan's predicted
+  score to the actual evaluation, classifies over/under/accurate, and recommends weight changes →
+  `outcome_reviews`.
+- **Adaptive Scoring Proposals + Versioned Profiles** — recommendations become a
+  `scoring_change_proposals` record (never auto-applied). Approving versions a new active
+  `scoring_profiles` entry; the Plan Scoring Engine uses the active profile's weights and records
+  `profileVersion` on every score. Rejecting preserves the current profile.
+- **Configurable Policy Engine** — `policy_rules` (scoped: service/capability/environment) +
+  `policy_change_proposals` + `policy_profiles`; `resolvePolicy` overlays config on the code default,
+  but **hardcoded safety blocks** (`file_delete`, `physical_action`) always override.
+- **RBAC** — roles (owner/operator/viewer/agent), permissions, users; `hasPermission` gates approvals;
+  denials are audit-logged.
+- **Audit Log** — every governance action (approvals, scoring/policy changes, denials) writes an
+  `audit_logs` entry with actor/role/before/after/reason.
+- **Governance Dashboard** — /governance, /outcome-reviews, /scoring-profiles,
+  /scoring-change-proposals (approve/reject/changes), /policy-rules, /policy-profiles,
+  /policy-change-proposals, /rbac, /audit-logs.
+
+Verification:
+- Full workspace build + typecheck **passing** (14 packages).
+- **Governance demo PASS** ("Review the last strategic decision and improve future scoring"): the
+  **real** compiled pipeline produced a strategic decision (selected score 0.90, profile v1) → the
+  governance pipeline created an outcome review (**predicted 0.90 vs actual 0.82 → overestimated**) →
+  recommended `evidenceAvailability +0.1, speed -0.1` → a scoring-change proposal → **RBAC owner**
+  approval (viewer denied) created **scoring profile v2** (evidenceAvailability 1.0→1.1), wrote an
+  **audit log**, and a subsequent strategic run **used profile v2**. A hardcoded `file_delete` block
+  overrode a permissive config rule (decision blocked, source hardcoded_block).
+- All 27 Phase 8 acceptance criteria met. No Docker; independent Dokploy deploy intact; no silent
+  scoring/policy changes; hardcoded safety blocks enforced; RBAC protects approvals; every governance
+  change audited; deterministic fallback retained for tests.

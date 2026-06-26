@@ -84,4 +84,23 @@ export const gateway = {
     call<{ repair?: { resolved?: boolean } }>(`/v1/incidents/${id}/revalidate`, { method: 'POST', body: JSON.stringify({ baseUrl }) }),
   integrations: () => call<{ github: { configured: boolean; mode: string }; llm: { provider: string; mode: string; configured: boolean; defaultProvider: string } }>('/v1/system/integrations'),
   llmStatus: () => call<{ status: { provider: string; mode: string }; traceCount: number; realCount: number; fallbackCount: number; invalidCount: number; totalCostUsd: number }>('/v1/llm/status'),
+  // Phase 7 — Strategic Reasoning & Policy
+  strategicPlans: (taskId?: string) => call<unknown[]>(`/v1/strategic-plans${taskId ? `?taskId=${taskId}` : ''}`),
+  strategicPlan: (id: string) => call<{ plan: unknown; score: unknown }>(`/v1/strategic-plans/${id}`),
+  planScores: (taskId?: string) => call<unknown[]>(`/v1/plan-scores${taskId ? `?taskId=${taskId}` : ''}`),
+  policyDecisions: (taskId?: string) => call<unknown[]>(`/v1/policy-decisions${taskId ? `?taskId=${taskId}` : ''}`),
+  decisionMemory: (taskId?: string) => call<unknown[]>(`/v1/decision-memory${taskId ? `?taskId=${taskId}` : ''}`),
+  llmTrace: (id: string) => call<unknown>(`/v1/llm-traces/${id}`),
+  // Phase 8 — Learning Governance & Adaptive Intelligence
+  outcomeReviews: () => call<unknown[]>('/v1/outcome-reviews'),
+  scoringProfiles: () => call<unknown[]>('/v1/scoring-profiles'),
+  scoringProposals: () => call<unknown[]>('/v1/scoring-change-proposals'),
+  policyRules: () => call<unknown[]>('/v1/policy-rules'),
+  policyProposals: () => call<unknown[]>('/v1/policy-change-proposals'),
+  rbac: () => call<{ roles: unknown[]; permissions: unknown[]; users: unknown[] }>('/v1/rbac'),
+  auditLogs: () => call<unknown[]>('/v1/audit-logs'),
+  decideScoringProposal: (id: string, action: string) =>
+    call<{ activated?: boolean; profileVersion?: number }>(`/v1/scoring-change-proposals/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  decidePolicyProposal: (id: string, action: string) =>
+    call<{ activated?: boolean }>(`/v1/policy-change-proposals/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
 };

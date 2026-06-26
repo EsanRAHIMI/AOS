@@ -153,6 +153,16 @@ export const COLLECTIONS = {
   PLAN_SCORES: 'plan_scores',
   POLICY_DECISIONS: 'policy_decisions',
   DECISION_MEMORIES: 'decision_memories',
+  // Phase 8 — Learning Governance & Adaptive Intelligence
+  OUTCOME_REVIEWS: 'outcome_reviews',
+  SCORING_PROFILES: 'scoring_profiles',
+  SCORING_CHANGE_PROPOSALS: 'scoring_change_proposals',
+  POLICY_RULES: 'policy_rules',
+  POLICY_PROFILES: 'policy_profiles',
+  POLICY_CHANGE_PROPOSALS: 'policy_change_proposals',
+  ROLES: 'roles',
+  PERMISSIONS: 'permissions',
+  AUDIT_LOGS: 'audit_logs',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -217,6 +227,14 @@ export const EVENT_TYPES = {
   PLAN_SELECTED: 'reasoning.plan.selected',
   POLICY_DECISION: 'reasoning.policy.decision',
   DECISION_RECORDED: 'reasoning.decision.recorded',
+  // Phase 8 — Learning Governance & Adaptive Intelligence
+  OUTCOME_REVIEWED: 'governance.outcome.reviewed',
+  SCORING_PROPOSAL_CREATED: 'governance.scoring.proposed',
+  SCORING_PROFILE_ACTIVATED: 'governance.scoring.activated',
+  POLICY_PROPOSAL_CREATED: 'governance.policy.proposed',
+  POLICY_PROFILE_ACTIVATED: 'governance.policy.activated',
+  AUDIT_LOGGED: 'governance.audit.logged',
+  ROLE_CHANGED: 'governance.role.changed',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

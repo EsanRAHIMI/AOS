@@ -34,6 +34,59 @@ export function evaluatePolicy(action: PolicyAction): PolicyResult {
   return RULES[action] ?? { decision: 'approval_required', reason: 'Unknown action — requires approval by default.', requiredApprovalType: 'manual', riskLevel: 'medium' };
 }
 
+/**
+ * Hardcoded safety blocks that ALWAYS override configurable policy. Dangerous
+ * actions can never be allowed by a config overlay.
+ */
+export const HARDCODED_BLOCKS: PolicyAction[] = ['file_delete', 'physical_action'];
+
+export interface ConfigurablePolicyRule {
+  action: string;
+  decision: PolicyOutcome;
+  reason: string;
+  requiredApprovalType: string | null;
+  riskLevel: 'low' | 'medium' | 'high';
+  scope?: { serviceName?: string; capabilityId?: string; environment?: string };
+  status?: 'active' | 'disabled';
+}
+
+export interface PolicyContext {
+  serviceName?: string;
+  capabilityId?: string;
+  environment?: string;
+}
+
+function scopeMatches(scope: ConfigurablePolicyRule['scope'], ctx: PolicyContext): boolean {
+  if (!scope) return true;
+  if (scope.serviceName && scope.serviceName !== ctx.serviceName) return false;
+  if (scope.capabilityId && scope.capabilityId !== ctx.capabilityId) return false;
+  if (scope.environment && scope.environment !== ctx.environment) return false;
+  return true;
+}
+
+const scopeSpecificity = (scope: ConfigurablePolicyRule['scope']): number =>
+  (scope?.serviceName ? 1 : 0) + (scope?.capabilityId ? 1 : 0) + (scope?.environment ? 1 : 0);
+
+/**
+ * Resolve policy with configurable overlays:
+ *   1. hardcoded safety blocks always win,
+ *   2. else the most-specific active matching configured rule,
+ *   3. else the hardcoded default.
+ */
+export function resolvePolicy(action: PolicyAction, ctx: PolicyContext, rules: ConfigurablePolicyRule[] = []): PolicyResult & { source: 'hardcoded_block' | 'config_rule' | 'default' } {
+  if (HARDCODED_BLOCKS.includes(action)) {
+    return { ...evaluatePolicy(action), decision: 'blocked', source: 'hardcoded_block' };
+  }
+  const matches = rules
+    .filter((r) => (r.status ?? 'active') === 'active' && r.action === action && scopeMatches(r.scope, ctx))
+    .sort((a, b) => scopeSpecificity(b.scope) - scopeSpecificity(a.scope));
+  const rule = matches[0];
+  if (rule) {
+    return { decision: rule.decision, reason: rule.reason, requiredApprovalType: rule.requiredApprovalType, riskLevel: rule.riskLevel, source: 'config_rule' };
+  }
+  return { ...evaluatePolicy(action), source: 'default' };
+}
+
 /** Map a plan's required-approval token to a policy action category. */
 export function approvalToAction(approval: string): PolicyAction {
   switch (approval) {

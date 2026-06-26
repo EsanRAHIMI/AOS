@@ -69,6 +69,7 @@ export const PlanScoreSchema = z.object({
     longTermValue: z.number(),
   }),
   total: z.number(),
+  profileVersion: z.number().default(1),
   selected: z.boolean().default(false),
   selectionReason: z.string().nullable().default(null),
   createdAt: IsoDate,

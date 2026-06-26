@@ -78,6 +78,33 @@ Phase 7 candidates:
 9. Automated execution of low-risk fixes (env/redeploy) via Dokploy API behind policy.
 10. Multi-instance event bus (Redis/NATS); RBAC; cost budgets.
 
+## Phase 7 — Strategic Reasoning & Policy-Governed Execution — DONE (core)
+1. Strategic Planner (≥3 plans, LLM + validated fallback) — DONE.
+2. Plan Scoring Engine (10 dimensions, justified selection) — DONE.
+3. Policy Engine (allowed/blocked/approval_required) — DONE.
+4. Decision Memory + reusable strategic-planning skill — DONE.
+5. Real LLM operational: versioned prompts, promptVersion, status — DONE.
+6. Reasoning dashboard + task reasoning trail — DONE.
+
+Phase 8 candidates:
+7. Real provider keys end-to-end with LLM-generated plans (still schema-validated).
+8. Learned scoring weights from decision outcomes; confidence-calibrated asking.
+9. Policy-as-config (editable policies) + RBAC; cost budgets/alerts.
+
+## Phase 8 — Learning Governance & Adaptive Intelligence — DONE (core)
+1. Outcome Learning Engine (predicted vs actual + recommendations) — DONE.
+2. Adaptive scoring proposals + versioned scoring profiles — DONE.
+3. Active profile used by the scoring engine (profileVersion on scores) — DONE.
+4. Configurable policy + hardcoded safety overrides — DONE.
+5. RBAC (owner/operator/viewer/agent) gating approvals — DONE.
+6. Audit logs for all governance actions — DONE.
+7. Governance dashboard (reviews/profiles/proposals/policy/rbac/audit) — DONE.
+
+Phase 9 candidates:
+8. Learned weights from many outcomes (statistical, not single-review deltas).
+9. Full auth (OIDC/JWT) + per-user RBAC; policy-as-config editor in the dashboard.
+10. Multi-instance event bus (Redis/NATS); cost budgets + alerts; report-agent.
+
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE
 (→ Redis/NATS if needed) · OpenAI + Anthropic via an LLM router abstraction ·

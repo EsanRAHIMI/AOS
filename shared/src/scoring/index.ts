@@ -6,6 +6,8 @@
  */
 import { genId, nowIso } from '../utils/index.js';
 import type { StrategicPlan, PlanScore } from '../schemas/reasoning.js';
+import { DEFAULT_SCORING_WEIGHTS } from '../governance/index.js';
+import type { ScoringWeights } from '../schemas/governance.js';
 
 const clamp = (n: number): number => Math.max(0, Math.min(1, Number(n.toFixed(3))));
 const riskScore = (r: string): number => (r === 'low' ? 0.9 : r === 'medium' ? 0.6 : 0.3);
@@ -17,21 +19,15 @@ export interface ScoringResult {
   rejected: Array<{ planId: string; label: string; reason: string }>;
 }
 
-/** Weighted importance per dimension (sum need not be 1; normalized in total). */
-const WEIGHTS = {
-  successProbability: 1.4,
-  risk: 1.4,
-  cost: 0.8,
-  speed: 0.8,
-  evidenceAvailability: 1.0,
-  reversibility: 1.2,
-  humanIntervention: 0.8,
-  capabilityFit: 1.3,
-  policyCompliance: 1.2,
-  longTermValue: 1.1,
-};
+export interface ScoringOptions {
+  /** Weights from the active scoring profile (Phase 8). Defaults to the seed weights. */
+  weights?: ScoringWeights;
+  profileVersion?: number;
+}
 
-export function scorePlans(plans: StrategicPlan[], activeCapabilities: string[]): ScoringResult {
+export function scorePlans(plans: StrategicPlan[], activeCapabilities: string[], opts: ScoringOptions = {}): ScoringResult {
+  const WEIGHTS = opts.weights ?? DEFAULT_SCORING_WEIGHTS;
+  const profileVersion = opts.profileVersion ?? 1;
   const active = new Set(activeCapabilities);
   const sensitive = ['create_pr', 'redeploy', 'change_env', 'delete', 'production'];
 
@@ -54,7 +50,7 @@ export function scorePlans(plans: StrategicPlan[], activeCapabilities: string[])
     const total = clamp(
       (Object.entries(dimensions) as Array<[keyof typeof dimensions, number]>).reduce((acc, [k, v]) => acc + v * WEIGHTS[k], 0) / wsum,
     );
-    return { scoreId: genId('score'), planId: p.planId, taskId: p.taskId, label: p.label, dimensions, total, selected: false, selectionReason: null, createdAt: nowIso() };
+    return { scoreId: genId('score'), planId: p.planId, taskId: p.taskId, label: p.label, dimensions, total, profileVersion, selected: false, selectionReason: null, createdAt: nowIso() };
   });
 
   const ranked = [...scores].sort((a, b) => b.total - a.total);

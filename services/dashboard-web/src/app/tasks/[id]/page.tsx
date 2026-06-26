@@ -10,6 +10,11 @@ interface TaskReport {
   memoryId?: string | null; documents?: string[];
   validationId?: string | null; githubBranch?: string | null; capabilityStatus?: string | null;
   browserPassed?: boolean; evidenceCount?: number; checklistId?: string | null;
+  mode?: string; selectedLabel?: string | null; selectionReason?: string | null;
+  rejected?: Array<{ planId: string; label: string; reason: string }>; planCount?: number;
+  llmProvider?: string; usedFallback?: boolean; llmCostUsd?: number; traceId?: string | null;
+  confidence?: number; decisionId?: string | null;
+  policyDecisions?: Array<{ action: string; decision: string }>;
 }
 
 export default async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -79,6 +84,26 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
           )}
         </div>
       </div>
+
+      {report?.mode === 'strategic_reasoning' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="label" style={{ marginBottom: 10 }}>Reasoning trail</div>
+          <p style={{ marginTop: 0 }}>
+            Considered <b>{report.planCount}</b> plans · selected <b>{report.selectedLabel}</b> · confidence {Number(report.confidence ?? 0).toFixed(2)} ·
+            reasoning via <b>{report.llmProvider}{report.usedFallback ? ' (fallback)' : ''}</b>
+            {report.traceId ? <> · <a href={`/llm-traces/${report.traceId}`}>trace</a></> : null}
+            {typeof report.llmCostUsd === 'number' ? <> · ${report.llmCostUsd.toFixed(4)}</> : null}
+          </p>
+          <p className="sub" style={{ marginTop: 0 }}><b>Why:</b> {report.selectionReason}</p>
+          {(report.rejected ?? []).length > 0 && (
+            <div className="sub"><b>Rejected:</b> {(report.rejected ?? []).map((r) => `${r.label} — ${r.reason}`).join(' · ')}</div>
+          )}
+          {(report.policyDecisions ?? []).length > 0 && (
+            <div className="sub" style={{ marginTop: 6 }}><b>Policy:</b> {(report.policyDecisions ?? []).map((p) => `${p.action}→${p.decision}`).join(', ')}</div>
+          )}
+          {report.decisionId && <div className="sub" style={{ marginTop: 6 }}>Decision memory: <b>{report.decisionId}</b></div>}
+        </div>
+      )}
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="label" style={{ marginBottom: 10 }}>Evidence ({(evidence ?? []).length})</div>

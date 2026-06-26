@@ -39,3 +39,5 @@ export * from './repair/index.js';
 export * from './planner/index.js';
 export * from './scoring/index.js';
 export * from './policy/index.js';
+// Phase 8 — Learning Governance & Adaptive Intelligence
+export * from './governance/index.js';

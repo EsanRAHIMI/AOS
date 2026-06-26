@@ -51,6 +51,20 @@ import {
   type PlanScore,
   type PolicyDecision,
   type DecisionMemory,
+  buildScoringProfile,
+  buildAuditLog,
+  hasPermission,
+  roleForAuth,
+  type ScoringProfile,
+  type OutcomeReview,
+  type ScoringChangeProposal,
+  type PolicyRule,
+  type PolicyChangeProposal,
+  type Role,
+  type Permission,
+  type RbacUser,
+  type AuditLog,
+  type RoleName,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -83,6 +97,15 @@ async function main(): Promise<void> {
   const planScores = collection<PlanScore>(COLLECTIONS.PLAN_SCORES);
   const policyDecisions = collection<PolicyDecision>(COLLECTIONS.POLICY_DECISIONS);
   const decisionMemories = collection<DecisionMemory>(COLLECTIONS.DECISION_MEMORIES);
+  const outcomeReviews = collection<OutcomeReview>(COLLECTIONS.OUTCOME_REVIEWS);
+  const scoringProfiles = collection<ScoringProfile>(COLLECTIONS.SCORING_PROFILES);
+  const scoringProposals = collection<ScoringChangeProposal>(COLLECTIONS.SCORING_CHANGE_PROPOSALS);
+  const policyRules = collection<PolicyRule>(COLLECTIONS.POLICY_RULES);
+  const policyProposals = collection<PolicyChangeProposal>(COLLECTIONS.POLICY_CHANGE_PROPOSALS);
+  const rolesCol = collection<Role>(COLLECTIONS.ROLES);
+  const permsCol = collection<Permission>(COLLECTIONS.PERMISSIONS);
+  const usersCol = collection<RbacUser>(COLLECTIONS.USERS);
+  const auditLogs = collection<AuditLog>(COLLECTIONS.AUDIT_LOGS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -206,6 +229,8 @@ async function main(): Promise<void> {
             { returnDocument: 'after', projection: { _id: 0 } },
           );
           if (!res) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'approval not found'));
+          // Audit the human decision (sensitive action).
+          await auditLogs.insertOne(buildAuditLog({ actorType: 'human', actorId: 'admin', role: 'owner', action: `approval_${status}`, targetType: 'approval', targetId: res.approvalId, after: { actionType: res.actionType, status }, reason: reason ?? '' }));
           await ctx.publisher.publish({
             type: EVENT_TYPES.APPROVAL_DECIDED,
             taskId: res.taskId,
@@ -573,6 +598,88 @@ async function main(): Promise<void> {
         const t = await llmTraces.findOne({ traceId: req.params.id }, { projection: { _id: 0 } });
         if (!t) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'trace not found'));
         return success(t);
+      });
+
+      // --- Phase 8: Learning Governance & Adaptive Intelligence ----------
+      // Actor role from auth: admin token → owner; internal token → agent.
+      const actorRole = (req: { headers: Record<string, string | string[] | undefined> }): RoleName =>
+        roleForAuth(hasValidAdminToken({ headers: req.headers, expectedInternalToken: env.FACTORY_INTERNAL_TOKEN, expectedAdminToken: env.FACTORY_ADMIN_TOKEN }));
+      const writeAudit = async (a: Parameters<typeof buildAuditLog>[0]): Promise<AuditLog> => {
+        const log = buildAuditLog(a);
+        await auditLogs.insertOne(log);
+        await ctx.publisher.publish({ type: EVENT_TYPES.AUDIT_LOGGED, taskId: null, payload: { action: log.action, targetId: log.targetId, actorId: log.actorId } });
+        return log;
+      };
+
+      app.get('/v1/outcome-reviews', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await outcomeReviews.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get('/v1/scoring-profiles', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await scoringProfiles.find({}, { projection: { _id: 0 } }).sort({ version: -1 }).toArray()); });
+      app.get('/v1/scoring-change-proposals', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await scoringProposals.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get('/v1/policy-rules', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await policyRules.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray()); });
+      app.get('/v1/policy-change-proposals', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await policyProposals.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray()); });
+      app.get('/v1/audit-logs', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await auditLogs.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(300).toArray()); });
+      app.get('/v1/rbac', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const [roles, perms, users] = await Promise.all([
+          rolesCol.find({}, { projection: { _id: 0 } }).toArray(),
+          permsCol.find({}, { projection: { _id: 0 } }).toArray(),
+          usersCol.find({}, { projection: { _id: 0 } }).toArray(),
+        ]);
+        return success({ roles, permissions: perms, users });
+      });
+
+      // Approve/reject a scoring change → versions a new active profile (RBAC + audit).
+      app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/scoring-change-proposals/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const role = actorRole(req);
+        const action = req.body?.action ?? '';
+        if (!['approve', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
+        if (!hasPermission(role, 'approve_scoring_change')) {
+          await writeAudit({ actorType: role === 'agent' ? 'agent' : 'human', actorId: role, role, action: 'scoring_change_denied', targetType: 'scoring_change_proposal', targetId: req.params.id, reason: 'RBAC: missing approve_scoring_change' });
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, `role ${role} cannot approve scoring changes`));
+        }
+        const proposal = await scoringProposals.findOne({ proposalId: req.params.id });
+        if (!proposal) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'proposal not found'));
+        if (action !== 'approve') {
+          const status = action === 'reject' ? 'rejected' : 'changes_requested';
+          await scoringProposals.updateOne({ proposalId: proposal.proposalId }, { $set: { status, approvedBy: role, decidedAt: nowIso() } });
+          await writeAudit({ actorType: 'human', actorId: role, role, action: `scoring_change_${status}`, targetType: 'scoring_change_proposal', targetId: proposal.proposalId, reason: 'preserve current profile' });
+          return success({ proposal: { ...proposal, status } });
+        }
+        // Approve: create the next active profile version; archive the old one.
+        const activeOld = await scoringProfiles.findOne({ status: 'active' as never });
+        const nextVersion = (activeOld?.version ?? 1) + 1;
+        if (activeOld) await scoringProfiles.updateOne({ profileId: activeOld.profileId }, { $set: { status: 'archived' } });
+        const profile = buildScoringProfile(nextVersion, proposal.proposedWeights, { status: 'active', reason: proposal.reason, approvedBy: role });
+        await scoringProfiles.insertOne(profile);
+        await scoringProposals.updateOne({ proposalId: proposal.proposalId }, { $set: { status: 'approved', approvedBy: role, resultingProfileVersion: nextVersion, decidedAt: nowIso() } });
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'scoring_profile_changed', targetType: 'scoring_profile', targetId: profile.profileId, before: { version: activeOld?.version ?? null, weights: activeOld?.weights }, after: { version: nextVersion, weights: profile.weights }, reason: proposal.reason });
+        await ctx.publisher.publish({ type: EVENT_TYPES.SCORING_PROFILE_ACTIVATED, taskId: null, payload: { version: nextVersion, message: `Scoring profile v${nextVersion} active` } });
+        return success({ activated: true, profileVersion: nextVersion, profile });
+      });
+
+      // Approve/reject a policy change → activates a configurable rule (RBAC + audit).
+      app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/policy-change-proposals/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const role = actorRole(req);
+        const action = req.body?.action ?? '';
+        if (!['approve', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
+        if (!hasPermission(role, 'approve_policy_change')) {
+          await writeAudit({ actorType: role === 'agent' ? 'agent' : 'human', actorId: role, role, action: 'policy_change_denied', targetType: 'policy_change_proposal', targetId: req.params.id, reason: 'RBAC: missing approve_policy_change' });
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, `role ${role} cannot approve policy changes`));
+        }
+        const proposal = await policyProposals.findOne({ proposalId: req.params.id });
+        if (!proposal) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'proposal not found'));
+        if (action !== 'approve') {
+          const status = action === 'reject' ? 'rejected' : 'changes_requested';
+          await policyProposals.updateOne({ proposalId: proposal.proposalId }, { $set: { status, approvedBy: role, decidedAt: nowIso() } });
+          await writeAudit({ actorType: 'human', actorId: role, role, action: `policy_change_${status}`, targetType: 'policy_change_proposal', targetId: proposal.proposalId });
+          return success({ proposal: { ...proposal, status } });
+        }
+        await policyRules.insertOne({ ...proposal.rule, status: 'active' });
+        await policyProposals.updateOne({ proposalId: proposal.proposalId }, { $set: { status: 'approved', approvedBy: role, decidedAt: nowIso() } });
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'policy_rule_changed', targetType: 'policy_rule', targetId: proposal.rule.ruleId, after: proposal.rule, reason: proposal.reason });
+        await ctx.publisher.publish({ type: EVENT_TYPES.POLICY_PROFILE_ACTIVATED, taskId: null, payload: { ruleId: proposal.rule.ruleId, message: 'Policy rule activated' } });
+        return success({ activated: true, rule: proposal.rule });
       });
 
       // --- System status --------------------------------------------------

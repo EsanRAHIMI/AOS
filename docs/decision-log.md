@@ -2,6 +2,49 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-26 — Phase 8 learning governance & adaptive intelligence
+
+### D-039 No silent learning: propose → approve → version → audit
+Outcome reviews recommend scoring-weight changes, but they never apply automatically. A
+`scoring_change_proposals` record is created; approval (RBAC) versions a new active
+`scoring_profiles` entry and writes an audit log. Rejecting preserves the current profile.
+
+### D-038 Active scoring profile drives the engine; scores reference the version
+`scorePlans` takes the active profile's weights; every `plan_scores` row records `profileVersion`,
+so decisions are reproducible and auditable across weight changes.
+
+### D-037 Configurable policy with hardcoded safety overrides
+`resolvePolicy` overlays scoped `policy_rules` on the code default, but `file_delete` and
+`physical_action` are always blocked regardless of configuration — dangerous actions can never be
+enabled by a config overlay.
+
+### D-036 RBAC gates approvals; everything governance is audited
+Roles owner/operator/viewer/agent with a permission catalog; `hasPermission` gates approval endpoints
+(admin token → owner, internal token → agent). Approvals, denials, and scoring/policy changes all
+write `audit_logs` entries with before/after.
+
+## 2026-06-26 — Phase 7 strategic reasoning & policy-governed execution
+
+### D-035 Planner never returns one plan; the scorer chooses with justification
+`generateCandidatePlans` always yields ≥3 labelled plans (safe/fast/ambitious). `scorePlans`
+ranks them across 10 dimensions and records the selection reason + rejection reasons, so every
+choice is explainable and auditable.
+
+### D-034 Policy engine gates every sensitive action; some are blocked outright
+`evaluatePolicy` returns allowed / approval_required / blocked. `file_delete` and `physical_action`
+are blocked by default; code/github/deploy/env/external/message/data/production require approval.
+Decisions persist to `policy_decisions`. The selected plan's safe steps execute; sensitive steps
+are gated by an approval.
+
+### D-033 Reasoning is real but never trusted raw
+The orchestrator reasons through the LLM router (real provider when keys are set). All output is
+Zod-validated (`CandidatePlansSchema`); the deterministic fallback is itself validated. `promptVersion`
+is recorded on every trace; `/v1/llm/status` shows real vs fallback. No raw LLM text mutates state.
+
+### D-032 Decisions are remembered and become a skill
+Each strategic decision writes a `decision_memories` record (+ a `decision_memory` Memory) capturing
+options/choice/why/outcome/lessons, and reinforces `skill_strategic_planning` so future planning improves.
+
 ## 2026-06-26 — Phase 6 autonomous repair & execution
 
 ### D-031 Repair is diagnose→plan→approve→execute→re-verify; never faked

@@ -169,3 +169,79 @@ EvidenceType adds: diagnosis_report, repair_plan, repair_attempt,
 env_fix_instruction, code_patch, validation_after_repair, activation_after_repair,
 incident_closed. Incidents never close without an `incident_closed` evidence record,
 and a capability returns to `active` only after the post-repair activation check passes.
+
+## Phase 7 — Strategic Reasoning & Policy-Governed Execution collections
+| Collection | Purpose | Schema (shared/src/schemas/reasoning.ts) |
+|---|---|---|
+| strategic_plans | Candidate plans (safe/fast/ambitious) per goal | StrategicPlanSchema |
+| plan_scores | 10-dimension scores per candidate + selection | PlanScoreSchema |
+| policy_decisions | allowed/blocked/approval_required per sensitive action | PolicyDecisionSchema |
+| decision_memories | Options, choice, justification, outcome, lessons | DecisionMemorySchema |
+
+### StrategicPlan (strategic_plans)
+`planId, taskId, goal, label (safe_plan|fast_plan|ambitious_plan), title, steps[],
+requiredCapabilities[], servicesInvolved[], toolsInvolved[], requiredApprovals[],
+expectedCostUsd, expectedTimeMinutes, riskLevel, reversibility (0..1), confidence (0..1),
+expectedImpact, failureModes[], validationPlan, selected, createdAt`.
+
+### PlanScore (plan_scores)
+`scoreId, planId, taskId, label, dimensions { successProbability, risk, cost, speed,
+evidenceAvailability, reversibility, humanIntervention, capabilityFit, policyCompliance,
+longTermValue }, total, selected, selectionReason, createdAt`.
+
+### PolicyDecision (policy_decisions)
+`policyDecisionId, taskId, planId, action (code_change|github_action|deployment_action|
+environment_change|external_api_call|send_message|browser_action|file_delete|data_mutation|
+production_change|physical_action|run_validation|read_only), decision (allowed|blocked|
+approval_required), reason, requiredApprovalType, riskLevel, createdAt`.
+
+### DecisionMemory (decision_memories)
+`decisionId, taskId, goal, selectedPlanId, selectedReason, alternatives[{planId,label,reason}],
+outcome, evidenceIds[], evaluationId, lessons[], createdAt`.
+
+### Reasoning rules (enforced)
+LLM output is schema-validated (`CandidatePlansSchema`); the deterministic fallback is itself
+validated, so no unvalidated output mutates state. `LlmTrace` gains `promptVersion`. Every
+sensitive action passes the policy engine; `file_delete` and `physical_action` are blocked by
+default; code/github/deploy/env/external/message/data/production require approval. The selected
+plan is justified and its rejected alternatives recorded.
+
+## Phase 8 — Learning Governance & Adaptive Intelligence collections
+| Collection | Purpose | Schema (shared/src/schemas/governance.ts) |
+|---|---|---|
+| outcome_reviews | Predicted plan score vs actual outcome + recommended changes | OutcomeReviewSchema |
+| scoring_profiles | Versioned scoring weights (one active) | ScoringProfileSchema |
+| scoring_change_proposals | Proposed weight changes (approve to version a profile) | ScoringChangeProposalSchema |
+| policy_rules | Configurable policy overlays (scoped) | PolicyRuleSchema |
+| policy_change_proposals | Proposed policy rules | PolicyChangeProposalSchema |
+| policy_profiles | Versioned bundles of active policy rules | PolicyProfileSchema |
+| roles / permissions / users | RBAC | RoleSchema / PermissionSchema / RbacUserSchema |
+| audit_logs | Every governance action (who/what/before/after/why) | AuditLogSchema |
+
+### OutcomeReview
+`reviewId, taskId, decisionId, selectedPlanId, selectedPlanScore, actualOutcome,
+actualEvaluationScore, predictedVsActual (overestimated|underestimated|accurate), whatWorked[],
+whatFailed[], lessons[], recommendedWeightChanges[{dimension,change,reason}], recommendedPolicyChanges[],
+recommendedSkillUpdates[], createdAt`.
+
+### ScoringProfile / ScoringChangeProposal
+Profile: `profileId, version, weights(10 dims), status (active|archived|proposed), reason,
+approvedBy, createdAt, activatedAt`. Only one active; every PlanScore records `profileVersion`.
+Proposal: `proposalId, basedOnReviews[], currentWeights, proposedWeights, changes[], reason,
+expectedImpact, riskLevel, status, approvedBy, resultingProfileVersion, createdAt, decidedAt`.
+
+### PolicyRule (configurable) + hardcoded overrides
+`ruleId, action, decision, reason, requiredApprovalType, riskLevel, scope{serviceName?,capabilityId?,
+environment?}, status`. `resolvePolicy(action, ctx, rules)` resolves: (1) **hardcoded safety blocks**
+(`file_delete`, `physical_action`) always win, (2) most-specific active matching rule, (3) code default.
+
+### RBAC + AuditLog
+Roles: owner (all), operator (run/approve repairs, view), viewer (read-only), agent (request only).
+`hasPermission(role, permission)` gates approvals; denials are audit-logged. AuditLog:
+`auditId, actorType (human|agent|system), actorId, role, action, targetType, targetId, before, after,
+reason, createdAt`. PlanScore gains `profileVersion`.
+
+### Governance rule (enforced)
+No adaptive change to scoring or policy is silent: each is proposed → approved (RBAC) → versioned →
+audited. Hardcoded safety blocks override any configurable rule. The active scoring profile is used by
+the Plan Scoring Engine; rejected proposals preserve the current profile.

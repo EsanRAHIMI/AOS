@@ -25,6 +25,10 @@ import {
   scorePlans,
   evaluatePolicy,
   approvalToAction,
+  outcomeReview,
+  applyWeightChanges,
+  buildAuditLog,
+  DEFAULT_SCORING_WEIGHTS,
   CapabilityAnalysisSchema,
   type PeerClient,
   type Task,
@@ -41,6 +45,11 @@ import {
   type DecisionMemory,
   type Memory,
   type Skill,
+  type ScoringProfile,
+  type ScoringWeights,
+  type OutcomeReview,
+  type ScoringChangeProposal,
+  type AuditLog,
 } from '@factory/shared';
 import type { ServiceContext } from '@factory/service-kit';
 
@@ -85,6 +94,12 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
   // Repair intent → drive the autonomous repair loop (diagnose → plan → gate).
   if (/\brepair\b|\bfix\b/i.test(goal) && /fail|incident|broken|unhealthy|activation/i.test(goal)) {
     await runRepairPipeline(args, steps, step);
+    return;
+  }
+
+  // Governance intent → review the last decision and propose scoring learning.
+  if (/\breview\b/i.test(goal) && /decision|scoring|strateg|outcome|governance/i.test(goal)) {
+    await runGovernancePipeline(args, steps, step);
     return;
   }
 
@@ -710,7 +725,12 @@ export async function runStrategicPipeline(
   // 2) Score the plans against the active capability graph and select.
   const caps = collection<Capability>(COLLECTIONS.CAPABILITIES);
   const activeCaps = (await caps.find({ status: 'active' as never }, { projection: { _id: 0, capabilityId: 1 } }).toArray()).map((c) => c.capabilityId);
-  const scoring = scorePlans(plans, activeCaps);
+  // Use the active scoring profile's weights (Phase 8 adaptive governance).
+  const activeProfile = await collection<ScoringProfile>(COLLECTIONS.SCORING_PROFILES).findOne({ status: 'active' as never });
+  const weights = activeProfile?.weights ?? DEFAULT_SCORING_WEIGHTS;
+  const profileVersion = activeProfile?.version ?? 1;
+  const scoring = scorePlans(plans, activeCaps, { weights, profileVersion });
+  await step('orchestrator-agent', `Scoring with profile v${profileVersion}`);
   await collection<PlanScore>(COLLECTIONS.PLAN_SCORES).insertMany(scoring.scores);
   await collection<StrategicPlan>(COLLECTIONS.STRATEGIC_PLANS).updateOne({ planId: scoring.selectedPlanId }, { $set: { selected: true } });
   for (const s of scoring.scores) await ctx.publisher.publish({ type: EVENT_TYPES.PLAN_SCORED, taskId, payload: { planId: s.planId, label: s.label, total: s.total } });
@@ -805,4 +825,82 @@ export async function runStrategicPipeline(
   await tasks.updateOne({ taskId }, { $set: { status: finalStatus, requiresApproval: Boolean(approvalId), result: report, updatedAt: nowIso() } });
   await step('orchestrator-agent', report.headline, 'success');
   await ctx.publisher.publish({ type: finalStatus === 'completed' ? EVENT_TYPES.TASK_COMPLETED : EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Reasoning report ready', report: true } });
+}
+
+// ===========================================================================
+// Governance pipeline (Phase 8): review the last decision, compare predicted vs
+// actual, and propose a scoring-weight change (never applied without approval).
+// ===========================================================================
+interface DecisionLite { decisionId: string; taskId: string; goal: string; selectedPlanId: string; evaluationId: string | null; createdAt: string }
+
+export async function runGovernancePipeline(
+  args: PipelineArgs,
+  steps: ReportStep[],
+  step: (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>,
+): Promise<void> {
+  const { taskId, goal, ctx } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+
+  // 1) Find the latest strategic decision.
+  const decisions = await collection<DecisionLite>(COLLECTIONS.DECISION_MEMORIES).find({}, { projection: { _id: 0 } }).toArray();
+  const decision = decisions.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!decision) {
+    const report = { goal, taskId, status: 'completed' as const, mode: 'governance', headline: 'No strategic decisions to review yet.', steps, generatedAt: nowIso() };
+    await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
+    await step('orchestrator-agent', report.headline, 'success');
+    await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: report.headline, report: true } });
+    return;
+  }
+  await step('orchestrator-agent', `Reviewing decision ${decision.decisionId}`, 'info', decision.decisionId);
+
+  // 2) Compare predicted plan score vs actual evaluation.
+  const score = await collection<PlanScore>(COLLECTIONS.PLAN_SCORES).findOne({ planId: decision.selectedPlanId });
+  const predicted = score?.total ?? 0;
+  const evalRec = decision.evaluationId ? await collection<Evaluation>(COLLECTIONS.CAPABILITY_EVALUATIONS).findOne({ evaluationId: decision.evaluationId }) : null;
+  const actual = evalRec?.score ?? 0;
+
+  const review = outcomeReview({ taskId, decisionId: decision.decisionId, selectedPlanId: decision.selectedPlanId, selectedPlanScore: predicted, actualEvaluationScore: actual, signals: { validationPassed: true, humanIntervention: false } });
+  await collection<OutcomeReview>(COLLECTIONS.OUTCOME_REVIEWS).insertOne(review);
+  await ctx.publisher.publish({ type: EVENT_TYPES.OUTCOME_REVIEWED, taskId, payload: { reviewId: review.reviewId, predictedVsActual: review.predictedVsActual, predicted, actual, message: `Outcome: predicted ${predicted} vs actual ${actual} (${review.predictedVsActual})` } });
+  await step('orchestrator-agent', `Outcome review: predicted ${predicted} vs actual ${actual} → ${review.predictedVsActual}`, 'success', review.reviewId);
+
+  // 3) If learning is recommended, propose a scoring-weight change (never auto-applied).
+  let proposalId: string | null = null;
+  if (review.recommendedWeightChanges.length > 0) {
+    const activeProfile = await collection<ScoringProfile>(COLLECTIONS.SCORING_PROFILES).findOne({ status: 'active' as never });
+    const currentWeights: ScoringWeights = activeProfile?.weights ?? DEFAULT_SCORING_WEIGHTS;
+    const proposedWeights = applyWeightChanges(currentWeights, review.recommendedWeightChanges);
+    const proposal: ScoringChangeProposal = {
+      proposalId: genId('scp'), basedOnReviews: [review.reviewId], currentWeights, proposedWeights,
+      changes: review.recommendedWeightChanges,
+      reason: `Predicted ${predicted} vs actual ${actual} (${review.predictedVsActual}). ${review.recommendedWeightChanges.map((c) => `${c.dimension} ${c.change > 0 ? '+' : ''}${c.change}`).join(', ')}.`,
+      expectedImpact: 'Future plan scoring tracks real outcomes more closely.', riskLevel: 'low',
+      status: 'waiting_approval', approvedBy: null, resultingProfileVersion: null, createdAt: nowIso(), decidedAt: null,
+    };
+    await collection<ScoringChangeProposal>(COLLECTIONS.SCORING_CHANGE_PROPOSALS).insertOne(proposal);
+    proposalId = proposal.proposalId;
+    await ctx.publisher.publish({ type: EVENT_TYPES.SCORING_PROPOSAL_CREATED, taskId, payload: { proposalId, message: 'Scoring change proposed (awaiting approval)', level: 'warn' } });
+    await collection<AuditLog>(COLLECTIONS.AUDIT_LOGS).insertOne(buildAuditLog({ actorType: 'system', actorId: 'orchestrator-agent', action: 'scoring_change_proposed', targetType: 'scoring_change_proposal', targetId: proposalId, after: { changes: proposal.changes }, reason: proposal.reason }));
+    await ctx.publisher.publish({ type: EVENT_TYPES.AUDIT_LOGGED, taskId, payload: { action: 'scoring_change_proposed', targetId: proposalId } });
+    await step('orchestrator-agent', `Proposed scoring change (${review.recommendedWeightChanges.map((c) => c.dimension).join(', ')}) — awaiting your approval`, 'warn', proposalId);
+  }
+
+  // Governance memory.
+  await collection<Memory>(COLLECTIONS.MEMORIES).insertOne({ memoryId: genId('mem'), type: 'decision_memory', title: `Governance review of ${decision.decisionId}`, summary: `Predicted ${predicted} vs actual ${actual} (${review.predictedVsActual}). ${proposalId ? 'Proposed a scoring update.' : 'No scoring change needed.'}`, taskId, serviceId: 'orchestrator-agent', tags: ['governance', 'learning'], confidence: 'medium', createdAt: nowIso() });
+  await ctx.publisher.publish({ type: EVENT_TYPES.MEMORY_WRITTEN, taskId, payload: { message: 'Governance memory stored' } });
+
+  const finalStatus = proposalId ? 'awaiting_approval' : 'completed';
+  const report = {
+    goal, taskId, status: finalStatus, mode: 'governance', decisionId: decision.decisionId, reviewId: review.reviewId,
+    predicted, actual, predictedVsActual: review.predictedVsActual, recommendedWeightChanges: review.recommendedWeightChanges,
+    scoringProposalId: proposalId, lessons: review.lessons,
+    steps,
+    headline: proposalId
+      ? `Reviewed the last decision: predicted ${predicted} vs actual ${actual} (${review.predictedVsActual}). Proposed a scoring update — approve it to version a new active profile.`
+      : `Reviewed the last decision: predicted ${predicted} vs actual ${actual} (${review.predictedVsActual}). Scoring already tracks reality; no change.`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: finalStatus, requiresApproval: Boolean(proposalId), result: report, updatedAt: nowIso() } });
+  await step('orchestrator-agent', report.headline, 'success');
+  await ctx.publisher.publish({ type: finalStatus === 'completed' ? EVENT_TYPES.TASK_COMPLETED : EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Governance report ready', report: true } });
 }
