@@ -2,6 +2,50 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-26 — Phase 6 autonomous repair & execution
+
+### D-031 Repair is diagnose→plan→approve→execute→re-verify; never faked
+The monitor drives the loop deterministically. Execution runs only safe/approved actions and
+re-runs the live activation check; the incident resolves and the capability returns to `active`
+only when real HTTP evidence proves health. Incidents never close without an `incident_closed`
+evidence record.
+
+### D-030 Sensitive repair actions stay approval-gated
+Env changes, code patches/PRs, and redeploys require approving the repair plan in the dashboard
+before the executor runs. Safe artifacts are produced as evidence; nothing destructive or
+production-changing happens automatically.
+
+### D-029 Repair executor lives in the monitor (owns activation + incidents)
+Diagnosis/plan engines are pure shared functions; the monitor persists and executes. Re-activation
+uses `checkLiveService` directly so a re-check failure updates the existing incident instead of
+opening a duplicate.
+
+### D-028 Every repair produces learning
+On resolution the kernel writes a `solution_memory`, reinforces a reusable
+`skill_repair_service_activation`, and appends a `repair-log` doc.
+
+## 2026-06-26 — Phase 5 live activation & runtime autonomy
+
+### D-027 `active` is never faked — gated on live HTTP verification
+`validated → active` requires the Live Service Activation Engine to pass real probes against
+the service's domain (health, manifest, capabilities, safe task). If the service isn't
+reachable, the capability stays `validated`, an incident opens, and a repair is proposed.
+
+### D-026 Manual Dokploy flow kept; kernel guides, doesn't pretend to deploy
+DevOps generates a precise checklist; the human creates the app; the kernel then runs the
+activation check. The system never claims it deployed unless it actually did.
+
+### D-025 Monitor owns activation + health; repair loop is deterministic-first
+The monitor-agent runs activation checks and periodic scans, opening incidents + repair tasks
+on failure. The first repair loop is deterministic (diagnosis + redeploy proposal, approval
+required) — the model exists for richer automation later.
+
+### D-024 Real modes behind credentials; status surfaced
+GitHub delivery uses real REST when token+owner+repo are set (feature branch + PR only),
+else prepared mode. LLM uses real providers when keys are set, else the schema-validated
+fallback. `/v1/system/integrations` and `/v1/llm/status` make the mode visible; traces show
+real vs fallback per call.
+
 ## 2026-06-26 — Phase 4 reality execution layer
 
 ### D-022 No claim without evidence; capability lifecycle gated on proof

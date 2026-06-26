@@ -22,9 +22,11 @@ import {
   finishAgentRun,
   gitHubDeliveryFromEnv,
   buildEvidence,
+  buildDeploymentChecklist,
   type InfrastructureRequest,
   type GitHubOperation,
   type EvidenceRecord,
+  type DeploymentChecklist,
 } from '@factory/shared';
 import { join } from 'node:path';
 import { createFactoryService, type TaskHandler } from '@factory/service-kit';
@@ -79,6 +81,26 @@ const handleTask: TaskHandler = async (req, ctx) => {
     return { taskId, accepted: true, agentRunId: runId, operation: { operationId: operation.operationId, branchName: operation.branchName, status: operation.status, mode: operation.mode, pullRequestUrl: operation.pullRequestUrl } };
   }
 
+  // --- Dokploy activation checklist for a validated service ---
+  if (input.action === 'activation_checklist') {
+    const serviceName = String(input.serviceName);
+    const capabilityId = input.capability ? String(input.capability) : null;
+    await ctx.publisher.publish({ type: EVENT_TYPES.AGENT_RUN_STARTED, taskId, payload: { agentRunId: runId, message: `Building activation checklist for ${serviceName}` } });
+    const checklist = buildDeploymentChecklist({
+      serviceName,
+      capabilityId,
+      taskId,
+      extraSecrets: serviceName === 'browser-testing-agent' ? ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_S3_BUCKET'] : [],
+    });
+    await collection<DeploymentChecklist>(COLLECTIONS.DEPLOYMENT_CHECKLISTS).insertOne(checklist);
+    const ev = buildEvidence({ type: 'deployment_check', summary: `Activation checklist created for ${serviceName} (${checklist.subdomain}:${checklist.port})`, taskId, capabilityId, serviceName, data: { checklistId: checklist.checklistId } });
+    await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(ev);
+    await ctx.publisher.publish({ type: EVENT_TYPES.CHECKLIST_CREATED, taskId, payload: { checklistId: checklist.checklistId, serviceName, message: `Deployment checklist ready for ${serviceName}` } });
+    await ctx.publisher.publish({ type: EVENT_TYPES.EVIDENCE_RECORDED, taskId, payload: { evidenceId: ev.evidenceId, evidenceType: ev.type, message: ev.summary } });
+    await finishAgentRun(runId, { status: 'succeeded', summary: `Checklist ${checklist.checklistId} for ${serviceName}` });
+    return { taskId, accepted: true, agentRunId: runId, checklistId: checklist.checklistId, subdomain: checklist.subdomain, port: checklist.port };
+  }
+
   await ctx.publisher.publish({ type: EVENT_TYPES.AGENT_RUN_STARTED, taskId, payload: { agentRunId: runId, message: 'DevOps preparing infrastructure request' } });
 
   // Prefer an explicit serviceName (build-from-proposal path); else derive from goal.
@@ -128,6 +150,7 @@ async function main(): Promise<void> {
   await collection<InfrastructureRequest>(COLLECTIONS.INFRASTRUCTURE_REQUESTS).createIndex({ requestId: 1 }, { unique: true });
   await collection<GitHubOperation>(COLLECTIONS.GITHUB_OPERATIONS).createIndex({ operationId: 1 }, { unique: true });
   await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).createIndex({ evidenceId: 1 }, { unique: true });
+  await collection<DeploymentChecklist>(COLLECTIONS.DEPLOYMENT_CHECKLISTS).createIndex({ checklistId: 1 }, { unique: true });
   const service = await createFactoryService({
     manifest,
     port: env.SERVICE_PORT,

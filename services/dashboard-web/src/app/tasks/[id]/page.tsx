@@ -9,7 +9,7 @@ interface TaskReport {
   infrastructureRequestId?: string | null; approvalId?: string | null;
   memoryId?: string | null; documents?: string[];
   validationId?: string | null; githubBranch?: string | null; capabilityStatus?: string | null;
-  browserPassed?: boolean; evidenceCount?: number;
+  browserPassed?: boolean; evidenceCount?: number; checklistId?: string | null;
 }
 
 export default async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -68,6 +68,7 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
                 <div className="sub" style={{ marginTop: 12 }}>
                   {report.validationId && <>Validation: <b>{report.validationId}</b> · </>}
                   {report.githubBranch && <>Branch: <b>{report.githubBranch}</b> · </>}
+                  {report.checklistId && <>Checklist: <b>{report.checklistId}</b> · </>}
                   {report.capabilityStatus && <>Capability: <b>{report.capabilityStatus}</b></>}
                 </div>
               )}

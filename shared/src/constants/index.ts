@@ -139,6 +139,15 @@ export const COLLECTIONS = {
   RUNTIME_VALIDATIONS: 'runtime_validations',
   GITHUB_OPERATIONS: 'github_operations',
   EVIDENCE_RECORDS: 'evidence_records',
+  // Phase 5 — Live Activation & Runtime Autonomy
+  SERVICE_ACTIVATIONS: 'service_activations',
+  DEPLOYMENT_CHECKLISTS: 'deployment_checklists',
+  MONITOR_RUNS: 'monitor_runs',
+  INCIDENTS: 'incidents',
+  REPAIR_TASKS: 'repair_tasks',
+  // Phase 6 — Autonomous Repair & Execution
+  REPAIR_DIAGNOSES: 'repair_diagnoses',
+  REPAIR_PLANS: 'repair_plans',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -185,6 +194,18 @@ export const EVENT_TYPES = {
   CAPABILITY_VALIDATED: 'capability.validated',
   CAPABILITY_ACTIVATED: 'capability.activated',
   BROWSER_TEST_COMPLETED: 'browser.test.completed',
+  // Phase 5 — Live Activation & Runtime Autonomy
+  ACTIVATION_STARTED: 'activation.started',
+  ACTIVATION_COMPLETED: 'activation.completed',
+  CHECKLIST_CREATED: 'checklist.created',
+  MONITOR_RUN: 'monitor.run',
+  INCIDENT_CREATED: 'incident.created',
+  REPAIR_TASK_CREATED: 'repair.task.created',
+  // Phase 6 — Autonomous Repair & Execution
+  DIAGNOSIS_CREATED: 'repair.diagnosis.created',
+  REPAIR_PLAN_CREATED: 'repair.plan.created',
+  REPAIR_EXECUTED: 'repair.executed',
+  INCIDENT_RESOLVED: 'incident.resolved',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

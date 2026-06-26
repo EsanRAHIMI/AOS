@@ -30,3 +30,8 @@ export * from './generator/index.js';
 export * from './validation/index.js';
 export * from './github/index.js';
 export * from './evidence/index.js';
+// Phase 5 — Live Activation & Runtime Autonomy
+export * from './activation/index.js';
+export * from './deployment/index.js';
+// Phase 6 — Autonomous Repair & Execution
+export * from './repair/index.js';

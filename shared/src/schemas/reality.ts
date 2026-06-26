@@ -67,6 +67,15 @@ export const EvidenceType = z.enum([
   'github_commit',
   'approval_decision',
   'validation_report',
+  // Phase 6 — repair evidence
+  'diagnosis_report',
+  'repair_plan',
+  'repair_attempt',
+  'env_fix_instruction',
+  'code_patch',
+  'validation_after_repair',
+  'activation_after_repair',
+  'incident_closed',
 ]);
 export type EvidenceType = z.infer<typeof EvidenceType>;
 

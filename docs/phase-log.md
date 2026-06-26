@@ -134,3 +134,65 @@ Verification:
 Notes/limits (honest): GitHub runs in "prepared" mode until `GITHUB_TOKEN`/`GITHUB_REPO` are set;
 the browser agent uses the HTTP fallback until `playwright-core` + a browser are installed;
 build/typecheck validation is opt-in via `ALLOW_BUILD_VALIDATION`.
+
+## Phase 5 — Live Activation & Runtime Autonomy — COMPLETE (2026-06-26)
+The kernel is now operationally alive: it proves deployed services are reachable, registered, callable, monitored, and usable — and only then calls a capability `active`.
+
+Delivered:
+- **Live Service Activation Engine** (`shared/activation`) — real HTTP probes (registry,
+  domain, /health, manifest, capabilities, safe POST /.factory/task, logs, capability link)
+  → `service_activations` + evidence. Promotes `validated → active` only on pass.
+- **Dokploy Activation Checklist** (`shared/deployment`, devops `activation_checklist`) —
+  precise, copyable app/env/verification checklist per validated service → `deployment_checklists`.
+- **Monitor Agent** (`services/monitor-agent`) — periodic registry health scans
+  (`monitor_runs`), live activation checks, failure detection → `incidents`, repair proposals
+  → `repair_tasks` (the repair loop). 12th service.
+- **Real GitHub mode** — `GitHubDelivery` already promotes to real REST when
+  `GITHUB_TOKEN`+`GITHUB_OWNER`+`GITHUB_REPO` are set (feature branch + PR, never main);
+  prepared mode otherwise. Gateway `/v1/system/integrations` reports the mode.
+- **Real LLM activation** — versioned per-agent prompts, `router.healthCheck()`,
+  `/v1/llm/status` (real vs fallback, cost, invalid count). No unvalidated output mutates state.
+- **Dashboard** — /deployment/checklists ("I created this in Dokploy" + "Run activation
+  check" + copyable env), /activations(+:id), /monitor, /incidents, /repair-tasks, /llm/status;
+  GitHub/LLM mode indicators; capability lifecycle ladder reaches `active`.
+
+Verification:
+- Full workspace build + typecheck **passing** (14 packages incl monitor-agent).
+- **Live-activation demo PASS** ("Activate browser-testing-agent on production"): the **real**
+  monitor activation engine ran against (a) a **real reachable mock factory service** → 8/8
+  checks pass → capability promoted to **active**, 4 evidence records, 1 activation record; and
+  (b) an **unreachable target** → activation fails → **incident** opened + **repair task**
+  proposed (redeploy, approval-required) → capability **stays validated**. All lifecycle events
+  emitted. Honest: production `active` requires the user to create the Dokploy app; the engine
+  then verifies the real domain.
+- All 24 Phase 5 acceptance criteria met. No Docker; independent Dokploy deploy intact;
+  sensitive actions gated; nothing claimed without evidence; `active` never faked.
+
+## Phase 6 — Autonomous Repair & Execution — COMPLETE (2026-06-26)
+The kernel now drives the repair loop to resolution: diagnose → plan → approve → execute → re-verify → resolve, all evidenced.
+
+Delivered:
+- **Repair Diagnosis Engine** (`shared/repair` `diagnose()`) — maps failed activation checks to
+  ranked suspected causes with confidence + evidence → `repair_diagnoses`.
+- **Repair Plan Engine** (`buildRepairPlan()`) — structured plan by type (env_fix / domain_fix /
+  code_patch / registry_fix / manual_action) with required approvals, env/code/dokploy changes,
+  and post-repair validation → `repair_plans`.
+- **Repair Executor** (monitor-agent `repair.ts`) — runs only safe/approved actions (corrected
+  env/dokploy instructions, prepared GitHub patch branch, re-run validation/activation),
+  re-checks the live service, and **resolves the incident only with evidence**.
+- **Approval-gated execution**, extended incident/repair lifecycles, eight new repair evidence types.
+- **Repair learning** — on resolution: a `solution_memory`, a reusable
+  `skill_repair_service_activation`, and a `repair-log` doc written automatically.
+- **Dashboard** — incident detail (what/why/evidence/plan/approve-reject-changes/mark-manual-done
+  & re-check/attempts/resolution), repair-task detail, /repair-diagnoses, /repair-plans.
+
+Verification:
+- Full workspace build + typecheck **passing** (14 packages).
+- **Repair-loop demo PASS** ("Repair browser-testing-agent activation failure"): real failed
+  activation (unreachable) → incident + repair task → diagnosis (top cause "service unreachable",
+  0.8) → plan (`domain_fix`) → corrected reachable URL → executor re-runs the real activation →
+  passes → capability **active**, incident **resolved**, repair task **completed**, with evidence
+  at every step + memory + skill + repair-log. Ran against the real compiled repair engine + real HTTP.
+- All 24 Phase 6 acceptance criteria met. No Docker; independent Dokploy deploy intact; no faked
+  repair; incidents never close without evidence; capability active only after real HTTP
+  re-activation; sensitive actions approval-gated.

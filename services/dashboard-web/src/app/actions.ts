@@ -53,3 +53,50 @@ export async function requestChangesExpansionAction(formData: FormData): Promise
   await gateway.decideExpansion(id, 'request_changes', 'Changes requested from dashboard');
   revalidatePath('/expansion-proposals');
 }
+
+export async function confirmChecklistAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  await gateway.confirmChecklist(id);
+  revalidatePath('/deployment/checklists');
+}
+
+export async function runActivationAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  const baseUrl = String(formData.get('baseUrl') ?? '').trim() || undefined;
+  await gateway.runActivation(id, baseUrl);
+  revalidatePath('/deployment/checklists');
+  revalidatePath('/activations');
+  revalidatePath('/capabilities');
+  revalidatePath('/incidents');
+}
+
+export async function approveRepairPlanAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  const baseUrl = String(formData.get('baseUrl') ?? '').trim() || undefined;
+  await gateway.decideRepairPlan(id, 'approve', baseUrl);
+  revalidatePath(`/incidents/${String(formData.get('incidentId') ?? '')}`);
+  revalidatePath('/incidents');
+  revalidatePath('/repair-plans');
+  revalidatePath('/capabilities');
+}
+
+export async function rejectRepairPlanAction(formData: FormData): Promise<void> {
+  await gateway.decideRepairPlan(String(formData.get('id')), 'reject');
+  revalidatePath('/repair-plans');
+  revalidatePath('/incidents');
+}
+
+export async function requestChangesRepairPlanAction(formData: FormData): Promise<void> {
+  await gateway.decideRepairPlan(String(formData.get('id')), 'request_changes');
+  revalidatePath('/repair-plans');
+  revalidatePath('/incidents');
+}
+
+export async function revalidateIncidentAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id'));
+  const baseUrl = String(formData.get('baseUrl') ?? '').trim() || undefined;
+  await gateway.revalidateIncident(id, baseUrl);
+  revalidatePath(`/incidents/${id}`);
+  revalidatePath('/incidents');
+  revalidatePath('/capabilities');
+}

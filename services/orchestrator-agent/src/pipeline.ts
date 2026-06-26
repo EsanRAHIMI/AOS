@@ -72,6 +72,12 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
 
   await tasks.updateOne({ taskId }, { $set: { status: 'in_progress', assignedServiceId: 'orchestrator-agent', updatedAt: nowIso() } });
 
+  // Repair intent → drive the autonomous repair loop (diagnose → plan → gate).
+  if (/\brepair\b|\bfix\b/i.test(goal) && /fail|incident|broken|unhealthy|activation/i.test(goal)) {
+    await runRepairPipeline(args, steps, step);
+    return;
+  }
+
   // --- Stage 0: capability analysis via the LLM router (validated) ---------
   await step('orchestrator-agent', `Analyzing required capabilities for: ${goal}`);
   const router = llmRouterFromEnv();
@@ -103,6 +109,15 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
     if (activatable) {
       const full = await caps.findOne({ capabilityId: activatable.capabilityId });
       const serviceName = full?.supportedByServices?.[0] ?? `${activatable.capabilityId}-service`;
+      // "on production / deploy / go live" → produce a Dokploy activation checklist
+      // and hand off to the human + live activation check. Otherwise run the
+      // Phase 4 reality-validation flow (ends at `validated`).
+      if (/production|deploy|go.?live|activate .* live/i.test(goal)) {
+        await step('orchestrator-agent', `Preparing production activation for ${serviceName}`, 'info');
+        await sleep(PACE_MS);
+        await runProductionActivationPipeline(args, steps, step, activatable.capabilityId, serviceName);
+        return;
+      }
       await step('orchestrator-agent', `Capability "${activatable.capabilityId}" is ${activatable.status} — running reality validation`, 'info');
       await sleep(PACE_MS);
       await runActivationPipeline(args, steps, step, activatable.capabilityId, serviceName);
@@ -538,4 +553,113 @@ export async function runActivationPipeline(
   await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
   await step('orchestrator-agent', report.headline, 'success');
   await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: 'Activation complete', report: true } });
+}
+
+// ===========================================================================
+// Production activation: generate a Dokploy checklist, then hand off to the
+// human (create the app) + the live activation check. The kernel guides
+// deployment but never fakes `active` — it stays `validated` until the live
+// service is verified via the activation check (gateway → monitor-agent).
+// ===========================================================================
+export async function runProductionActivationPipeline(
+  args: PipelineArgs,
+  steps: ReportStep[],
+  step: (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>,
+  capabilityId: string,
+  serviceName: string,
+): Promise<void> {
+  const { taskId, ctx, peer } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+  await tasks.updateOne({ taskId }, { $set: { status: 'in_progress', assignedServiceId: 'orchestrator-agent', updatedAt: nowIso() } });
+
+  await step('orchestrator-agent', `Delegating to DevOps Agent (Dokploy activation checklist for ${serviceName})`);
+  const ck = await peer.dispatchTask<{ checklistId?: string; subdomain?: string; port?: number }>('devops-agent', {
+    taskId, goal: `Activation checklist for ${serviceName}`, input: { action: 'activation_checklist', serviceName, capability: capabilityId }, priority: 'high',
+  });
+  const checklistId = ck.data?.checklistId ?? null;
+  await step('devops-agent', checklistId ? `Checklist ready: ${serviceName} at ${ck.data?.subdomain}:${ck.data?.port}` : 'Checklist unavailable', checklistId ? 'success' : 'warn', checklistId ?? undefined);
+
+  const report = {
+    goal: args.goal, taskId, status: 'awaiting_approval' as const, mode: 'production_activation',
+    capabilityId, serviceName, checklistId, capabilityStatus: 'validated',
+    steps,
+    headline: `Activation checklist ready for ${serviceName}. Create the Dokploy app from the checklist, mark "I created this in Dokploy", then run the activation check — the capability becomes ACTIVE only after the live service is verified.`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: 'awaiting_approval', requiresApproval: true, result: report, updatedAt: nowIso() } });
+  await step('orchestrator-agent', report.headline, 'success');
+  await ctx.publisher.publish({ type: EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Production activation checklist ready', report: true, checklistId } });
+}
+
+// ===========================================================================
+// Repair pipeline: ensure an incident exists → diagnose → plan → approval gate.
+// The kernel drives the loop to a plan; execution happens on approval (gateway
+// → monitor execute_repair), which re-runs the live activation check.
+// ===========================================================================
+interface IncidentLite { incidentId: string; serviceName: string; capabilityId: string | null; status: string; createdAt: string }
+
+export async function runRepairPipeline(
+  args: PipelineArgs,
+  steps: ReportStep[],
+  step: (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>,
+): Promise<void> {
+  const { taskId, goal, ctx, peer } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+  const incidentsCol = collection<IncidentLite>(COLLECTIONS.INCIDENTS);
+
+  // Identify the target service from the goal (e.g. "browser-testing-agent").
+  const serviceName = goal.match(/([a-z0-9]+(?:-[a-z0-9]+)*-(?:agent|service))/i)?.[1] ?? 'browser-testing-agent';
+
+  // Find an open incident for that service; else create one via an activation check.
+  const all = await incidentsCol.find({}, { projection: { _id: 0 } }).toArray();
+  let incident = all.filter((i) => i.serviceName === serviceName && i.status !== 'resolved').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+
+  if (!incident) {
+    await step('orchestrator-agent', `No open incident — running an activation check on ${serviceName} to confirm the failure`);
+    const caps = collection<Capability>(COLLECTIONS.CAPABILITIES);
+    const cap = await caps.findOne({ supportedByServices: serviceName as never });
+    const capabilityId = cap?.capabilityId ?? 'browser_testing';
+    await peer.dispatchTask('monitor-agent', { taskId, goal: `Activate ${serviceName}`, input: { action: 'activate_service', serviceName, capability: capabilityId }, priority: 'high' });
+    const refreshed = await incidentsCol.find({}, { projection: { _id: 0 } }).toArray();
+    incident = refreshed.filter((i) => i.serviceName === serviceName && i.status !== 'resolved').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  }
+
+  if (!incident) {
+    const report = { goal, taskId, status: 'completed' as const, mode: 'repair', serviceName, headline: `No failure detected for ${serviceName} — nothing to repair.`, steps, generatedAt: nowIso() };
+    await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
+    await step('orchestrator-agent', report.headline, 'success');
+    await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: report.headline, report: true } });
+    return;
+  }
+  await step('orchestrator-agent', `Incident ${incident.incidentId} for ${serviceName} — diagnosing`, 'warn', incident.incidentId);
+
+  // Diagnose.
+  const dx = await peer.dispatchTask<{ diagnosis?: { diagnosisId: string; confidence: number; topCause: string } }>('monitor-agent', { taskId, goal: `Diagnose ${incident.incidentId}`, input: { action: 'diagnose_incident', incidentId: incident.incidentId }, priority: 'high' });
+  const diagnosis = dx.data?.diagnosis;
+  await step('monitor-agent', diagnosis ? `Diagnosis: ${diagnosis.topCause} (${Math.round(diagnosis.confidence * 100)}%)` : 'Diagnosis unavailable', diagnosis ? 'success' : 'warn', diagnosis?.diagnosisId);
+  await sleep(PACE_MS);
+
+  // Plan.
+  let repairPlanId: string | null = null;
+  let planType: string | null = null;
+  if (diagnosis) {
+    const pl = await peer.dispatchTask<{ plan?: { repairPlanId: string; planType: string; requiresHumanAction: boolean } }>('monitor-agent', { taskId, goal: `Plan repair`, input: { action: 'plan_repair', diagnosisId: diagnosis.diagnosisId }, priority: 'high' });
+    repairPlanId = pl.data?.plan?.repairPlanId ?? null;
+    planType = pl.data?.plan?.planType ?? null;
+    await step('monitor-agent', repairPlanId ? `Repair plan ready: ${planType}` : 'Plan unavailable', repairPlanId ? 'success' : 'warn', repairPlanId ?? undefined);
+  }
+
+  const report = {
+    goal, taskId, status: 'awaiting_approval' as const, mode: 'repair',
+    serviceName, incidentId: incident.incidentId, diagnosisId: diagnosis?.diagnosisId ?? null,
+    topCause: diagnosis?.topCause ?? null, repairPlanId, planType,
+    steps,
+    headline: repairPlanId
+      ? `Repair plan (${planType}) ready for ${serviceName}. Approve the plan (or mark the manual action done) to execute — the kernel will re-run the activation check and resolve the incident only if it passes.`
+      : `Could not produce a repair plan for ${serviceName}.`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: 'awaiting_approval', requiresApproval: true, result: report, updatedAt: nowIso() } });
+  await step('orchestrator-agent', report.headline, 'success');
+  await ctx.publisher.publish({ type: EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Repair plan ready', report: true, repairPlanId } });
 }

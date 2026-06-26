@@ -14,6 +14,7 @@
 | Event Bus Service | event-bus-service | infra | 4111 | events.simorx.com | Persist + SSE fan-out |
 | File Asset Service | file-asset-service | infra | 4112 | assets.simorx.com | S3 files + metadata |
 | Browser Testing Agent | browser-testing-agent | agent | 4116 | browser-testing.simorx.com | Validate UI (Playwright/HTTP), screenshots, evidence |
+| Monitor Agent | monitor-agent | agent | 4113 | monitor.simorx.com | Live activation checks, health scans, incidents, repairs |
 
 ## Planned (Phase 2+)
 reviewer-agent (4106), qa-agent (4107), monitor-agent (4113),

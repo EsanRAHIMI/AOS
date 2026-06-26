@@ -169,6 +169,17 @@ export class LlmRouter {
     return this.providerName;
   }
 
+  /** Liveness probe: confirms a configured provider actually responds. */
+  async healthCheck(): Promise<{ provider: ProviderName; configured: boolean; reachable: boolean; error?: string }> {
+    if (this.providerName === 'mock') return { provider: 'mock', configured: false, reachable: false };
+    try {
+      const res = await this.provider.complete({ system: 'ping', prompt: 'Reply with the single word: ok', model: this.modelFor(true), maxTokens: 5 });
+      return { provider: this.providerName, configured: true, reachable: res.text.length >= 0 };
+    } catch (e) {
+      return { provider: this.providerName, configured: true, reachable: false, error: e instanceof Error ? e.message : 'unreachable' };
+    }
+  }
+
   private modelFor(fast?: boolean): string {
     if (this.providerName === 'openai') return fast ? MODELS.openai.fast : MODELS.openai.default;
     if (this.providerName === 'anthropic') return fast ? MODELS.anthropic.fast : MODELS.anthropic.default;
@@ -245,3 +256,24 @@ export function llmRouterFromEnv(env: NodeJS.ProcessEnv = process.env): LlmRoute
     defaultProvider: (env.LLM_DEFAULT_PROVIDER as 'anthropic' | 'openai') || 'anthropic',
   });
 }
+
+export interface LlmStatus {
+  provider: ProviderName;
+  configured: boolean; // a real provider key is set (not mock)
+  mode: 'real' | 'fallback';
+  defaultProvider: string;
+}
+
+/** Report whether reasoning is real or deterministic fallback (no live call). */
+export function llmStatusFromEnv(env: NodeJS.ProcessEnv = process.env): LlmStatus {
+  const router = llmRouterFromEnv(env);
+  const configured = router.activeProvider !== 'mock';
+  return {
+    provider: router.activeProvider,
+    configured,
+    mode: configured ? 'real' : 'fallback',
+    defaultProvider: env.LLM_DEFAULT_PROVIDER || 'anthropic',
+  };
+}
+
+export { promptFor, listPrompts, type VersionedPrompt } from './prompts.js';

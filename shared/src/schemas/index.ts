@@ -9,3 +9,4 @@ export * from './memory.js';
 export * from './s3-object.js';
 export * from './capability.js';
 export * from './reality.js';
+export * from './operations.js';

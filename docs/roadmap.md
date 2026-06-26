@@ -49,6 +49,35 @@ Phase 5 candidates:
 9. Real GitHub pushes/PRs via token; auto-open PR on activation.
 10. reviewer/qa/monitor/report agents; internet-research-service; cost dashboards.
 
+## Phase 5 — Live Activation & Runtime Autonomy — DONE (core)
+1. Live Service Activation Engine (+ service_activations) — DONE.
+2. Dokploy activation checklist (+ deployment_checklists, dashboard actions) — DONE.
+3. Real GitHub mode behind credentials (feature branch + PR) — DONE.
+4. Real LLM activation: prompts, health, status (real vs fallback, cost) — DONE.
+5. Monitor agent: health scans, activation checks, incidents, repair tasks — DONE.
+6. Repair loop (incident → repair proposal, approval-gated) — DONE.
+7. Dashboard: checklists/activations/monitor/incidents/repairs/llm-status — DONE.
+8. Lifecycle reaches `active` only after live verification — DONE.
+
+Phase 6 candidates:
+9. Automated repair execution (redeploy/fix-env) behind approval.
+10. Multi-instance event bus (Redis/NATS); RBAC; cost budgets + alerts.
+11. reviewer/qa/report agents; internet-research-service.
+
+## Phase 6 — Autonomous Repair & Execution — DONE (core)
+1. Repair Diagnosis Engine (+ repair_diagnoses) — DONE.
+2. Repair Plan Engine (+ repair_plans, plan types) — DONE.
+3. Repair Executor (safe/approved actions + re-activation) — DONE.
+4. Extended incident/repair lifecycles + repair evidence types — DONE.
+5. Approval-gated repair execution — DONE.
+6. Repair learning (memory + reusable skill + repair-log) — DONE.
+7. Dashboard: incident detail, repair-task detail, diagnoses, plans — DONE.
+
+Phase 7 candidates:
+8. LLM-assisted diagnosis (real provider) with schema-validated causes.
+9. Automated execution of low-risk fixes (env/redeploy) via Dokploy API behind policy.
+10. Multi-instance event bus (Redis/NATS); RBAC; cost budgets.
+
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE
 (→ Redis/NATS if needed) · OpenAI + Anthropic via an LLM router abstraction ·

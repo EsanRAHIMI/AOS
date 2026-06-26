@@ -38,6 +38,15 @@ import {
   type RuntimeValidation,
   type GitHubOperation,
   type EvidenceRecord,
+  llmStatusFromEnv,
+  gitHubDeliveryFromEnv,
+  type ServiceActivation,
+  type DeploymentChecklist,
+  type MonitorRun,
+  type Incident,
+  type RepairTask,
+  type RepairDiagnosis,
+  type RepairPlan,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -59,6 +68,13 @@ async function main(): Promise<void> {
   const validations = collection<RuntimeValidation>(COLLECTIONS.RUNTIME_VALIDATIONS);
   const githubOps = collection<GitHubOperation>(COLLECTIONS.GITHUB_OPERATIONS);
   const evidence = collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS);
+  const activations = collection<ServiceActivation>(COLLECTIONS.SERVICE_ACTIVATIONS);
+  const checklists = collection<DeploymentChecklist>(COLLECTIONS.DEPLOYMENT_CHECKLISTS);
+  const monitorRuns = collection<MonitorRun>(COLLECTIONS.MONITOR_RUNS);
+  const incidents = collection<Incident>(COLLECTIONS.INCIDENTS);
+  const repairTasks = collection<RepairTask>(COLLECTIONS.REPAIR_TASKS);
+  const repairDiagnoses = collection<RepairDiagnosis>(COLLECTIONS.REPAIR_DIAGNOSES);
+  const repairPlans = collection<RepairPlan>(COLLECTIONS.REPAIR_PLANS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -378,6 +394,142 @@ async function main(): Promise<void> {
         if (req.query.capabilityId) filter.capabilityId = req.query.capabilityId;
         const rows = await evidence.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(300).toArray();
         return success(rows);
+      });
+
+      // --- Phase 5: Live Activation & Runtime Autonomy -------------------
+      app.get('/v1/activations', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await activations.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      app.get<{ Params: { id: string } }>('/v1/activations/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const a = await activations.findOne({ activationId: req.params.id }, { projection: { _id: 0 } });
+        if (!a) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'activation not found'));
+        const ev = await evidence.find({ taskId: a.taskId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+        return success({ activation: a, evidence: ev });
+      });
+      app.get('/v1/checklists', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await checklists.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray());
+      });
+      app.post<{ Params: { id: string } }>('/v1/checklists/:id/confirm', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const res = await checklists.findOneAndUpdate({ checklistId: req.params.id }, { $set: { status: 'deployed', updatedAt: nowIso() } }, { returnDocument: 'after', projection: { _id: 0 } });
+        if (!res) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'checklist not found'));
+        return success(res);
+      });
+      // "Run activation check" — delegate the live check to the monitor-agent.
+      app.post<{ Params: { id: string }; Body: { baseUrl?: string } }>('/v1/checklists/:id/activate', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const ck = await checklists.findOne({ checklistId: req.params.id });
+        if (!ck) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'checklist not found'));
+        const baseUrl = req.body?.baseUrl ?? `https://${ck.subdomain}`;
+        const monitor = await ctx.registry.resolve('monitor-agent');
+        const monitorUrl = monitor?.domain ?? peerUrl('monitor-agent');
+        try {
+          const r = await fetch(`${monitorUrl}/.factory/task`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
+            body: JSON.stringify({ goal: `Activate ${ck.serviceName}`, input: { action: 'activate_service', serviceName: ck.serviceName, capability: ck.capabilityId, baseUrl } }),
+          });
+          const body = (await r.json()) as { data?: { activation?: { passed?: boolean } } };
+          const passed = Boolean(body.data?.activation?.passed);
+          await checklists.updateOne({ checklistId: ck.checklistId }, { $set: { status: passed ? 'activated' : 'deployed', updatedAt: nowIso() } });
+          return reply.send(body);
+        } catch (e) {
+          return reply.code(502).send(failure(ERROR_CODES.UPSTREAM, 'monitor-agent unreachable', String(e)));
+        }
+      });
+      app.get('/v1/monitor', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await monitorRuns.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      });
+      app.get('/v1/incidents', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await incidents.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      app.get('/v1/repair-tasks', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await repairTasks.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      // Integration status: GitHub real/prepared, LLM real/fallback.
+      app.get('/v1/system/integrations', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const gh = gitHubDeliveryFromEnv();
+        return success({ github: { configured: gh.configured, mode: gh.configured ? 'github_api' : 'prepared' }, llm: llmStatusFromEnv() });
+      });
+      app.get('/v1/llm/status', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const traces = await llmTraces.find({}, { projection: { _id: 0, prompt: 0, completion: 0, system: 0 } }).sort({ createdAt: -1 }).limit(200).toArray();
+        const real = traces.filter((t) => !t.usedFallback).length;
+        const totalCost = traces.reduce((a, t) => a + Number(t.costUsd ?? 0), 0);
+        return success({ status: llmStatusFromEnv(), traceCount: traces.length, realCount: real, fallbackCount: traces.length - real, invalidCount: traces.filter((t) => !t.valid).length, totalCostUsd: Number(totalCost.toFixed(4)) });
+      });
+
+      // --- Phase 6: Autonomous Repair & Execution ------------------------
+      app.get('/v1/repair-diagnoses', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await repairDiagnoses.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      app.get('/v1/repair-plans', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await repairPlans.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+      // Incident detail: failure + diagnosis + plan + repair task + evidence.
+      app.get<{ Params: { id: string } }>('/v1/incidents/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const incident = await incidents.findOne({ incidentId: req.params.id }, { projection: { _id: 0 } });
+        if (!incident) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'incident not found'));
+        const [diagnosis, plan, repairTask, ev] = await Promise.all([
+          repairDiagnoses.findOne({ incidentId: incident.incidentId }, { projection: { _id: 0 } }),
+          repairPlans.findOne({ incidentId: incident.incidentId }, { projection: { _id: 0 } }),
+          repairTasks.findOne({ incidentId: incident.incidentId }, { projection: { _id: 0 } }),
+          evidence.find({ serviceName: incident.serviceName }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
+        ]);
+        return success({ incident, diagnosis, plan, repairTask, evidence: ev });
+      });
+      app.get<{ Params: { id: string } }>('/v1/repair-tasks/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const rt = await repairTasks.findOne({ repairTaskId: req.params.id }, { projection: { _id: 0 } });
+        if (!rt) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'repair task not found'));
+        return success(rt);
+      });
+
+      const delegateExecuteRepair = async (repairPlanId: string, baseUrl?: string): Promise<unknown> => {
+        const monitor = await ctx.registry.resolve('monitor-agent');
+        const monitorUrl = monitor?.domain ?? peerUrl('monitor-agent');
+        const r = await fetch(`${monitorUrl}/.factory/task`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
+          body: JSON.stringify({ goal: 'Execute repair', input: { action: 'execute_repair', repairPlanId, baseUrl } }),
+        });
+        return (await r.json()) as unknown;
+      };
+
+      // Approve a repair plan → execute (sensitive actions stay gated by this approval).
+      app.post<{ Params: { id: string }; Body: { action: string; baseUrl?: string } }>('/v1/repair-plans/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const action = req.body?.action ?? '';
+        const map: Record<string, RepairPlan['status']> = { approve: 'approved', reject: 'rejected', request_changes: 'changes_requested' };
+        const status = map[action];
+        if (!status) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
+        const plan = await repairPlans.findOneAndUpdate({ repairPlanId: req.params.id }, { $set: { status, updatedAt: nowIso() } }, { returnDocument: 'after', projection: { _id: 0 } });
+        if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'plan not found'));
+        await ctx.publisher.publish({ type: EVENT_TYPES.APPROVAL_DECIDED, taskId: null, payload: { repairPlanId: plan.repairPlanId, status, message: `Repair plan ${status}` } });
+        if (status === 'approved') {
+          const result = await delegateExecuteRepair(plan.repairPlanId, req.body?.baseUrl);
+          return reply.send(result);
+        }
+        return success({ plan });
+      });
+
+      // "Mark manual action done" / "re-run validation" → re-execute the plan.
+      app.post<{ Params: { id: string }; Body: { baseUrl?: string } }>('/v1/incidents/:id/revalidate', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const plan = await repairPlans.findOne({ incidentId: req.params.id }, { sort: { createdAt: -1 }, projection: { _id: 0 } });
+        if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'no repair plan for incident'));
+        const result = await delegateExecuteRepair(plan.repairPlanId, req.body?.baseUrl);
+        return reply.send(result);
       });
 
       // --- System status --------------------------------------------------

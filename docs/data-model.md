@@ -108,3 +108,64 @@ s3ObjectId, createdAt`.
 validation passes; `validated → active` only after the service registry confirms a
 reachable manifest. Browser test contracts (`BrowserTestPlanSchema`, `BrowserTestReportSchema`)
 also live in reality.ts.
+
+## Phase 5 — Live Activation & Runtime Autonomy collections
+| Collection | Purpose | Schema (shared/src/schemas/operations.ts) |
+|---|---|---|
+| service_activations | Live activation checks proving a service is deployed & usable | ServiceActivationSchema |
+| deployment_checklists | Precise Dokploy activation checklists (copyable env) | DeploymentChecklistSchema |
+| monitor_runs | Periodic health scans across registered services | MonitorRunSchema |
+| incidents | Detected failures (activation/monitor) | IncidentSchema |
+| repair_tasks | Proposed fixes for incidents (the repair loop) | RepairTaskSchema |
+
+### ServiceActivation (service_activations)
+`activationId, taskId, serviceName, capabilityId, domain, checks[{name,passed,detail}],
+passed, status (running|passed|failed), evidenceIds[], promotedToActive, incidentId,
+createdAt, updatedAt`. Critical checks: domain_reachable, health_ok, manifest_valid,
+task_endpoint_accepts.
+
+### DeploymentChecklist (deployment_checklists)
+`checklistId, taskId, serviceName, capabilityId, appName, repository, rootDirectory,
+buildCommand, startCommand, port, subdomain, healthCheckPath, env[{key,value,secret}],
+notes[], verificationSteps[], status (awaiting_deployment|deployed|activated|failed),
+createdAt, updatedAt`.
+
+### MonitorRun / Incident / RepairTask
+MonitorRun: `monitorRunId, scope, services[ServiceHealth], healthyCount, unhealthyCount,
+incidentIds[], createdAt`. Incident: `incidentId, serviceName, capabilityId, taskId, title,
+detail, severity, status, source (activation|monitor), evidenceIds[], repairTaskId, …`.
+RepairTask: `repairTaskId, incidentId, serviceName, diagnosis, proposedFix,
+recommendedAction (redeploy|fix_env|rebuild|rescaffold|manual), requiresApproval, status, …`.
+
+### Lifecycle rule (enforced)
+`validated → active` happens **only** when the live activation check passes against a real,
+reachable service. The kernel never fakes `active`.
+
+## Phase 6 — Autonomous Repair & Execution collections
+| Collection | Purpose | Schema (shared/src/schemas/operations.ts) |
+|---|---|---|
+| repair_diagnoses | Ranked suspected causes for a failure | RepairDiagnosisSchema |
+| repair_plans | Structured, executable, approval-gated repair plans | RepairPlanSchema |
+
+### RepairDiagnosis (repair_diagnoses)
+`diagnosisId, incidentId, repairTaskId, serviceName, capabilityId,
+suspectedCauses[{cause,confidence,evidence[]}], confidence, evidenceIds[],
+recommendedFixes[], requiresHumanAction, riskLevel, createdAt`.
+
+### RepairPlan (repair_plans)
+`repairPlanId, diagnosisId, repairTaskId, incidentId, serviceName, capabilityId,
+planType (env_fix|redeploy|domain_fix|code_patch|dependency_fix|registry_fix|
+manual_action|unknown), steps[], requiredApprovals[], requiredEnvChanges[],
+requiredCodeChanges[], requiredDokployActions[], validationAfterRepair,
+requiresHumanAction, status (draft|waiting_approval|approved|rejected|
+changes_requested|executed|failed), createdAt, updatedAt`.
+
+### Extended lifecycles (Phase 6)
+Incident: `open → diagnosing → repair_planned → waiting_approval → repairing →
+waiting_manual_action → validating → resolved | failed`.
+RepairTask: `proposed → diagnosing → planned → waiting_approval → approved →
+executing → waiting_manual_action → validating → completed | failed | cancelled`.
+EvidenceType adds: diagnosis_report, repair_plan, repair_attempt,
+env_fix_instruction, code_patch, validation_after_repair, activation_after_repair,
+incident_closed. Incidents never close without an `incident_closed` evidence record,
+and a capability returns to `active` only after the post-repair activation check passes.

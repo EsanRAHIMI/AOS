@@ -63,4 +63,25 @@ export const gateway = {
   validation: (id: string) => call<{ validation: unknown; evidence: unknown[] }>(`/v1/validations/${id}`),
   githubOps: () => call<unknown[]>('/v1/github'),
   evidence: (query = '') => call<unknown[]>(`/v1/evidence${query}`),
+  // Phase 5 — Live Activation & Runtime Autonomy
+  activations: () => call<unknown[]>('/v1/activations'),
+  activation: (id: string) => call<{ activation: unknown; evidence: unknown[] }>(`/v1/activations/${id}`),
+  checklists: () => call<unknown[]>('/v1/checklists'),
+  confirmChecklist: (id: string) => call<unknown>(`/v1/checklists/${id}/confirm`, { method: 'POST' }),
+  runActivation: (id: string, baseUrl?: string) =>
+    call<{ activation?: { passed?: boolean } }>(`/v1/checklists/${id}/activate`, { method: 'POST', body: JSON.stringify({ baseUrl }) }),
+  monitor: () => call<unknown[]>('/v1/monitor'),
+  incidents: () => call<unknown[]>('/v1/incidents'),
+  repairTasks: () => call<unknown[]>('/v1/repair-tasks'),
+  // Phase 6 — Autonomous Repair & Execution
+  incidentDetail: (id: string) => call<{ incident: unknown; diagnosis: unknown; plan: unknown; repairTask: unknown; evidence: unknown[] }>(`/v1/incidents/${id}`),
+  repairTaskDetail: (id: string) => call<unknown>(`/v1/repair-tasks/${id}`),
+  repairDiagnoses: () => call<unknown[]>('/v1/repair-diagnoses'),
+  repairPlans: () => call<unknown[]>('/v1/repair-plans'),
+  decideRepairPlan: (id: string, action: string, baseUrl?: string) =>
+    call<{ repair?: { resolved?: boolean } }>(`/v1/repair-plans/${id}/decision`, { method: 'POST', body: JSON.stringify({ action, baseUrl }) }),
+  revalidateIncident: (id: string, baseUrl?: string) =>
+    call<{ repair?: { resolved?: boolean } }>(`/v1/incidents/${id}/revalidate`, { method: 'POST', body: JSON.stringify({ baseUrl }) }),
+  integrations: () => call<{ github: { configured: boolean; mode: string }; llm: { provider: string; mode: string; configured: boolean; defaultProvider: string } }>('/v1/system/integrations'),
+  llmStatus: () => call<{ status: { provider: string; mode: string }; traceCount: number; realCount: number; fallbackCount: number; invalidCount: number; totalCostUsd: number }>('/v1/llm/status'),
 };
