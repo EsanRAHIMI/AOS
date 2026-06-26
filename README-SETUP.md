@@ -667,13 +667,90 @@ FACTORY_INTERNAL_TOKEN=
 
 ---
 
-## بررسی نهایی
+## خلاصه — دامنه‌ها، health و کار هر سرویس
 
-بعد از deploy همه سرویس‌ها:
+ترتیب deploy و health check (کپی‌پیست):
 
 ```bash
+# ۱ — service-registry — ثبت و کشف سرویس‌ها
+curl https://registry.simorx.com/health
+
+# ۲ — event-bus-service — رویدادهای real-time (SSE)
+curl https://events.simorx.com/health
+
+# ۳ — gateway-api — دروازه HTTP و API عمومی
 curl https://api.simorx.com/health
-curl https://api.simorx.com/v1/services
+
+# ۴ — orchestrator-agent — مغز مرکزی، برنامه‌ریزی taskها
+curl https://orchestrator.simorx.com/health
+
+# ۵ — architect-agent — طراحی معماری
+curl https://architect.simorx.com/health
+
+# ۶ — builder-agent — تولید و ویرایش کد
+curl https://builder.simorx.com/health
+
+# ۷ — devops-agent — deploy و CI/CD
+curl https://devops.simorx.com/health
+
+# ۸ — memory-agent — حافظه بلندمدت
+curl https://memory.simorx.com/health
+
+# ۹ — documentation-service — مستندسازی خودکار
+curl https://docs.simorx.com/health
+
+# ۱۰ — file-asset-service — فایل و asset روی S3
+curl https://assets.simorx.com/health
+
+# ۱۱ — monitor-agent — health scan و incident
+curl https://monitor.simorx.com/health
+
+# ۱۲ — browser-testing-agent — تست مرورگر/HTTP
+curl https://browser-testing.simorx.com/health
+
+# ۱۳ — dashboard-web — داشبورد کنترل (UI)
+curl https://factory.simorx.com/health
 ```
 
-همه باید `{"status":"ok"}` بدهند و لیست سرویس‌ها پر باشد.
+| # | سرویس | دامنه | پورت | کار |
+|---|---|---|---:|---|
+| 1 | service-registry | registry.simorx.com | 4108 | ثبت سرویس‌ها |
+| 2 | event-bus-service | events.simorx.com | 4111 | رویداد live |
+| 3 | gateway-api | api.simorx.com | 4101 | API عمومی |
+| 4 | orchestrator-agent | orchestrator.simorx.com | 4102 | هماهنگی agentها |
+| 5 | architect-agent | architect.simorx.com | 4103 | طراحی فنی |
+| 6 | builder-agent | builder.simorx.com | 4104 | ساخت کد |
+| 7 | devops-agent | devops.simorx.com | 4105 | deploy |
+| 8 | memory-agent | memory.simorx.com | 4109 | حافظه |
+| 9 | documentation-service | docs.simorx.com | 4110 | مستندات |
+| 10 | file-asset-service | assets.simorx.com | 4112 | فایل/S3 |
+| 11 | monitor-agent | monitor.simorx.com | 4113 | مانیتورینگ |
+| 12 | browser-testing-agent | browser-testing.simorx.com | 4116 | تست UI |
+| 13 | dashboard-web | factory.simorx.com | 4100 | داشبورد |
+
+پاسخ سالم: `{"status":"ok"}`
+
+**بررسی کل سیستم:**
+```bash
+curl https://api.simorx.com/v1/services
+```
+باید همه ۱۳ سرویس در لیست باشند.
+
+---
+
+## یادآوری سریع
+
+**لوکال**
+```bash
+cp .env.example .env && pnpm dev:all
+# داشبورد: http://localhost:4100
+```
+
+**Dokploy**
+- Build path: `/` (روت monorepo)
+- `SERVICE_ID` در env هر Application
+- `nixpacks.toml` در روت → build/start خودکار با pnpm
+- `FACTORY_INTERNAL_TOKEN` یکسان در همه سرویس‌ها
+
+**Phase 10** — env جدید لازم نیست؛ فقط redeploy: `dashboard-web`، `gateway-api`، `orchestrator-agent`
+

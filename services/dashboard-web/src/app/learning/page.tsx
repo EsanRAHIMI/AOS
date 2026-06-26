@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { timeAgo } from '@/lib/format';
+import { PageHeader, EmptyState } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export default async function LearningPage() {

@@ -1,6 +1,7 @@
 import { gateway } from '@/lib/gateway';
 import { LiveTaskTimeline, type TimelineRow } from '@/components/LiveTaskTimeline';
 import { timeAgo } from '@/lib/format';
+import { PageHeader, EmptyState, StatusPill } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 interface ReportStep { service: string; message: string; ok: boolean }
@@ -30,7 +31,7 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
     gateway.evidence(`?taskId=${id}`) as Promise<Array<Record<string, unknown>> | null>,
   ]);
 
-  if (!task) return (<><h1 className="h1">Task</h1><div className="card"><div className="empty">Task not found.</div></div></>);
+  if (!task) return (<><PageHeader title="Task" crumbs={[['/tasks', 'Tasks'], [`/tasks/${id}`, id]]} /><div className="card"><EmptyState icon="◇" title="Task not found" hint="It may have been removed or the id is incorrect." /></div></>);
 
   const initial: TimelineRow[] = (timeline ?? []).map((e) => ({
     type: String(e.type),
@@ -41,12 +42,15 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
   }));
   const report = (task.result ?? null) as TaskReport | null;
   const status = String(task.status);
-  const cls = status === 'completed' ? 'ok' : status === 'failed' || status === 'cancelled' ? 'err' : status === 'awaiting_approval' ? 'warn' : '';
 
   return (
     <>
-      <h1 className="h1">{String(task.goal)}</h1>
-      <p className="sub">Task {id} · <span className={`badge ${cls}`}>{status}</span></p>
+      <PageHeader
+        title={String(task.goal)}
+        subtitle="Mission control — every plan, action, and decision the kernel took for this goal, streamed live."
+        crumbs={[['/tasks', 'Tasks'], [`/tasks/${id}`, id]]}
+        actions={<StatusPill status={status} />}
+      />
 
       <div className="grid cols-2">
         <LiveTaskTimeline taskId={id} initial={initial} />
@@ -54,21 +58,23 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
         <div className="card">
           <div className="label" style={{ marginBottom: 10 }}>Final report</div>
           {!report ? (
-            <div className="empty">Report appears once the pipeline finishes.</div>
+            <EmptyState icon="✦" title="Report pending" hint="The final report appears once the pipeline finishes." />
           ) : (
             <div>
               <p style={{ marginTop: 0 }}>{report.headline}</p>
-              <table>
-                <tbody>
-                  {(report.steps ?? []).map((s, i) => (
-                    <tr key={i}>
-                      <td className="m" style={{ width: 160 }}>{s.service}</td>
-                      <td>{s.message}</td>
-                      <td><span className={`badge ${s.ok ? 'ok' : 'warn'}`}>{s.ok ? 'ok' : 'skip'}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-wrap">
+                <table>
+                  <tbody>
+                    {(report.steps ?? []).map((s, i) => (
+                      <tr key={i}>
+                        <td className="m" style={{ width: 160 }}>{s.service}</td>
+                        <td>{s.message}</td>
+                        <td><span className={`badge ${s.ok ? 'ok' : 'warn'}`}>{s.ok ? 'ok' : 'skip'}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <div className="sub" style={{ marginTop: 12 }}>
                 {report.infrastructureRequestId && <>Infra request: <b>{report.infrastructureRequestId}</b> · </>}
                 {report.approvalId && <>Approval: <b>{report.approvalId}</b> · </>}
