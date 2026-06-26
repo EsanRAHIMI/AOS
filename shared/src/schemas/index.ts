@@ -12,3 +12,4 @@ export * from './reality.js';
 export * from './operations.js';
 export * from './reasoning.js';
 export * from './governance.js';
+export * from './learning.js';

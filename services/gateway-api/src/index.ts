@@ -65,6 +65,13 @@ import {
   type RbacUser,
   type AuditLog,
   type RoleName,
+  type LearningRun,
+  type ReliabilityScore,
+  type OperationalPattern,
+  type MemorySummary,
+  type CompressedContext,
+  type SystemRecommendation,
+  type PromptPerformance,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -106,6 +113,13 @@ async function main(): Promise<void> {
   const permsCol = collection<Permission>(COLLECTIONS.PERMISSIONS);
   const usersCol = collection<RbacUser>(COLLECTIONS.USERS);
   const auditLogs = collection<AuditLog>(COLLECTIONS.AUDIT_LOGS);
+  const learningRuns = collection<LearningRun>(COLLECTIONS.LEARNING_RUNS);
+  const reliabilityScores = collection<ReliabilityScore>(COLLECTIONS.RELIABILITY_SCORES);
+  const operationalPatterns = collection<OperationalPattern>(COLLECTIONS.OPERATIONAL_PATTERNS);
+  const memorySummaries = collection<MemorySummary>(COLLECTIONS.MEMORY_SUMMARIES);
+  const compressedContexts = collection<CompressedContext>(COLLECTIONS.COMPRESSED_CONTEXTS);
+  const systemRecommendations = collection<SystemRecommendation>(COLLECTIONS.SYSTEM_RECOMMENDATIONS);
+  const promptPerformance = collection<PromptPerformance>(COLLECTIONS.PROMPT_PERFORMANCE);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -680,6 +694,51 @@ async function main(): Promise<void> {
         await writeAudit({ actorType: 'human', actorId: role, role, action: 'policy_rule_changed', targetType: 'policy_rule', targetId: proposal.rule.ruleId, after: proposal.rule, reason: proposal.reason });
         await ctx.publisher.publish({ type: EVENT_TYPES.POLICY_PROFILE_ACTIVATED, taskId: null, payload: { ruleId: proposal.rule.ruleId, message: 'Policy rule activated' } });
         return success({ activated: true, rule: proposal.rule });
+      });
+
+      // --- Phase 9: Operational Learning & Memory Intelligence -----------
+      app.get('/v1/learning-runs', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await learningRuns.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray()); });
+      app.get('/v1/reliability', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await reliabilityScores.find({}, { projection: { _id: 0 } }).sort({ lastUpdatedAt: -1 }).limit(300).toArray()); });
+      app.get('/v1/patterns', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await operationalPatterns.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get('/v1/memory-summaries', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await memorySummaries.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get('/v1/compressed-contexts', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await compressedContexts.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray()); });
+      app.get('/v1/system-recommendations', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await systemRecommendations.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get('/v1/prompt-performance', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await promptPerformance.find({}, { projection: { _id: 0 } }).sort({ lastUpdatedAt: -1 }).limit(100).toArray()); });
+
+      // Approve/convert a system recommendation (RBAC + audit). Approving converts it to a task.
+      app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/system-recommendations/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const role = actorRole(req);
+        const action = req.body?.action ?? '';
+        if (!['approve', 'convert_to_task', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
+        if (!hasPermission(role, 'approve_recommendation')) {
+          await writeAudit({ actorType: role === 'agent' ? 'agent' : 'human', actorId: role, role, action: 'recommendation_denied', targetType: 'system_recommendation', targetId: req.params.id, reason: 'RBAC: missing approve_recommendation' });
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, `role ${role} cannot approve recommendations`));
+        }
+        const rec = await systemRecommendations.findOne({ recommendationId: req.params.id });
+        if (!rec) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'recommendation not found'));
+        if (action === 'reject' || action === 'request_changes') {
+          const status = action === 'reject' ? 'rejected' : 'changes_requested';
+          await systemRecommendations.updateOne({ recommendationId: rec.recommendationId }, { $set: { status, updatedAt: nowIso() } });
+          await writeAudit({ actorType: 'human', actorId: role, role, action: `recommendation_${status}`, targetType: 'system_recommendation', targetId: rec.recommendationId });
+          await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_DECIDED, taskId: null, payload: { recommendationId: rec.recommendationId, status } });
+          return success({ recommendation: { ...rec, status } });
+        }
+        // Approve → convert to a task that the orchestrator will pick up.
+        const now = nowIso();
+        const newTask: Task = { taskId: genId('task'), goal: `[from recommendation] ${rec.title}`, status: 'queued', priority: 'normal', createdBy: 'gateway-api', assignedServiceId: null, parentTaskId: null, requiresApproval: false, tags: ['recommendation', rec.type], error: null, createdAt: now, updatedAt: now };
+        await tasks.insertOne(newTask);
+        await systemRecommendations.updateOne({ recommendationId: rec.recommendationId }, { $set: { status: 'converted', convertedTo: 'task', convertedId: newTask.taskId, updatedAt: now } });
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'recommendation_converted', targetType: 'system_recommendation', targetId: rec.recommendationId, after: { taskId: newTask.taskId, type: rec.type }, reason: rec.reason });
+        await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_DECIDED, taskId: newTask.taskId, payload: { recommendationId: rec.recommendationId, status: 'converted', taskId: newTask.taskId, message: `Recommendation converted to task ${newTask.taskId}` } });
+        await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: newTask.taskId, payload: { goal: newTask.goal } });
+        const orchestrator = await ctx.registry.resolve('orchestrator-agent');
+        const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
+        try {
+          await fetch(`${orchestratorUrl}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: newTask.taskId, goal: newTask.goal, input: { fromRecommendation: rec.recommendationId } }) });
+          await tasks.updateOne({ taskId: newTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
+        } catch (e) { ctx.log.warn({ err: e }, 'recommendation task forward failed'); }
+        return success({ converted: true, taskId: newTask.taskId });
       });
 
       // --- System status --------------------------------------------------

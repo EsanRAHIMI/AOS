@@ -15,6 +15,8 @@ interface TaskReport {
   llmProvider?: string; usedFallback?: boolean; llmCostUsd?: number; traceId?: string | null;
   confidence?: number; decisionId?: string | null;
   policyDecisions?: Array<{ action: string; decision: string }>;
+  recordsAnalyzed?: number; reliabilityCount?: number; patternCount?: number;
+  successPatterns?: string[]; failurePatterns?: string[]; recommendationCount?: number; learningRunId?: string | null;
 }
 
 export default async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -102,6 +104,16 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
             <div className="sub" style={{ marginTop: 6 }}><b>Policy:</b> {(report.policyDecisions ?? []).map((p) => `${p.action}→${p.decision}`).join(', ')}</div>
           )}
           {report.decisionId && <div className="sub" style={{ marginTop: 6 }}>Decision memory: <b>{report.decisionId}</b></div>}
+        </div>
+      )}
+
+      {report?.mode === 'learning' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="label" style={{ marginBottom: 10 }}>Learning report</div>
+          <p style={{ marginTop: 0 }}>Analyzed <b>{report.recordsAnalyzed}</b> records · {report.reliabilityCount} reliability scores · {report.patternCount} patterns · {report.recommendationCount} recommendation(s).</p>
+          {(report.successPatterns ?? []).length > 0 && <p className="sub" style={{ margin: 0 }}><b>Success:</b> {(report.successPatterns ?? []).join(' · ')}</p>}
+          {(report.failurePatterns ?? []).length > 0 && <p className="sub" style={{ marginTop: 4 }}><b>Weak points:</b> {(report.failurePatterns ?? []).join(' · ')}</p>}
+          <p className="sub" style={{ marginTop: 6 }}>Review them in <a href="/system-recommendations">Recommendations</a>, <a href="/reliability">Reliability</a>, and <a href="/patterns">Patterns</a>.</p>
         </div>
       )}
 

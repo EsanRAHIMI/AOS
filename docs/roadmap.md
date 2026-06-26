@@ -105,6 +105,20 @@ Phase 9 candidates:
 9. Full auth (OIDC/JWT) + per-user RBAC; policy-as-config editor in the dashboard.
 10. Multi-instance event bus (Redis/NATS); cost budgets + alerts; report-agent.
 
+## Phase 9 — Operational Learning & Memory Intelligence — DONE (core)
+1. Historical Learning Engine aggregating 15 collections — DONE.
+2. Reliability scores + snapshots (trend + confidence) — DONE.
+3. Pattern miner (success + failure/weak-point) — DONE.
+4. Memory compression (summaries + compressed contexts) — DONE.
+5. Evidence-backed system recommendations (approve→convert) — DONE.
+6. Prompt performance from traces + outcomes — DONE.
+7. Learning dashboard (runs/reliability/patterns/summaries/recommendations/prompt-perf) — DONE.
+
+Phase 10 candidates:
+8. Scheduled/continuous learning runs; auto-prune raw memory into summaries.
+9. Apply approved recommendations through the existing proposal pipelines automatically.
+10. Cross-task causal analysis; report-agent for periodic governance/learning reports.
+
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE
 (→ Redis/NATS if needed) · OpenAI + Anthropic via an LLM router abstraction ·

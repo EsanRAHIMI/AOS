@@ -103,4 +103,14 @@ export const gateway = {
     call<{ activated?: boolean; profileVersion?: number }>(`/v1/scoring-change-proposals/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   decidePolicyProposal: (id: string, action: string) =>
     call<{ activated?: boolean }>(`/v1/policy-change-proposals/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  // Phase 9 — Operational Learning & Memory Intelligence
+  learningRuns: () => call<unknown[]>('/v1/learning-runs'),
+  reliability: () => call<unknown[]>('/v1/reliability'),
+  patterns: () => call<unknown[]>('/v1/patterns'),
+  memorySummaries: () => call<unknown[]>('/v1/memory-summaries'),
+  compressedContexts: () => call<unknown[]>('/v1/compressed-contexts'),
+  systemRecommendations: () => call<unknown[]>('/v1/system-recommendations'),
+  promptPerformance: () => call<unknown[]>('/v1/prompt-performance'),
+  decideRecommendation: (id: string, action: string) =>
+    call<{ converted?: boolean; taskId?: string }>(`/v1/system-recommendations/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
 };

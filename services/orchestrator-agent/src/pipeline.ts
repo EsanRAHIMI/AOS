@@ -29,6 +29,11 @@ import {
   applyWeightChanges,
   buildAuditLog,
   DEFAULT_SCORING_WEIGHTS,
+  computeReliabilityScores,
+  minePatterns,
+  buildMemorySummaries,
+  buildRecommendations,
+  computePromptPerformance,
   CapabilityAnalysisSchema,
   type PeerClient,
   type Task,
@@ -50,6 +55,15 @@ import {
   type OutcomeReview,
   type ScoringChangeProposal,
   type AuditLog,
+  type HistoryBundle,
+  type LearningRun,
+  type ReliabilityScore,
+  type ReliabilitySnapshot,
+  type OperationalPattern,
+  type MemorySummary,
+  type CompressedContext,
+  type SystemRecommendation,
+  type PromptPerformance,
 } from '@factory/shared';
 import type { ServiceContext } from '@factory/service-kit';
 
@@ -94,6 +108,12 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
   // Repair intent → drive the autonomous repair loop (diagnose → plan → gate).
   if (/\brepair\b|\bfix\b/i.test(goal) && /fail|incident|broken|unhealthy|activation/i.test(goal)) {
     await runRepairPipeline(args, steps, step);
+    return;
+  }
+
+  // Operational learning → analyze the whole history, mine patterns, recommend.
+  if (/\banaly[sz]e\b|operational learning|system history|learn from history|recommend improvements/i.test(goal)) {
+    await runLearningPipeline(args, steps, step);
     return;
   }
 
@@ -903,4 +923,115 @@ export async function runGovernancePipeline(
   await tasks.updateOne({ taskId }, { $set: { status: finalStatus, requiresApproval: Boolean(proposalId), result: report, updatedAt: nowIso() } });
   await step('orchestrator-agent', report.headline, 'success');
   await ctx.publisher.publish({ type: finalStatus === 'completed' ? EVENT_TYPES.TASK_COMPLETED : EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Governance report ready', report: true } });
+}
+
+// ===========================================================================
+// Operational learning pipeline (Phase 9): aggregate the whole history into
+// reliability scores, patterns, compressed memory, and evidence-backed
+// recommendations. Learning recommends; approval (gateway + RBAC) applies.
+// ===========================================================================
+async function loadHistory(): Promise<HistoryBundle> {
+  const get = async (name: string): Promise<Array<Record<string, unknown>>> =>
+    (await collection(name as never).find({}, { projection: { _id: 0 } }).toArray()) as Array<Record<string, unknown>>;
+  return {
+    tasks: (await get(COLLECTIONS.TASKS)) as never,
+    agentRuns: (await get(COLLECTIONS.AGENT_RUNS)) as never,
+    activations: (await get(COLLECTIONS.SERVICE_ACTIVATIONS)) as never,
+    validations: (await get(COLLECTIONS.RUNTIME_VALIDATIONS)) as never,
+    evaluations: (await get(COLLECTIONS.CAPABILITY_EVALUATIONS)) as never,
+    incidents: (await get(COLLECTIONS.INCIDENTS)) as never,
+    repairTasks: (await get(COLLECTIONS.REPAIR_TASKS)) as never,
+    repairPlans: (await get(COLLECTIONS.REPAIR_PLANS)) as never,
+    planScores: (await get(COLLECTIONS.PLAN_SCORES)) as never,
+    decisions: (await get(COLLECTIONS.DECISION_MEMORIES)) as never,
+    outcomeReviews: (await get(COLLECTIONS.OUTCOME_REVIEWS)) as never,
+    evidence: (await get(COLLECTIONS.EVIDENCE_RECORDS)) as never,
+    skills: (await get(COLLECTIONS.SKILLS)) as never,
+    memories: (await get(COLLECTIONS.MEMORIES)) as never,
+    llmTraces: (await get(COLLECTIONS.LLM_TRACES)) as never,
+  };
+}
+
+export async function runLearningPipeline(
+  args: PipelineArgs,
+  steps: ReportStep[],
+  step: (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>,
+): Promise<void> {
+  const { taskId, goal, ctx } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+
+  await step('orchestrator-agent', 'Reading operational history across all collections');
+  const bundle = await loadHistory();
+  const recordsAnalyzed = Object.values(bundle).reduce((a, arr) => a + (arr?.length ?? 0), 0);
+  await sleep(PACE_MS);
+
+  // Reliability scores + snapshot.
+  const scores = computeReliabilityScores(bundle);
+  if (scores.length) await collection<ReliabilityScore>(COLLECTIONS.RELIABILITY_SCORES).insertMany(scores);
+  const learningRunId = genId('learn');
+  const snapshot: ReliabilitySnapshot = { snapshotId: genId('snap'), learningRunId, scores, createdAt: nowIso() };
+  await collection<ReliabilitySnapshot>(COLLECTIONS.RELIABILITY_SNAPSHOTS).insertOne(snapshot);
+  await ctx.publisher.publish({ type: EVENT_TYPES.RELIABILITY_UPDATED, taskId, payload: { count: scores.length, message: `Reliability scored for ${scores.length} targets` } });
+  await step('orchestrator-agent', `Reliability: scored ${scores.length} targets`, 'success');
+
+  // Patterns.
+  const patterns = minePatterns(bundle, scores);
+  if (patterns.length) await collection<OperationalPattern>(COLLECTIONS.OPERATIONAL_PATTERNS).insertMany(patterns);
+  for (const p of patterns) await ctx.publisher.publish({ type: EVENT_TYPES.PATTERN_DETECTED, taskId, payload: { patternId: p.patternId, patternType: p.patternType, title: p.title, message: `${p.patternType}: ${p.title}` } });
+  const success = patterns.filter((p) => p.patternType === 'success');
+  const failure = patterns.filter((p) => p.patternType !== 'success');
+  await step('orchestrator-agent', `Patterns: ${success.length} success, ${failure.length} failure/weak`, 'success');
+  await sleep(PACE_MS);
+
+  // Memory summaries + compressed context.
+  const { summaries, context } = buildMemorySummaries(bundle, scores, patterns);
+  if (summaries.length) await collection<MemorySummary>(COLLECTIONS.MEMORY_SUMMARIES).insertMany(summaries);
+  const compressed: CompressedContext = { ...context, learningRunId };
+  await collection<CompressedContext>(COLLECTIONS.COMPRESSED_CONTEXTS).insertOne(compressed);
+  await ctx.publisher.publish({ type: EVENT_TYPES.MEMORY_SUMMARIZED, taskId, payload: { count: summaries.length, message: `Compressed history into ${summaries.length} summaries` } });
+
+  // Prompt performance.
+  const promptPerf = computePromptPerformance(bundle);
+  if (promptPerf.length) await collection<PromptPerformance>(COLLECTIONS.PROMPT_PERFORMANCE).insertMany(promptPerf);
+  await ctx.publisher.publish({ type: EVENT_TYPES.PROMPT_PERFORMANCE_UPDATED, taskId, payload: { count: promptPerf.length } });
+
+  // Recommendations (evidence-backed; approval applies).
+  const recs = buildRecommendations(patterns, scores).map((r) => ({ ...r, learningRunId }));
+  if (recs.length) await collection<SystemRecommendation>(COLLECTIONS.SYSTEM_RECOMMENDATIONS).insertMany(recs);
+  for (const r of recs) await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_CREATED, taskId, payload: { recommendationId: r.recommendationId, type: r.type, title: r.title, message: `Recommendation: ${r.title}`, level: 'warn' } });
+  await step('orchestrator-agent', `Recommendations: ${recs.length} (awaiting approval)`, recs.length ? 'warn' : 'info');
+
+  // Learning run record.
+  const weakServices = scores.filter((s) => s.targetType === 'service' && s.score < 0.6).map((s) => s.targetId);
+  const learningRun: LearningRun = {
+    learningRunId, taskId, timeWindow: 'all', recordsAnalyzed,
+    summary: `Analyzed ${recordsAnalyzed} records: ${scores.length} reliability scores, ${patterns.length} patterns, ${recs.length} recommendations.`,
+    topSuccessPatterns: success.map((p) => p.title), topFailurePatterns: failure.map((p) => p.title),
+    weakCapabilities: scores.filter((s) => s.targetType === 'capability' && s.score < 0.6).map((s) => s.targetId),
+    weakServices, weakAgents: scores.filter((s) => s.targetType === 'agent' && s.score < 0.6).map((s) => s.targetId),
+    recommendedSkills: recs.filter((r) => r.type === 'create_skill' || r.type === 'update_skill').map((r) => r.recommendationId),
+    recommendedExpansions: recs.filter((r) => r.type === 'create_capability').map((r) => r.recommendationId),
+    recommendedScoringChanges: recs.filter((r) => r.type === 'improve_scoring').map((r) => r.recommendationId),
+    recommendedPolicyChanges: recs.filter((r) => r.type === 'improve_policy').map((r) => r.recommendationId),
+    reliabilitySnapshotId: snapshot.snapshotId, patternIds: patterns.map((p) => p.patternId), recommendationIds: recs.map((r) => r.recommendationId),
+    createdAt: nowIso(),
+  };
+  await collection<LearningRun>(COLLECTIONS.LEARNING_RUNS).insertOne(learningRun);
+  await ctx.publisher.publish({ type: EVENT_TYPES.LEARNING_RUN_COMPLETED, taskId, payload: { learningRunId, recordsAnalyzed, message: learningRun.summary } });
+
+  // Governance memory (compressed for future agents).
+  await collection<Memory>(COLLECTIONS.MEMORIES).insertOne({ memoryId: genId('mem'), type: 'task_memory', title: 'Operational learning run', summary: compressed.compressedText, taskId, serviceId: 'orchestrator-agent', tags: ['learning', 'reliability'], confidence: 'medium', createdAt: nowIso() });
+  await ctx.publisher.publish({ type: EVENT_TYPES.MEMORY_WRITTEN, taskId, payload: { message: 'Learning memory stored' } });
+
+  const report = {
+    goal, taskId, status: 'completed' as const, mode: 'learning', learningRunId, recordsAnalyzed,
+    reliabilityCount: scores.length, patternCount: patterns.length, successPatterns: success.map((p) => p.title), failurePatterns: failure.map((p) => p.title),
+    weakServices, recommendationCount: recs.length, recommendationIds: recs.map((r) => r.recommendationId), promptPerfCount: promptPerf.length, summaryCount: summaries.length,
+    steps,
+    headline: `Reviewed ${recordsAnalyzed} records: found ${success.length} success + ${failure.length} weak-point patterns, scored ${scores.length} targets, and recommended ${recs.length} improvement(s) (awaiting approval).`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
+  await step('orchestrator-agent', report.headline, 'success');
+  await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: 'Learning report ready', report: true } });
 }

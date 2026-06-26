@@ -3,6 +3,14 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { gateway } from '@/lib/gateway';
 
+export async function decideRecommendationAction(formData: FormData): Promise<void> {
+  const res = await gateway.decideRecommendation(String(formData.get('id')), String(formData.get('action')));
+  revalidatePath('/system-recommendations');
+  revalidatePath('/audit-logs');
+  revalidatePath('/tasks');
+  if (res?.taskId) redirect(`/tasks/${res.taskId}`);
+}
+
 export async function decideScoringProposalAction(formData: FormData): Promise<void> {
   await gateway.decideScoringProposal(String(formData.get('id')), String(formData.get('action')));
   revalidatePath('/scoring-change-proposals');

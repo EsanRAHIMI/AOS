@@ -123,6 +123,7 @@ export const PERMISSION_CATALOG = [
   'approve_deployment',
   'approve_policy_change',
   'approve_scoring_change',
+  'approve_recommendation',
   'run_activation',
   'run_repair',
   'view_dashboard',

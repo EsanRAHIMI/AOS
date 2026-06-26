@@ -149,6 +149,9 @@ async function main(): Promise<void> {
   await collection(COLLECTIONS.OUTCOME_REVIEWS).createIndex({ reviewId: 1 }, { unique: true });
   await collection(COLLECTIONS.SCORING_CHANGE_PROPOSALS).createIndex({ proposalId: 1 }, { unique: true });
   await collection(COLLECTIONS.AUDIT_LOGS).createIndex({ auditId: 1 }, { unique: true });
+  await collection(COLLECTIONS.LEARNING_RUNS).createIndex({ learningRunId: 1 }, { unique: true });
+  await collection(COLLECTIONS.OPERATIONAL_PATTERNS).createIndex({ patternId: 1 }, { unique: true });
+  await collection(COLLECTIONS.SYSTEM_RECOMMENDATIONS).createIndex({ recommendationId: 1 }, { unique: true });
   await seedCapabilities();
   await seedGovernance();
 

@@ -264,3 +264,37 @@ Verification:
 - All 27 Phase 8 acceptance criteria met. No Docker; independent Dokploy deploy intact; no silent
   scoring/policy changes; hardcoded safety blocks enforced; RBAC protects approvals; every governance
   change audited; deterministic fallback retained for tests.
+
+## Phase 9 — Operational Learning & Memory Intelligence — COMPLETE (2026-06-26)
+The kernel now learns from its whole operational history — reliability trends, recurring patterns, compressed memory, and evidence-backed recommendations.
+
+Delivered:
+- **Historical Learning Engine** (`shared/learning`) — aggregates 15 collections into reliability
+  scores (services/agents/capabilities/plan & repair types, with trend + confidence), recurring
+  patterns, compressed memory, recommendations, and prompt performance. Pure + testable.
+- **Reliability scores** (`reliability_scores` + `reliability_snapshots`) per target over time.
+- **Pattern Miner** (`operational_patterns`) — success patterns (best plan type, validation prevents
+  incidents, best repair type) and failure/weak-point patterns (domain unreachability, plans
+  overestimate, low-reliability services).
+- **Memory Compression** (`memory_summaries` + `compressed_contexts`) — future agents load compressed
+  context first instead of raw history.
+- **Adaptive Recommendation Engine** (`system_recommendations`) — evidence-backed (source pattern +
+  support + related records), RBAC-gated, audit-logged; approving converts to a task.
+- **Prompt Learning** (`prompt_performance`) — validity/fallback/cost per prompt version; recommends
+  prompt improvement (e.g. high fallback → configure a provider).
+- **Learning Dashboard** — /learning, /learning-runs, /reliability, /patterns, /memory-summaries,
+  /compressed-contexts, /system-recommendations (approve/reject/changes/convert), /prompt-performance.
+
+Verification:
+- Full workspace build + typecheck **passing** (14 packages).
+- **Learning demo PASS** ("Analyze system history and recommend improvements") against a clearly-marked
+  **synthetic** history (`synthetic: true`): the **real** compiled pipeline analyzed 38 records →
+  scored **7 targets** (browser-testing-agent 0.73, legacy-service 0.20 weak) → mined **3 success +
+  3 weak-point patterns** ("safe_plan performs best", "validation prevents incidents", "domain_fix
+  resolves failures"; "domain unreachability is the most common failure", "plans overestimate",
+  "legacy-service reliability low") → built **2 memory summaries + 1 compressed context** →
+  **4 evidence-backed recommendations** → prompt performance flagged 100% fallback. **RBAC owner**
+  approved a recommendation (viewer denied) → it **converted to a task** with an **audit log**.
+- All 29 Phase 9 acceptance criteria met. No Docker; independent Dokploy deploy intact; nothing
+  adaptive applied silently; recommendations evidence-backed + approval-gated + audited; synthetic
+  test data kept separate; deterministic fallback retained.

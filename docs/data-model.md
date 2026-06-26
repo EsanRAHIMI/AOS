@@ -245,3 +245,40 @@ reason, createdAt`. PlanScore gains `profileVersion`.
 No adaptive change to scoring or policy is silent: each is proposed → approved (RBAC) → versioned →
 audited. Hardcoded safety blocks override any configurable rule. The active scoring profile is used by
 the Plan Scoring Engine; rejected proposals preserve the current profile.
+
+## Phase 9 — Operational Learning & Memory Intelligence collections
+| Collection | Purpose | Schema (shared/src/schemas/learning.ts) |
+|---|---|---|
+| learning_runs | One historical-aggregation pass | LearningRunSchema |
+| reliability_scores / reliability_snapshots | Reliability over time per target | ReliabilityScoreSchema |
+| operational_patterns | Recurring success / failure / weak-point patterns | OperationalPatternSchema |
+| memory_summaries / compressed_contexts | Compressed history for cheap future context | MemorySummarySchema / CompressedContextSchema |
+| system_recommendations | Evidence-backed improvements (approval applies) | SystemRecommendationSchema |
+| prompt_performance | Per-prompt-version validity/fallback/cost | PromptPerformanceSchema |
+
+### ReliabilityScore
+`reliabilityId, targetType (service|agent|capability|plan_type|repair_type|policy_rule), targetId,
+score, sampleSize, successRate, failureRate, avgEvaluationScore, avgValidationScore, incidentRate,
+repairSuccessRate, trend (improving|declining|stable|unknown), confidence, lastUpdatedAt`.
+
+### OperationalPattern / SystemRecommendation
+Pattern: `patternId, patternType (success|failure|weak_point), title, description, confidence,
+supportCount, relatedRecords[], recommendedAction, status, …`. Recommendation: `recommendationId,
+learningRunId, type (create_skill|update_skill|create_capability|improve_service|improve_policy|
+improve_scoring|improve_prompt|deprecate_capability|add_monitor|add_validation|add_test), title,
+reason, evidence[], relatedPatternIds[], expectedImpact, riskLevel, requiredApproval, status
+(waiting_approval|approved|rejected|changes_requested|converted), convertedTo, convertedId, …`.
+
+### MemorySummary / CompressedContext / PromptPerformance / LearningRun
+Summary: `summaryId, scope, scopeId, timeWindow, sourceMemoryIds[], sourceEvidenceIds[], tokenBudget,
+compressedText, keyFacts[], openQuestions[], nextActions[], …`. PromptPerformance: `promptKey,
+promptVersion, taskType, sampleSize, validRate, fallbackRate, invalidRate, avgCostUsd, avgTokens,
+recommendImprovement, reason, …`. LearningRun: `learningRunId, recordsAnalyzed, summary,
+topSuccessPatterns[], topFailurePatterns[], weakServices[], weakCapabilities[], weakAgents[],
+recommended*[], reliabilitySnapshotId, patternIds[], recommendationIds[], …`.
+
+### Learning rule (enforced)
+Learning **recommends**; approval applies. Recommendations are evidence-backed (source pattern +
+support + related records), RBAC-gated (`approve_recommendation`), and audit-logged. Approving converts
+a recommendation into a task/proposal. Synthetic test history is marked (`synthetic: true`) and never
+mixed into production analysis intent. Future agents load `compressed_contexts` first.

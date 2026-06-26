@@ -163,6 +163,15 @@ export const COLLECTIONS = {
   ROLES: 'roles',
   PERMISSIONS: 'permissions',
   AUDIT_LOGS: 'audit_logs',
+  // Phase 9 — Operational Learning & Memory Intelligence
+  LEARNING_RUNS: 'learning_runs',
+  RELIABILITY_SCORES: 'reliability_scores',
+  RELIABILITY_SNAPSHOTS: 'reliability_snapshots',
+  OPERATIONAL_PATTERNS: 'operational_patterns',
+  MEMORY_SUMMARIES: 'memory_summaries',
+  COMPRESSED_CONTEXTS: 'compressed_contexts',
+  SYSTEM_RECOMMENDATIONS: 'system_recommendations',
+  PROMPT_PERFORMANCE: 'prompt_performance',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -235,6 +244,14 @@ export const EVENT_TYPES = {
   POLICY_PROFILE_ACTIVATED: 'governance.policy.activated',
   AUDIT_LOGGED: 'governance.audit.logged',
   ROLE_CHANGED: 'governance.role.changed',
+  // Phase 9 — Operational Learning & Memory Intelligence
+  LEARNING_RUN_COMPLETED: 'learning.run.completed',
+  RELIABILITY_UPDATED: 'learning.reliability.updated',
+  PATTERN_DETECTED: 'learning.pattern.detected',
+  MEMORY_SUMMARIZED: 'learning.memory.summarized',
+  RECOMMENDATION_CREATED: 'learning.recommendation.created',
+  RECOMMENDATION_DECIDED: 'learning.recommendation.decided',
+  PROMPT_PERFORMANCE_UPDATED: 'learning.prompt.updated',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

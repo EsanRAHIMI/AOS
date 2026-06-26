@@ -2,6 +2,26 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-26 — Phase 9 operational learning & memory intelligence
+
+### D-043 Learning aggregates history; recommends; approval applies
+The Historical Learning Engine reads 15 collections and produces reliability scores, patterns,
+summaries, and recommendations. Nothing changes behavior automatically — recommendations are
+evidence-backed, RBAC-gated (`approve_recommendation`), audited, and convert to a task/proposal on approval.
+
+### D-042 Reliability + patterns are statistical, from many records (not one)
+Reliability blends success/validation/incident/repair rates with a recent-vs-older trend and a
+sample-size confidence. Patterns require support counts. This is the shift from single-decision
+learning (Phase 8) to operational collective learning.
+
+### D-041 Compressed memory first; raw history second
+`memory_summaries` + `compressed_contexts` give future agents a low-token view of system state and
+weak points, so they don't re-read raw history. Summaries cite source memory/evidence ids.
+
+### D-040 Synthetic test history is marked and separate
+Verification seeds history with `synthetic: true`; production analysis runs on real records. The
+engine is pure over a history bundle, so it is testable without polluting production data.
+
 ## 2026-06-26 — Phase 8 learning governance & adaptive intelligence
 
 ### D-039 No silent learning: propose → approve → version → audit

@@ -41,3 +41,5 @@ export * from './scoring/index.js';
 export * from './policy/index.js';
 // Phase 8 — Learning Governance & Adaptive Intelligence
 export * from './governance/index.js';
+// Phase 9 — Operational Learning & Memory Intelligence
+export * from './learning/index.js';
