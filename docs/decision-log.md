@@ -2,6 +2,27 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-26 — Phase 10 continuous learning & autonomous improvement
+
+### D-047 Approval converts recommendations into structured workflows (not generic tasks)
+The Recommendation Conversion Router maps rec type → workflow type with explicit steps + target engine.
+Execution requires an approved recommendation; a waiting one yields a `waiting_approval` workflow and
+gates the task. Nothing executes silently.
+
+### D-046 Workflows reuse existing engines and are evidence-backed
+The executor runs steps through the skill library, validation engine, scoring/policy proposal flows,
+strategic planner, monitor, and browser-testing — each step records evidence. Engines aren't duplicated.
+
+### D-045 Impact is measured, never faked
+`buildImpactAssessment` compares before/after metrics (reliability, incidents, validation, skill count).
+If nothing improved, it says "no measurable improvement yet" and recommends re-measuring after more
+history — honest by design.
+
+### D-044 Continuous memory maintenance; compressed context first
+`buildMemoryMaintenanceRun` keeps the latest summary per scope and deprecates the rest, tracking token
+budget saved. Future agents load compressed_contexts → active skills → reliability → patterns → raw
+evidence last.
+
 ## 2026-06-26 — Phase 9 operational learning & memory intelligence
 
 ### D-043 Learning aggregates history; recommends; approval applies

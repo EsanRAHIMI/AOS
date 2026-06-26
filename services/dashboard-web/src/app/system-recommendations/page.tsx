@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { timeAgo } from '@/lib/format';
 import { decideRecommendationAction } from '@/app/actions';
@@ -27,7 +28,9 @@ export default async function RecommendationsPage() {
               </div>
               <p className="sub" style={{ marginBottom: 4 }}><span className="badge">{String(r.type)}</span> · risk {String(r.riskLevel)} · {timeAgo(String(r.createdAt))}</p>
               <p className="sub" style={{ marginBottom: 4 }}>{String(r.reason)}</p>
-              <p className="sub" style={{ marginBottom: 6 }}>Expected: {String(r.expectedImpact)} · Evidence: {evidence.length} record(s)</p>
+              <p className="sub" style={{ marginBottom: 6 }}>Expected: {String(r.expectedImpact)} · Evidence: {evidence.length} record(s)
+                {r.convertedTo === 'workflow' && r.convertedId ? <> · <Link href={`/improvement-workflows/${String(r.convertedId)}`}>view workflow</Link></> : null}
+              </p>
               {pending && (
                 <div style={{ display: 'flex', gap: 8 }}>
                   {[['approve', 'Approve & convert to task'], ['request_changes', 'Request changes'], ['reject', 'Reject']].map(([a, label]) => (

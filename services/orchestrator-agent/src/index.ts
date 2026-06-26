@@ -29,6 +29,7 @@ import {
   buildSeedRoles,
   buildSeedPermissions,
   buildSeedUsers,
+  seedLearningSchedule,
   DEFAULT_SCORING_WEIGHTS,
   type Task,
   type Approval,
@@ -69,6 +70,9 @@ async function seedGovernance(): Promise<void> {
   for (const p of buildSeedPermissions()) await perms.updateOne({ permissionId: p.permissionId }, { $setOnInsert: p }, { upsert: true });
   const users = collection<RbacUser>(COLLECTIONS.USERS);
   for (const u of buildSeedUsers()) await users.updateOne({ userId: u.userId }, { $setOnInsert: u }, { upsert: true });
+  // Phase 10 — default learning schedule.
+  const schedules = collection(COLLECTIONS.LEARNING_SCHEDULES);
+  if ((await schedules.countDocuments({})) === 0) await schedules.insertOne(seedLearningSchedule() as never);
 }
 
 const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
@@ -152,6 +156,9 @@ async function main(): Promise<void> {
   await collection(COLLECTIONS.LEARNING_RUNS).createIndex({ learningRunId: 1 }, { unique: true });
   await collection(COLLECTIONS.OPERATIONAL_PATTERNS).createIndex({ patternId: 1 }, { unique: true });
   await collection(COLLECTIONS.SYSTEM_RECOMMENDATIONS).createIndex({ recommendationId: 1 }, { unique: true });
+  await collection(COLLECTIONS.IMPROVEMENT_WORKFLOWS).createIndex({ workflowId: 1 }, { unique: true });
+  await collection(COLLECTIONS.IMPACT_ASSESSMENTS).createIndex({ impactAssessmentId: 1 }, { unique: true });
+  await collection(COLLECTIONS.MEMORY_MAINTENANCE_RUNS).createIndex({ maintenanceRunId: 1 });
   await seedCapabilities();
   await seedGovernance();
 

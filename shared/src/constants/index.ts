@@ -172,6 +172,12 @@ export const COLLECTIONS = {
   COMPRESSED_CONTEXTS: 'compressed_contexts',
   SYSTEM_RECOMMENDATIONS: 'system_recommendations',
   PROMPT_PERFORMANCE: 'prompt_performance',
+  // Phase 10 — Continuous Learning & Autonomous Improvement
+  LEARNING_SCHEDULES: 'learning_schedules',
+  LEARNING_TRIGGERS: 'learning_triggers',
+  IMPROVEMENT_WORKFLOWS: 'improvement_workflows',
+  IMPACT_ASSESSMENTS: 'impact_assessments',
+  MEMORY_MAINTENANCE_RUNS: 'memory_maintenance_runs',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -252,6 +258,13 @@ export const EVENT_TYPES = {
   RECOMMENDATION_CREATED: 'learning.recommendation.created',
   RECOMMENDATION_DECIDED: 'learning.recommendation.decided',
   PROMPT_PERFORMANCE_UPDATED: 'learning.prompt.updated',
+  // Phase 10 — Continuous Learning & Autonomous Improvement
+  LEARNING_TRIGGERED: 'improve.learning.triggered',
+  WORKFLOW_CREATED: 'improve.workflow.created',
+  WORKFLOW_STEP: 'improve.workflow.step',
+  WORKFLOW_COMPLETED: 'improve.workflow.completed',
+  IMPACT_ASSESSED: 'improve.impact.assessed',
+  MEMORY_MAINTAINED: 'improve.memory.maintained',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

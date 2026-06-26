@@ -72,6 +72,11 @@ import {
   type CompressedContext,
   type SystemRecommendation,
   type PromptPerformance,
+  type LearningSchedule,
+  type LearningTrigger,
+  type ImprovementWorkflow,
+  type ImpactAssessment,
+  type MemoryMaintenanceRun,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -120,6 +125,11 @@ async function main(): Promise<void> {
   const compressedContexts = collection<CompressedContext>(COLLECTIONS.COMPRESSED_CONTEXTS);
   const systemRecommendations = collection<SystemRecommendation>(COLLECTIONS.SYSTEM_RECOMMENDATIONS);
   const promptPerformance = collection<PromptPerformance>(COLLECTIONS.PROMPT_PERFORMANCE);
+  const learningSchedules = collection<LearningSchedule>(COLLECTIONS.LEARNING_SCHEDULES);
+  const learningTriggers = collection<LearningTrigger>(COLLECTIONS.LEARNING_TRIGGERS);
+  const improvementWorkflows = collection<ImprovementWorkflow>(COLLECTIONS.IMPROVEMENT_WORKFLOWS);
+  const impactAssessments = collection<ImpactAssessment>(COLLECTIONS.IMPACT_ASSESSMENTS);
+  const memoryMaintenanceRuns = collection<MemoryMaintenanceRun>(COLLECTIONS.MEMORY_MAINTENANCE_RUNS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -710,7 +720,7 @@ async function main(): Promise<void> {
         if (!guard(req)) return deny(reply);
         const role = actorRole(req);
         const action = req.body?.action ?? '';
-        if (!['approve', 'convert_to_task', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
+        if (!['approve', 'convert_to_task', 'convert_to_workflow', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
         if (!hasPermission(role, 'approve_recommendation')) {
           await writeAudit({ actorType: role === 'agent' ? 'agent' : 'human', actorId: role, role, action: 'recommendation_denied', targetType: 'system_recommendation', targetId: req.params.id, reason: 'RBAC: missing approve_recommendation' });
           return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, `role ${role} cannot approve recommendations`));
@@ -724,21 +734,63 @@ async function main(): Promise<void> {
           await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_DECIDED, taskId: null, payload: { recommendationId: rec.recommendationId, status } });
           return success({ recommendation: { ...rec, status } });
         }
-        // Approve → convert to a task that the orchestrator will pick up.
+        // Approve / convert → mark approved, then run the improvement workflow
+        // pipeline (convert → execute → impact) via the orchestrator.
         const now = nowIso();
-        const newTask: Task = { taskId: genId('task'), goal: `[from recommendation] ${rec.title}`, status: 'queued', priority: 'normal', createdBy: 'gateway-api', assignedServiceId: null, parentTaskId: null, requiresApproval: false, tags: ['recommendation', rec.type], error: null, createdAt: now, updatedAt: now };
+        await systemRecommendations.updateOne({ recommendationId: rec.recommendationId }, { $set: { status: 'approved', updatedAt: now } });
+        const newTask: Task = { taskId: genId('task'), goal: 'Turn the latest learning recommendation into an improvement workflow and measure the result', status: 'queued', priority: 'normal', createdBy: 'gateway-api', assignedServiceId: null, parentTaskId: null, requiresApproval: false, tags: ['improvement', rec.type], error: null, createdAt: now, updatedAt: now };
         await tasks.insertOne(newTask);
-        await systemRecommendations.updateOne({ recommendationId: rec.recommendationId }, { $set: { status: 'converted', convertedTo: 'task', convertedId: newTask.taskId, updatedAt: now } });
-        await writeAudit({ actorType: 'human', actorId: role, role, action: 'recommendation_converted', targetType: 'system_recommendation', targetId: rec.recommendationId, after: { taskId: newTask.taskId, type: rec.type }, reason: rec.reason });
-        await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_DECIDED, taskId: newTask.taskId, payload: { recommendationId: rec.recommendationId, status: 'converted', taskId: newTask.taskId, message: `Recommendation converted to task ${newTask.taskId}` } });
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'recommendation_approved', targetType: 'system_recommendation', targetId: rec.recommendationId, after: { taskId: newTask.taskId, type: rec.type }, reason: rec.reason });
+        await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_DECIDED, taskId: newTask.taskId, payload: { recommendationId: rec.recommendationId, status: 'approved', taskId: newTask.taskId, message: `Recommendation approved → improvement workflow` } });
         await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: newTask.taskId, payload: { goal: newTask.goal } });
         const orchestrator = await ctx.registry.resolve('orchestrator-agent');
         const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
         try {
-          await fetch(`${orchestratorUrl}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: newTask.taskId, goal: newTask.goal, input: { fromRecommendation: rec.recommendationId } }) });
+          await fetch(`${orchestratorUrl}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: newTask.taskId, goal: newTask.goal, input: { recommendationId: rec.recommendationId } }) });
           await tasks.updateOne({ taskId: newTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
-        } catch (e) { ctx.log.warn({ err: e }, 'recommendation task forward failed'); }
-        return success({ converted: true, taskId: newTask.taskId });
+        } catch (e) { ctx.log.warn({ err: e }, 'improvement task forward failed'); }
+        return success({ approved: true, taskId: newTask.taskId });
+      });
+
+      // --- Phase 10 reads + learning trigger -----------------------------
+      app.get('/v1/learning/schedules', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await learningSchedules.find({}, { projection: { _id: 0 } }).toArray()); });
+      app.get('/v1/learning/triggers', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await learningTriggers.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray()); });
+      app.get('/v1/improvement-workflows', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await improvementWorkflows.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get<{ Params: { id: string } }>('/v1/improvement-workflows/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const wf = await improvementWorkflows.findOne({ workflowId: req.params.id }, { projection: { _id: 0 } });
+        if (!wf) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'workflow not found'));
+        const impact = wf.impactAssessmentId ? await impactAssessments.findOne({ impactAssessmentId: wf.impactAssessmentId }, { projection: { _id: 0 } }) : null;
+        const ev = await evidence.find({ evidenceId: { $in: wf.evidenceIds } as never }, { projection: { _id: 0 } }).toArray();
+        return success({ workflow: wf, impact, evidence: ev });
+      });
+      app.get('/v1/impact-assessments', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await impactAssessments.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
+      app.get('/v1/memory-maintenance', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await memoryMaintenanceRuns.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray()); });
+
+      // Trigger a learning run now (manual trigger; the model supports continuous use).
+      app.post<{ Body: { type?: string; reason?: string } }>('/v1/learning/trigger', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const now = nowIso();
+        const trig = { triggerId: genId('trig'), scheduleId: null, type: (req.body?.type ?? 'manual'), reason: req.body?.reason ?? 'manual trigger from dashboard', newRecords: 0, dispatchedTaskId: null as string | null, createdAt: now };
+        const learnTask: Task = { taskId: genId('task'), goal: 'Analyze system history and recommend improvements', status: 'queued', priority: 'normal', createdBy: 'gateway-api', assignedServiceId: null, parentTaskId: null, requiresApproval: false, tags: ['learning', 'triggered'], error: null, createdAt: now, updatedAt: now };
+        await tasks.insertOne(learnTask);
+        trig.dispatchedTaskId = learnTask.taskId;
+        await learningTriggers.insertOne(trig as never);
+        await ctx.publisher.publish({ type: EVENT_TYPES.LEARNING_TRIGGERED, taskId: learnTask.taskId, payload: { triggerId: trig.triggerId, message: 'Learning run triggered' } });
+        const orchestrator = await ctx.registry.resolve('orchestrator-agent');
+        const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
+        try {
+          await fetch(`${orchestratorUrl}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: learnTask.taskId, goal: learnTask.goal, input: {} }) });
+          await tasks.updateOne({ taskId: learnTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
+        } catch (e) { ctx.log.warn({ err: e }, 'learning trigger forward failed'); }
+        return success({ triggered: true, taskId: learnTask.taskId });
+      });
+      app.post<{ Params: { id: string } }>('/v1/learning/schedules/:id/toggle', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const sc = await learningSchedules.findOne({ scheduleId: req.params.id });
+        if (!sc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'schedule not found'));
+        await learningSchedules.updateOne({ scheduleId: sc.scheduleId }, { $set: { enabled: !sc.enabled, updatedAt: nowIso() } });
+        return success({ scheduleId: sc.scheduleId, enabled: !sc.enabled });
       });
 
       // --- System status --------------------------------------------------

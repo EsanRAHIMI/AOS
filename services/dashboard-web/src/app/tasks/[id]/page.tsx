@@ -17,6 +17,9 @@ interface TaskReport {
   policyDecisions?: Array<{ action: string; decision: string }>;
   recordsAnalyzed?: number; reliabilityCount?: number; patternCount?: number;
   successPatterns?: string[]; failurePatterns?: string[]; recommendationCount?: number; learningRunId?: string | null;
+  workflowId?: string | null; workflowType?: string; impact?: string;
+  workflowSteps?: Array<{ name: string; engine: string; status: string }>;
+  beforeMetrics?: Record<string, number>; afterMetrics?: Record<string, number>;
 }
 
 export default async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -114,6 +117,16 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
           {(report.successPatterns ?? []).length > 0 && <p className="sub" style={{ margin: 0 }}><b>Success:</b> {(report.successPatterns ?? []).join(' · ')}</p>}
           {(report.failurePatterns ?? []).length > 0 && <p className="sub" style={{ marginTop: 4 }}><b>Weak points:</b> {(report.failurePatterns ?? []).join(' · ')}</p>}
           <p className="sub" style={{ marginTop: 6 }}>Review them in <a href="/system-recommendations">Recommendations</a>, <a href="/reliability">Reliability</a>, and <a href="/patterns">Patterns</a>.</p>
+        </div>
+      )}
+
+      {report?.mode === 'improvement' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="label" style={{ marginBottom: 10 }}>Improvement workflow ({report.workflowType})</div>
+          <p style={{ marginTop: 0 }}>Impact: <b>{report.impact}</b> {report.workflowId ? <> · <a href={`/improvement-workflows/${report.workflowId}`}>workflow</a></> : null}</p>
+          {(report.workflowSteps ?? []).length > 0 && (
+            <div className="feed">{(report.workflowSteps ?? []).map((s, i) => (<div key={i}><span className="t">{s.engine}</span> <span className="m">— {s.name}</span> <span className={`badge ${s.status === 'done' ? 'ok' : s.status === 'skipped' ? 'warn' : ''}`}>{s.status}</span></div>))}</div>
+          )}
         </div>
       )}
 

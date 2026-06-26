@@ -282,3 +282,36 @@ Learning **recommends**; approval applies. Recommendations are evidence-backed (
 support + related records), RBAC-gated (`approve_recommendation`), and audit-logged. Approving converts
 a recommendation into a task/proposal. Synthetic test history is marked (`synthetic: true`) and never
 mixed into production analysis intent. Future agents load `compressed_contexts` first.
+
+## Phase 10 — Continuous Learning & Autonomous Improvement collections
+| Collection | Purpose | Schema (shared/src/schemas/workflows.ts) |
+|---|---|---|
+| learning_schedules / learning_triggers | Continuous-ready learning cadence + fired triggers | LearningScheduleSchema / LearningTriggerSchema |
+| improvement_workflows | Structured workflows converted from approved recommendations | ImprovementWorkflowSchema |
+| impact_assessments | Before/after measurement of a completed workflow | ImpactAssessmentSchema |
+| memory_maintenance_runs | Continuous memory compression passes | MemoryMaintenanceRunSchema |
+
+### ImprovementWorkflow
+`workflowId, sourceRecommendationId, taskId, type (create_skill|update_skill|create_capability|
+improve_service|improve_policy|improve_scoring|improve_prompt|deprecate_capability|add_monitor|
+add_validation|add_test), title, status (proposed|waiting_approval|approved|running|validating|
+completed|failed|cancelled), steps[{name,engine,status,detail}], currentStep, requiredApprovals[],
+evidenceIds[], result, beforeMetrics{}, afterMetrics{}, impactAssessmentId, …`.
+
+### ImpactAssessment / MemoryMaintenanceRun / LearningSchedule
+Impact: `impactAssessmentId, workflowId, targetType, targetId, beforeMetrics{}, afterMetrics{},
+impact (reliability improved|incident rate reduced|validation score increased|fallback rate reduced|
+plan prediction accuracy improved|no measurable improvement yet|…), confidence, evidenceIds[],
+recommendation, …`. Maintenance: `maintenanceRunId, summariesReviewed, summariesUpdated,
+summariesDeprecated, compressedContextsUpdated, tokenBudgetSaved, notes[], …`. Schedule:
+`scheduleId, name, cadence, triggerType (time_based|new_incident_threshold|new_task_threshold|
+new_evidence_threshold|low_reliability_detected|prompt_fallback_threshold|manual), enabled,
+minNewRecords, scope, lastRunAt, nextRunAt, …`.
+
+### Continuous-improvement rule (enforced)
+Approval converts a recommendation into a structured workflow; execution runs only after approval and
+routes through existing engines (skill library, builder/validation, scoring/policy proposals, strategic
+planner, monitor, browser-testing). Impact is evidence-backed and never faked — "no measurable
+improvement yet" is a valid honest result. Memory maintenance keeps the latest summary per scope and
+deprecates the rest; future agents load compressed_contexts → active skills → reliability → patterns →
+raw evidence last.

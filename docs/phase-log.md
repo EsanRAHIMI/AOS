@@ -298,3 +298,38 @@ Verification:
 - All 29 Phase 9 acceptance criteria met. No Docker; independent Dokploy deploy intact; nothing
   adaptive applied silently; recommendations evidence-backed + approval-gated + audited; synthetic
   test data kept separate; deterministic fallback retained.
+
+## Phase 10 — Continuous Learning & Autonomous Improvement — COMPLETE (2026-06-26)
+The kernel now closes the loop: approved recommendations become governed improvement workflows that run through real engines, and impact is measured afterward.
+
+Delivered:
+- **Learning Scheduler** (`learning_schedules` + `learning_triggers`) — continuous-ready cadence +
+  trigger types; a default daily schedule is seeded; a manual "trigger now" dispatches a learning run.
+- **Improvement Workflow Engine** (`improvement_workflows`) — structured, step-by-step, engine-routed
+  workflows with status lifecycle.
+- **Recommendation Conversion Router** (`shared/workflows`) — maps each recommendation type to the
+  correct workflow type + structured steps + target engine (skill library, builder/validation,
+  scoring/policy proposals, strategic planner, monitor, browser-testing).
+- **Workflow Executor** (orchestrator) — runs workflows through existing engines, evidence-backed
+  (create_skill / add_validation / improve_scoring implemented; others routed + flagged).
+- **Impact Assessment Engine** (`impact_assessments`) — before/after metrics; honest "no measurable
+  improvement yet" when nothing changed.
+- **Continuous Memory Maintenance** (`memory_maintenance_runs`) — keeps the latest summary per scope,
+  deprecates the rest, tracks token budget saved.
+- **Dashboard** — /improvement-workflows(+:id), /impact-assessments, /memory-maintenance,
+  /learning/schedules (+ trigger), /learning/triggers; recommendations link to their workflow; task
+  detail shows the workflow report.
+
+Verification:
+- Full workspace build + typecheck **passing** (14 packages).
+- **Improvement-workflow demo PASS** ("Turn the latest learning recommendation into an improvement
+  workflow and measure the result") using the Phase 9 recommendation "Add pre-deployment domain/DNS
+  verification": the **real** pipeline converted it into a **create_skill workflow** → executed all
+  4 steps with **evidence** → **created the reusable skill** → produced an **impact assessment**
+  ("skill library expanded; no reliability change measurable yet"; skillCount 1→2) → ran **memory
+  maintenance** (3 reviewed, 1 deprecated, ~400 tokens saved) → marked the recommendation `converted →
+  workflow` → task report `mode=improvement`. A separate **waiting** recommendation correctly **gated**
+  (workflow + task `awaiting_approval`).
+- All 26 Phase 10 acceptance criteria met. No Docker; independent Dokploy deploy intact; nothing
+  executes without approval; workflows structured + evidence-backed; impact never faked; hardcoded
+  safety blocks intact; deterministic fallback retained.

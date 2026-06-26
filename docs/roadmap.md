@@ -119,6 +119,19 @@ Phase 10 candidates:
 9. Apply approved recommendations through the existing proposal pipelines automatically.
 10. Cross-task causal analysis; report-agent for periodic governance/learning reports.
 
+## Phase 10 — Continuous Learning & Autonomous Improvement — DONE (core)
+1. Learning scheduler (schedules + triggers; manual trigger; continuous-ready) — DONE.
+2. Improvement workflow engine + recommendation conversion router — DONE.
+3. Workflow executor through existing engines (evidence-backed) — DONE.
+4. Impact assessment (before/after; honest "no measurable improvement yet") — DONE.
+5. Continuous memory maintenance (deprecate superseded; token budget) — DONE.
+6. Dashboard: workflows(+detail)/impact/memory-maintenance/schedules/triggers — DONE.
+
+Phase 11 candidates:
+7. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
+8. Full execution of improve_scoring/policy/prompt workflows end-to-end through governance.
+9. Cross-run impact trends; report-agent for periodic improvement digests.
+
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE
 (→ Redis/NATS if needed) · OpenAI + Anthropic via an LLM router abstraction ·

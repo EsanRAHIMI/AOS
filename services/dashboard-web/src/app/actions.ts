@@ -3,6 +3,13 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { gateway } from '@/lib/gateway';
 
+export async function triggerLearningAction(): Promise<void> {
+  const res = await gateway.triggerLearning('manual', 'Triggered from dashboard');
+  revalidatePath('/learning');
+  revalidatePath('/learning/triggers');
+  if (res?.taskId) redirect(`/tasks/${res.taskId}`);
+}
+
 export async function decideRecommendationAction(formData: FormData): Promise<void> {
   const res = await gateway.decideRecommendation(String(formData.get('id')), String(formData.get('action')));
   revalidatePath('/system-recommendations');

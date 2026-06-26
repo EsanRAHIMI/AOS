@@ -43,3 +43,5 @@ export * from './policy/index.js';
 export * from './governance/index.js';
 // Phase 9 — Operational Learning & Memory Intelligence
 export * from './learning/index.js';
+// Phase 10 — Continuous Learning & Autonomous Improvement
+export * from './workflows/index.js';

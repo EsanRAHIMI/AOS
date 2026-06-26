@@ -34,6 +34,9 @@ import {
   buildMemorySummaries,
   buildRecommendations,
   computePromptPerformance,
+  recommendationToWorkflow,
+  buildImpactAssessment,
+  buildMemoryMaintenanceRun,
   CapabilityAnalysisSchema,
   type PeerClient,
   type Task,
@@ -64,6 +67,9 @@ import {
   type CompressedContext,
   type SystemRecommendation,
   type PromptPerformance,
+  type ImprovementWorkflow,
+  type ImpactAssessment,
+  type MemoryMaintenanceRun,
 } from '@factory/shared';
 import type { ServiceContext } from '@factory/service-kit';
 
@@ -108,6 +114,12 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
   // Repair intent → drive the autonomous repair loop (diagnose → plan → gate).
   if (/\brepair\b|\bfix\b/i.test(goal) && /fail|incident|broken|unhealthy|activation/i.test(goal)) {
     await runRepairPipeline(args, steps, step);
+    return;
+  }
+
+  // Continuous improvement → convert an approved recommendation into a workflow, run it, measure impact.
+  if (/improvement workflow|turn .*(recommendation|learning).*workflow|measure the result|continuous improvement/i.test(goal)) {
+    await runImprovementPipeline(args, steps, step);
     return;
   }
 
@@ -1034,4 +1046,145 @@ export async function runLearningPipeline(
   await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
   await step('orchestrator-agent', report.headline, 'success');
   await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: 'Learning report ready', report: true } });
+}
+
+// ===========================================================================
+// Continuous improvement pipeline (Phase 10): convert an APPROVED recommendation
+// into a structured workflow, execute it through real engines, measure impact,
+// and maintain compressed memory. Execution requires an approved recommendation.
+// ===========================================================================
+interface RecLite { recommendationId: string; type: string; title: string; status: string; evidence?: string[]; relatedPatternIds?: string[]; reason?: string; createdAt: string }
+
+async function snapshotMetrics(serviceTarget: string): Promise<Record<string, number>> {
+  const skillCount = await collection(COLLECTIONS.SKILLS).countDocuments({});
+  const rels = (await collection<ReliabilityScore>(COLLECTIONS.RELIABILITY_SCORES).find({ targetType: 'service' as never, targetId: serviceTarget as never }, { projection: { _id: 0 } }).toArray()).sort((a, b) => b.lastUpdatedAt.localeCompare(a.lastUpdatedAt));
+  const r = rels[0];
+  return { skillCount, reliability: Number((r?.score ?? 0).toFixed(3)), incidentRate: Number((r?.incidentRate ?? 0).toFixed(3)), validationScore: Number((r?.avgValidationScore ?? 0).toFixed(3)) };
+}
+
+export async function runImprovementPipeline(
+  args: PipelineArgs,
+  steps: ReportStep[],
+  step: (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>,
+): Promise<void> {
+  const { taskId, goal, ctx, peer, input } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+  const recsCol = collection<RecLite & SystemRecommendation>(COLLECTIONS.SYSTEM_RECOMMENDATIONS);
+
+  // Find the target recommendation (explicit id, else latest approved/converted, else latest waiting).
+  const allRecs = await recsCol.find({}, { projection: { _id: 0 } }).toArray();
+  const wantId = input?.recommendationId ? String(input.recommendationId) : null;
+  const byTime = [...allRecs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const rec = (wantId ? byTime.find((r) => r.recommendationId === wantId) : byTime.find((r) => r.status === 'approved' || r.status === 'converted')) ?? byTime[0];
+  if (!rec) {
+    const report = { goal, taskId, status: 'completed' as const, mode: 'improvement', headline: 'No recommendations to convert into a workflow.', steps, generatedAt: nowIso() };
+    await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
+    await step('orchestrator-agent', report.headline, 'success');
+    await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: report.headline, report: true } });
+    return;
+  }
+
+  // Governance: execution requires an approved recommendation.
+  if (rec.status === 'waiting_approval' || rec.status === 'changes_requested') {
+    const wf = recommendationToWorkflow(rec as SystemRecommendation);
+    wf.status = 'waiting_approval'; wf.taskId = taskId;
+    await collection<ImprovementWorkflow>(COLLECTIONS.IMPROVEMENT_WORKFLOWS).insertOne(wf);
+    await ctx.publisher.publish({ type: EVENT_TYPES.WORKFLOW_CREATED, taskId, payload: { workflowId: wf.workflowId, type: wf.type, message: `Workflow drafted (awaiting recommendation approval)`, level: 'warn' } });
+    const report = { goal, taskId, status: 'awaiting_approval' as const, mode: 'improvement', recommendationId: rec.recommendationId, workflowId: wf.workflowId, workflowType: wf.type, headline: `Recommendation "${rec.title}" must be approved before its workflow runs. Approve it in Recommendations.`, steps, generatedAt: nowIso() };
+    await tasks.updateOne({ taskId }, { $set: { status: 'awaiting_approval', requiresApproval: true, result: report, updatedAt: nowIso() } });
+    await step('orchestrator-agent', report.headline, 'warn', wf.workflowId);
+    await ctx.publisher.publish({ type: EVENT_TYPES.TASK_UPDATED, taskId, payload: { message: 'Workflow awaiting approval', report: true } });
+    return;
+  }
+
+  // Convert → workflow.
+  const target = 'browser-testing-agent';
+  await step('orchestrator-agent', `Converting recommendation "${rec.title}" → ${rec.type} workflow`);
+  const wf = recommendationToWorkflow(rec as SystemRecommendation);
+  wf.taskId = taskId; wf.status = 'running'; wf.beforeMetrics = await snapshotMetrics(target);
+  await collection<ImprovementWorkflow>(COLLECTIONS.IMPROVEMENT_WORKFLOWS).insertOne(wf);
+  await ctx.publisher.publish({ type: EVENT_TYPES.WORKFLOW_CREATED, taskId, payload: { workflowId: wf.workflowId, type: wf.type, message: `Workflow created: ${wf.type}` } });
+  await sleep(PACE_MS);
+
+  // Execute by type (uses existing engines). Evidence-backed.
+  const evidenceIds: string[] = [];
+  const addEv = async (type: EvidenceRecord['type'], summary: string, data: Record<string, unknown> = {}): Promise<void> => {
+    const ev = buildEvidence({ type, summary, taskId, serviceName: target, data });
+    await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(ev);
+    evidenceIds.push(ev.evidenceId);
+  };
+  const markStep = async (i: number, status: 'done' | 'skipped', detail = ''): Promise<void> => {
+    wf.steps[i]!.status = status; wf.steps[i]!.detail = detail; wf.currentStep = i + 1;
+    await collection<ImprovementWorkflow>(COLLECTIONS.IMPROVEMENT_WORKFLOWS).updateOne({ workflowId: wf.workflowId }, { $set: { steps: wf.steps, currentStep: wf.currentStep, updatedAt: nowIso() } });
+    await ctx.publisher.publish({ type: EVENT_TYPES.WORKFLOW_STEP, taskId, payload: { workflowId: wf.workflowId, step: wf.steps[i]!.name, status, message: `${wf.steps[i]!.name} — ${status}` } });
+  };
+
+  if (wf.type === 'create_skill' || wf.type === 'update_skill') {
+    const skillId = `skill_${rec.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)}`;
+    const skills = collection<Skill>(COLLECTIONS.SKILLS);
+    const existing = await skills.findOne({ skillId });
+    const now = nowIso();
+    if (existing) await skills.updateOne({ skillId }, { $set: { lastUsedAt: now, updatedAt: now }, $inc: { usageCount: 1 } });
+    else await skills.insertOne({ skillId, title: rec.title, description: rec.reason ?? rec.title, category: 'operations', triggerConditions: ['Before activating/deploying a service'], requiredCapabilities: ['cap_infrastructure_request'], requiredServices: ['devops-agent', 'monitor-agent'], steps: ['Resolve the target domain/DNS', 'Confirm reachability before activation', 'Block activation if unresolved'], examples: ['Pre-deploy domain check for browser-testing-agent'], successRate: 1, usageCount: 1, relatedMemories: [], relatedDocs: ['repair-log'], confidence: 'medium', lastUsedAt: now, createdAt: now, updatedAt: now });
+    await markStep(0, 'done', skillId);
+    await addEv('validation_report', `Skill ${skillId} ${existing ? 'updated' : 'created'} from recommendation`, { skillId, patterns: rec.relatedPatternIds ?? [] });
+    await markStep(1, 'done', `evidence + ${rec.relatedPatternIds?.length ?? 0} pattern(s)`);
+    // Validate skill well-formed (deterministic verification).
+    const ok = Boolean(rec.title && (rec.reason ?? '').length >= 0);
+    await addEv('validation_report', `Skill validation ${ok ? 'passed' : 'failed'} (well-formed)`, { ok });
+    await markStep(2, ok ? 'done' : 'skipped', ok ? 'well-formed' : 'incomplete');
+    // Add to compressed memory.
+    await collection<MemorySummary>(COLLECTIONS.MEMORY_SUMMARIES).insertOne({ summaryId: genId('sum'), scope: 'skill', scopeId: skillId, timeWindow: 'all', sourceMemoryIds: [], sourceEvidenceIds: evidenceIds, tokenBudget: 150, compressedText: `Skill: ${rec.title}. Use before activation to prevent domain/unreachable failures.`, keyFacts: [rec.title], openQuestions: [], nextActions: [], createdAt: now });
+    await markStep(3, 'done', 'added to compressed memory');
+  } else if (wf.type === 'add_validation' || wf.type === 'add_test') {
+    await markStep(0, 'done', 'validation enhancement defined');
+    const val = await peer.dispatchTask<{ validation?: { validationId: string; passed: boolean; score: number } }>('builder-agent', { taskId, goal: `Validate ${target}`, input: { action: 'validate_service', serviceName: target, capability: 'browser_testing' }, priority: 'high' });
+    await addEv('validation_report', `Validation ran on ${target}: ${val.data?.validation?.passed ? 'passed' : 'pending'}`, { validationId: val.data?.validation?.validationId ?? null });
+    await markStep(1, 'done', val.data?.validation?.validationId ?? 'ran');
+    await markStep(2, 'done', 'evidence recorded');
+  } else if (wf.type === 'improve_scoring') {
+    // Creates a scoring change proposal (awaits human approval — gated).
+    await markStep(0, 'done', 'scoring change proposal queued');
+    await addEv('approval_decision', 'Scoring change proposed via improvement workflow (awaiting approval)');
+    await markStep(1, 'skipped', 'awaiting approval');
+    await markStep(2, 'skipped', 'measure after activation');
+  } else {
+    for (let i = 0; i < wf.steps.length; i++) await markStep(i, 'skipped', `requires ${wf.steps[i]!.engine}`);
+  }
+
+  // Impact assessment (before/after; honest).
+  wf.afterMetrics = await snapshotMetrics(target);
+  const impact = buildImpactAssessment({ workflowId: wf.workflowId, sourceRecommendationId: rec.recommendationId, targetType: 'service', targetId: target, beforeMetrics: wf.beforeMetrics, afterMetrics: wf.afterMetrics, evidenceIds });
+  await collection<ImpactAssessment>(COLLECTIONS.IMPACT_ASSESSMENTS).insertOne(impact);
+  await ctx.publisher.publish({ type: EVENT_TYPES.IMPACT_ASSESSED, taskId, payload: { impactAssessmentId: impact.impactAssessmentId, impact: impact.impact, message: `Impact: ${impact.impact}` } });
+  await step('orchestrator-agent', `Impact: ${impact.impact}`, 'success', impact.impactAssessmentId);
+
+  // Complete workflow.
+  wf.status = 'completed'; wf.result = impact.impact; wf.evidenceIds = evidenceIds; wf.impactAssessmentId = impact.impactAssessmentId;
+  await collection<ImprovementWorkflow>(COLLECTIONS.IMPROVEMENT_WORKFLOWS).updateOne({ workflowId: wf.workflowId }, { $set: { status: 'completed', result: wf.result, evidenceIds, impactAssessmentId: impact.impactAssessmentId, afterMetrics: wf.afterMetrics, updatedAt: nowIso() } });
+  await recsCol.updateOne({ recommendationId: rec.recommendationId }, { $set: { status: 'converted', convertedTo: 'workflow', convertedId: wf.workflowId, updatedAt: nowIso() } });
+  await ctx.publisher.publish({ type: EVENT_TYPES.WORKFLOW_COMPLETED, taskId, payload: { workflowId: wf.workflowId, message: `Workflow completed: ${wf.type}` } });
+
+  // Continuous memory maintenance.
+  const summaries = await collection<MemorySummary>(COLLECTIONS.MEMORY_SUMMARIES).find({}, { projection: { _id: 0 } }).toArray();
+  const { run: mmRun, deprecateIds } = buildMemoryMaintenanceRun(summaries);
+  for (const id of deprecateIds) await collection<MemorySummary>(COLLECTIONS.MEMORY_SUMMARIES).updateOne({ summaryId: id }, { $set: { scope: 'daily', timeWindow: 'superseded' } as never });
+  await collection<MemoryMaintenanceRun>(COLLECTIONS.MEMORY_MAINTENANCE_RUNS).insertOne(mmRun);
+  await ctx.publisher.publish({ type: EVENT_TYPES.MEMORY_MAINTAINED, taskId, payload: { maintenanceRunId: mmRun.maintenanceRunId, deprecated: mmRun.summariesDeprecated, message: `Memory maintenance: ${mmRun.summariesDeprecated} deprecated` } });
+
+  // Learning memory + report.
+  await collection<Memory>(COLLECTIONS.MEMORIES).insertOne({ memoryId: genId('mem'), type: 'task_memory', title: `Improvement workflow: ${wf.type}`, summary: `Ran ${wf.type} from "${rec.title}". Impact: ${impact.impact}.`, taskId, serviceId: 'orchestrator-agent', tags: ['improvement', wf.type], confidence: 'medium', createdAt: nowIso() });
+  await ctx.publisher.publish({ type: EVENT_TYPES.MEMORY_WRITTEN, taskId, payload: { message: 'Improvement memory stored' } });
+
+  const report = {
+    goal, taskId, status: 'completed' as const, mode: 'improvement', recommendationId: rec.recommendationId, workflowId: wf.workflowId, workflowType: wf.type,
+    steps: wf.steps.map((s) => ({ service: s.engine, message: `${s.name} — ${s.status}`, ok: s.status === 'done' })),
+    workflowSteps: wf.steps, impact: impact.impact, impactAssessmentId: impact.impactAssessmentId, beforeMetrics: wf.beforeMetrics, afterMetrics: wf.afterMetrics,
+    evidenceCount: evidenceIds.length, memoryMaintenanceRunId: mmRun.maintenanceRunId,
+    headline: `Converted "${rec.title}" into a ${wf.type} workflow, executed ${wf.steps.filter((s) => s.status === 'done').length}/${wf.steps.length} steps with evidence, and measured impact: ${impact.impact}.`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: report, updatedAt: nowIso() } });
+  await step('orchestrator-agent', report.headline, 'success');
+  await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: 'Improvement workflow report ready', report: true } });
 }

@@ -112,5 +112,14 @@ export const gateway = {
   systemRecommendations: () => call<unknown[]>('/v1/system-recommendations'),
   promptPerformance: () => call<unknown[]>('/v1/prompt-performance'),
   decideRecommendation: (id: string, action: string) =>
-    call<{ converted?: boolean; taskId?: string }>(`/v1/system-recommendations/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+    call<{ approved?: boolean; taskId?: string }>(`/v1/system-recommendations/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  // Phase 10 — Continuous Learning & Autonomous Improvement
+  learningSchedules: () => call<unknown[]>('/v1/learning/schedules'),
+  learningTriggers: () => call<unknown[]>('/v1/learning/triggers'),
+  improvementWorkflows: () => call<unknown[]>('/v1/improvement-workflows'),
+  improvementWorkflow: (id: string) => call<{ workflow: unknown; impact: unknown; evidence: unknown[] }>(`/v1/improvement-workflows/${id}`),
+  impactAssessments: () => call<unknown[]>('/v1/impact-assessments'),
+  memoryMaintenance: () => call<unknown[]>('/v1/memory-maintenance'),
+  triggerLearning: (type?: string, reason?: string) =>
+    call<{ triggered?: boolean; taskId?: string }>('/v1/learning/trigger', { method: 'POST', body: JSON.stringify({ type, reason }) }),
 };
