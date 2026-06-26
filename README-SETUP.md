@@ -6,18 +6,64 @@
 
 ## بخش ۱ — لوکال
 
+### نصب (یک‌بار)
+
 ```bash
 corepack enable
 pnpm install
 cp .env.example .env       # مقادیر واقعی را پر کن
-pnpm sync:env              # .env روت → همه سرویس‌ها
-pnpm dev:all               # اجرای همه سرویس‌ها
 ```
+
+### اجرا (هر بار)
+
+```bash
+pnpm dev:all
+```
+
+`dev:all` خودکار این کارها را انجام می‌دهد:
+
+1. `sync:env` — کپی `.env` روت به ۱۳ سرویس + پورت و URL لوکال
+2. `build:deps` — build کردن `shared` و `service-kit`
+3. اجرای همزمان همه سرویس‌ها (ترتیب = ترتیب بخش ۲)
+
+فقط env را عوض کردی؟ `pnpm sync:env` کافی است.
+
+### آدرس‌های لوکال
+
+| # | سرویس | پورت |
+|---|---|---:|
+| 1 | service-registry | 4108 |
+| 2 | event-bus-service | 4111 |
+| 3 | gateway-api | 4101 |
+| 4 | orchestrator-agent | 4102 |
+| 5 | architect-agent | 4103 |
+| 6 | builder-agent | 4104 |
+| 7 | devops-agent | 4105 |
+| 8 | memory-agent | 4109 |
+| 9 | documentation-service | 4110 |
+| 10 | file-asset-service | 4112 |
+| 11 | monitor-agent | 4113 |
+| 12 | browser-testing-agent | 4116 |
+| 13 | dashboard-web | **4100** ← داشبورد |
 
 - داشبورد: http://localhost:4100
 - API: http://localhost:4101
 
-اگر خطای `service-kit/dist` دیدی: `pnpm run build:deps`
+### تست سلامت (لوکال)
+
+```bash
+curl http://localhost:4108/health   # registry
+curl http://localhost:4101/health   # gateway
+curl http://localhost:4101/v1/services
+```
+
+### خطاهای رایج
+
+| خطا | راه‌حل |
+|---|---|
+| `service-kit/dist/index.js` | `pnpm run build:deps` |
+| `Missing root .env` | `cp .env.example .env` و مقادیر را پر کن |
+| یک سرویس crash کرد | بقیه بالا می‌مانند؛ لاگ همان سرویس را ببین |
 
 ---
 
@@ -33,7 +79,7 @@ pnpm dev:all               # اجرای همه سرویس‌ها
 
 `FACTORY_INTERNAL_TOKEN` در **همه** سرویس‌ها باید **یکسان** باشد.
 
-**ترتیب deploy:** از شماره ۱ شروع کن، به ترتیب برو جلو.
+**ترتیب deploy:** از شماره ۱ شروع کن، به ترتیب برو جلو. (همان ترتیب `pnpm dev:all` در لوکال)
 
 ---
 

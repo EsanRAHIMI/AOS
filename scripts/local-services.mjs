@@ -1,0 +1,161 @@
+/**
+ * Single source of truth for local dev: ports, order, and per-service env extras.
+ * Used by sync-local-env.mjs and dev-all.mjs — keep in sync with README-SETUP.md.
+ */
+
+export const PEER_BLOCK = `# --- Local peer URLs (orchestrator) ---
+ARCHITECT_AGENT_URL=http://localhost:4103
+BUILDER_AGENT_URL=http://localhost:4104
+DEVOPS_AGENT_URL=http://localhost:4105
+MEMORY_AGENT_URL=http://localhost:4109
+DOCUMENTATION_SERVICE_URL=http://localhost:4110
+MONITOR_AGENT_URL=http://localhost:4113
+BROWSER_TESTING_AGENT_URL=http://localhost:4116
+FILE_ASSET_SERVICE_URL=http://localhost:4112`;
+
+/** Deploy / dev:start order (matches README-SETUP.md sections 1–13). */
+export const LOCAL_SERVICES = [
+  {
+    num: 1,
+    dir: 'service-registry',
+    id: 'service-registry',
+    name: 'Service Registry',
+    port: 4108,
+    pkg: '@factory/service-registry',
+    alias: 'registry',
+    color: 'blue',
+    extra: '',
+  },
+  {
+    num: 2,
+    dir: 'event-bus-service',
+    id: 'event-bus-service',
+    name: 'Event Bus Service',
+    port: 4111,
+    pkg: '@factory/event-bus-service',
+    alias: 'events',
+    color: 'cyan',
+    extra: '',
+  },
+  {
+    num: 3,
+    dir: 'gateway-api',
+    id: 'gateway-api',
+    name: 'Gateway API',
+    port: 4101,
+    pkg: '@factory/gateway-api',
+    alias: 'gateway',
+    color: 'green',
+    extra: 'ORCHESTRATOR_AGENT_URL=http://localhost:4102',
+  },
+  {
+    num: 4,
+    dir: 'orchestrator-agent',
+    id: 'orchestrator-agent',
+    name: 'Orchestrator Agent',
+    port: 4102,
+    pkg: '@factory/orchestrator-agent',
+    alias: 'orch',
+    color: 'magenta',
+    extra: PEER_BLOCK,
+  },
+  {
+    num: 5,
+    dir: 'architect-agent',
+    id: 'architect-agent',
+    name: 'Architect Agent',
+    port: 4103,
+    pkg: '@factory/architect-agent',
+    alias: 'arch',
+    color: 'yellow',
+    extra: '',
+  },
+  {
+    num: 6,
+    dir: 'builder-agent',
+    id: 'builder-agent',
+    name: 'Builder Agent',
+    port: 4104,
+    pkg: '@factory/builder-agent',
+    alias: 'build',
+    color: 'red',
+    extra: '',
+  },
+  {
+    num: 7,
+    dir: 'devops-agent',
+    id: 'devops-agent',
+    name: 'DevOps Agent',
+    port: 4105,
+    pkg: '@factory/devops-agent',
+    alias: 'devops',
+    color: 'white',
+    extra: '',
+  },
+  {
+    num: 8,
+    dir: 'memory-agent',
+    id: 'memory-agent',
+    name: 'Memory Agent',
+    port: 4109,
+    pkg: '@factory/memory-agent',
+    alias: 'memory',
+    color: 'gray',
+    extra: '',
+  },
+  {
+    num: 9,
+    dir: 'documentation-service',
+    id: 'documentation-service',
+    name: 'Documentation Service',
+    port: 4110,
+    pkg: '@factory/documentation-service',
+    alias: 'docs',
+    color: 'blueBright',
+    extra: '',
+  },
+  {
+    num: 10,
+    dir: 'file-asset-service',
+    id: 'file-asset-service',
+    name: 'File Asset Service',
+    port: 4112,
+    pkg: '@factory/file-asset-service',
+    alias: 'assets',
+    color: 'greenBright',
+    extra: '',
+  },
+  {
+    num: 11,
+    dir: 'monitor-agent',
+    id: 'monitor-agent',
+    name: 'Monitor Agent',
+    port: 4113,
+    pkg: '@factory/monitor-agent',
+    alias: 'monitor',
+    color: 'cyanBright',
+    extra: 'MONITOR_INTERVAL_MS=60000',
+  },
+  {
+    num: 12,
+    dir: 'browser-testing-agent',
+    id: 'browser-testing-agent',
+    name: 'Browser Testing Agent',
+    port: 4116,
+    pkg: '@factory/browser-testing-agent',
+    alias: 'browser',
+    color: 'magentaBright',
+    extra: '',
+  },
+  {
+    num: 13,
+    dir: 'dashboard-web',
+    id: 'dashboard-web',
+    name: 'Dashboard Web',
+    port: 4100,
+    pkg: '@factory/dashboard-web',
+    alias: 'dash',
+    color: 'whiteBright',
+    extra: '',
+  },
+];

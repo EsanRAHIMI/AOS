@@ -15,7 +15,7 @@
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
     "dev": "echo 'Run a specific service: pnpm --filter <service> run dev'",
-    "dev:all": "pnpm run build:deps && concurrently -k -n registry,events,gateway,orch,arch,build,devops,memory,docs,assets,monitor,browser,dash -c blue,cyan,green,magenta,yellow,red,white,gray,blueBright,greenBright,cyanBright,magentaBright,whiteBright \"pnpm --filter @factory/service-registry run dev\" \"pnpm --filter @factory/event-bus-service run dev\" \"pnpm --filter @factory/gateway-api run dev\" \"pnpm --filter @factory/orchestrator-agent run dev\" \"pnpm --filter @factory/architect-agent run dev\" \"pnpm --filter @factory/builder-agent run dev\" \"pnpm --filter @factory/devops-agent run dev\" \"pnpm --filter @factory/memory-agent run dev\" \"pnpm --filter @factory/documentation-service run dev\" \"pnpm --filter @factory/file-asset-service run dev\" \"pnpm --filter @factory/monitor-agent run dev\" \"pnpm --filter @factory/browser-testing-agent run dev\" \"pnpm --filter @factory/dashboard-web run dev\"",
+    "dev:all": "pnpm sync:env && pnpm run build:deps && node scripts/dev-all.mjs",
     "sync:env": "node scripts/sync-local-env.mjs",
     "clean": "pnpm -r exec rm -rf dist node_modules .turbo"
   },

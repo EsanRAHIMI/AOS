@@ -1,0 +1,65 @@
+# =============================================================================
+# Autonomous OS Kernel — Nixpacks (Dokploy)
+# =============================================================================
+#
+# Dokploy settings (همه Applicationها یکسان):
+#   • Repository build path / root:  /  (روت monorepo)
+#   • Root Directory:                /  (نه services/xxx)
+#   • Build Type:                    Nixpacks
+#   • هر Application فقط SERVICE_ID + env خودش را دارد
+#
+# این فایل بر اساس SERVICE_ID در Environment Settings سرویس درست را
+# build و start می‌کند. مقدار SERVICE_ID باید دقیقاً با جدول زیر یکی باشد.
+#
+# =============================================================================
+# سرویس‌ها — SERVICE_ID | پورت | دامنه | پکیج pnpm
+# =============================================================================
+#
+#  1. service-registry        4108  registry.simorx.com        @factory/service-registry
+#  2. event-bus-service       4111  events.simorx.com            @factory/event-bus-service
+#  3. gateway-api             4101  api.simorx.com               @factory/gateway-api
+#  4. orchestrator-agent      4102  orchestrator.simorx.com      @factory/orchestrator-agent
+#  5. architect-agent         4103  architect.simorx.com         @factory/architect-agent
+#  6. builder-agent           4104  builder.simorx.com           @factory/builder-agent
+#  7. devops-agent            4105  devops.simorx.com            @factory/devops-agent
+#  8. memory-agent            4109  memory.simorx.com            @factory/memory-agent
+#  9. documentation-service   4110  docs.simorx.com              @factory/documentation-service
+# 10. file-asset-service      4112  assets.simorx.com            @factory/file-asset-service
+# 11. monitor-agent           4113  monitor.simorx.com           @factory/monitor-agent
+# 12. browser-testing-agent   4116  browser-testing.simorx.com   @factory/browser-testing-agent
+# 13. dashboard-web           4100  factory.simorx.com           @factory/dashboard-web
+#
+# نمونه env در Dokploy (file-asset-service):
+#   NODE_ENV=production
+#   FACTORY_ENV=production
+#   SERVICE_ID=file-asset-service
+#   SERVICE_NAME=File Asset Service
+#   SERVICE_DOMAIN=https://assets.simorx.com
+#   SERVICE_PORT=4112
+#   (+ FACTORY_INTERNAL_TOKEN, MONGODB_URI, ...)
+#
+# =============================================================================
+
+providers = ["node"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+NPM_CONFIG_PRODUCTION = "false"
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+dependsOn = ["setup"]
+cmds = [
+  "corepack enable",
+  "corepack prepare pnpm@9.15.0 --activate",
+  "pnpm install --frozen-lockfile",
+]
+
+[phases.build]
+dependsOn = ["install"]
+cmds = ["chmod +x scripts/nixpacks-build.sh scripts/nixpacks-start.sh", "bash scripts/nixpacks-build.sh"]
+
+[start]
+cmd = "bash scripts/nixpacks-start.sh"
