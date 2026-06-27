@@ -16,6 +16,8 @@ import {
   COLLECTIONS,
   EVENT_TYPES,
   INTERNAL_TOKEN_HEADER,
+  ROLE_HEADER,
+  REQUEST_ID_HEADER,
   peerUrl,
   TaskRequestSchema,
   hasValidInternalToken,
@@ -25,6 +27,14 @@ import {
   ERROR_CODES,
   genId,
   nowIso,
+  auditEnvironment,
+  buildSecurityCheck,
+  buildSecurityEvent,
+  RateLimiter,
+  canRolePerformAction,
+  isActionBlockedInSafeMode,
+  type SecurityCheck,
+  type SecurityEvent,
   type Task,
   type Approval,
   type InfrastructureRequest,
@@ -54,7 +64,6 @@ import {
   buildScoringProfile,
   buildAuditLog,
   hasPermission,
-  roleForAuth,
   type ScoringProfile,
   type OutcomeReview,
   type ScoringChangeProposal,
@@ -130,9 +139,27 @@ async function main(): Promise<void> {
   const improvementWorkflows = collection<ImprovementWorkflow>(COLLECTIONS.IMPROVEMENT_WORKFLOWS);
   const impactAssessments = collection<ImpactAssessment>(COLLECTIONS.IMPACT_ASSESSMENTS);
   const memoryMaintenanceRuns = collection<MemoryMaintenanceRun>(COLLECTIONS.MEMORY_MAINTENANCE_RUNS);
+  const securityChecks = collection<SecurityCheck>(COLLECTIONS.SECURITY_CHECKS);
+  const securityEvents = collection<SecurityEvent>(COLLECTIONS.SECURITY_EVENTS);
+  const systemSettings = collection<{ settingId: string; value: unknown; updatedAt: string }>(COLLECTIONS.SYSTEM_SETTINGS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
+
+  // Seed the runtime safe-mode setting from env on first boot (env = default).
+  const SAFE_MODE_SETTING = 'safe_mode';
+  if (!(await systemSettings.findOne({ settingId: SAFE_MODE_SETTING }))) {
+    await systemSettings.insertOne({ settingId: SAFE_MODE_SETTING, value: env.AUTONOMY_SAFE_MODE, updatedAt: nowIso() });
+  }
+  const isSafeMode = async (): Promise<boolean> => {
+    const s = await systemSettings.findOne({ settingId: SAFE_MODE_SETTING });
+    return Boolean(s?.value);
+  };
+
+  // Rate limiters (in-memory; swap for Redis later). Login is enforced in the
+  // dashboard; here we protect task creation, approvals, and mutations.
+  const mutationLimiter = new RateLimiter(60, 60_000);
+  setInterval(() => mutationLimiter.sweep(), 120_000).unref?.();
 
   const service = await createFactoryService({
     manifest,
@@ -143,6 +170,23 @@ async function main(): Promise<void> {
     eventBusUrl: env.EVENT_BUS_URL,
     logLevel: env.LOG_LEVEL,
     routes: (app, ctx) => {
+      // Echo the request id on every response for traceability.
+      app.addHook('onSend', (req, reply, payload, done) => {
+        reply.header(REQUEST_ID_HEADER, String(req.id));
+        done(null, payload);
+      });
+      // Production-safe error envelope: never leak stack traces to clients.
+      app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
+        const requestId = String(req.id);
+        ctx.log.error({ err, requestId }, 'unhandled request error');
+        const statusCode = err.statusCode ?? 500;
+        const isProd = env.NODE_ENV === 'production';
+        const code = statusCode >= 500 ? ERROR_CODES.INTERNAL : ERROR_CODES.VALIDATION;
+        const message = statusCode >= 500 && isProd ? 'internal error' : err.message;
+        reply.header(REQUEST_ID_HEADER, requestId);
+        reply.code(statusCode).send(failure(code, message, { requestId }));
+      });
+
       // Dashboard/human (admin token) OR another service (internal token).
       const guard = (req: { headers: Record<string, string | string[] | undefined> }) =>
         hasValidAdminToken({
@@ -155,9 +199,66 @@ async function main(): Promise<void> {
       const deny = (reply: { code: (n: number) => { send: (b: unknown) => unknown } }) =>
         reply.code(401).send(failure(ERROR_CODES.UNAUTHORIZED, 'admin or internal token required'));
 
+      // --- Phase 12 security helpers --------------------------------------
+      type Req = { headers: Record<string, string | string[] | undefined>; ip?: string };
+      type FastifyReplyLike = { code: (n: number) => { send: (b: unknown) => unknown }; header: (k: string, v: unknown) => unknown };
+      const headerStr = (req: Req, name: string): string => {
+        const v = req.headers[name];
+        return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
+      };
+      const clientIp = (req: Req): string => headerStr(req, 'x-forwarded-for').split(',')[0]?.trim() || req.ip || '';
+      const userAgent = (req: Req): string => headerStr(req, 'user-agent');
+      /** The role the request acts as. The dashboard's declared role is only trusted with a valid admin token. */
+      const declaredRole = (req: Req): RoleName => {
+        const isAdmin = hasValidAdminToken({ headers: req.headers, expectedInternalToken: env.FACTORY_INTERNAL_TOKEN, expectedAdminToken: env.FACTORY_ADMIN_TOKEN });
+        if (!isAdmin) return 'agent';
+        const r = headerStr(req, ROLE_HEADER);
+        return (['owner', 'operator', 'viewer', 'agent'] as const).includes(r as RoleName) ? (r as RoleName) : 'owner';
+      };
+      const writeAudit = async (a: Parameters<typeof buildAuditLog>[0]): Promise<AuditLog> => {
+        const logRec = buildAuditLog(a);
+        await auditLogs.insertOne(logRec);
+        await ctx.publisher.publish({ type: EVENT_TYPES.AUDIT_LOGGED, taskId: null, payload: { action: logRec.action, targetId: logRec.targetId, actorId: logRec.actorId } });
+        return logRec;
+      };
+      const writeSecEvent = async (e: Parameters<typeof buildSecurityEvent>[0]): Promise<SecurityEvent> => {
+        const rec = buildSecurityEvent(e);
+        await securityEvents.insertOne(rec);
+        return rec;
+      };
+      // Fixed-window rate limit for a sensitive mutation. Returns true if blocked (already replied).
+      const rateLimited = async (req: Req, reply: FastifyReplyLike, bucket: string): Promise<boolean> => {
+        const res = mutationLimiter.check(`${bucket}:${declaredRole(req)}:${clientIp(req)}`);
+        if (res.allowed) return false;
+        reply.header(REQUEST_ID_HEADER, headerStr(req, REQUEST_ID_HEADER));
+        await writeSecEvent({ eventType: EVENT_TYPES.RATE_LIMITED, actorId: declaredRole(req), role: declaredRole(req), ip: clientIp(req), userAgent: userAgent(req), target: bucket, result: 'denied', riskLevel: 'medium', detail: 'rate limit exceeded' });
+        reply.code(429).send(failure(ERROR_CODES.RATE_LIMITED, 'rate limit exceeded; please slow down'));
+        return true;
+      };
+      // RBAC + safe-mode enforcement for a sensitive mutation. Returns true if denied (already replied).
+      const enforce = async (action: string, req: Req, reply: FastifyReplyLike): Promise<boolean> => {
+        const role = declaredRole(req);
+        const actorType: AuditLog['actorType'] = role === 'agent' ? 'agent' : 'human';
+        if (isActionBlockedInSafeMode(action) && (await isSafeMode())) {
+          await writeAudit({ actorType, actorId: role, role, action: `${action}_blocked_safe_mode`, targetType: 'safe_mode', targetId: action, reason: 'AUTONOMY_SAFE_MODE active' });
+          await writeSecEvent({ eventType: EVENT_TYPES.SAFE_MODE_CHANGED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: action, result: 'denied', riskLevel: 'high', detail: 'mutation blocked: safe mode active' });
+          reply.code(403).send(failure(ERROR_CODES.SAFE_MODE, 'safe mode is active — mutation actions are disabled'));
+          return true;
+        }
+        if (!canRolePerformAction(role, action)) {
+          await writeAudit({ actorType, actorId: role, role, action: `${action}_denied`, targetType: 'rbac', targetId: action, reason: `role ${role} lacks permission` });
+          await writeSecEvent({ eventType: EVENT_TYPES.RBAC_DENIED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: action, result: 'denied', riskLevel: 'medium', detail: `role ${role} cannot perform ${action}` });
+          reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, `role ${role} is not permitted to ${action}`));
+          return true;
+        }
+        return false;
+      };
+
       // --- Tasks ----------------------------------------------------------
       app.post('/v1/tasks', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'task')) return reply;
+        if (await enforce('createTask', req, reply)) return reply;
         const parsed = TaskRequestSchema.safeParse(req.body);
         if (!parsed.success) {
           return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid task', parsed.error.issues));
@@ -239,6 +340,8 @@ async function main(): Promise<void> {
         '/v1/approvals/:id/decision',
         async (req, reply) => {
           if (!guard(req)) return deny(reply);
+          if (await rateLimited(req, reply, 'approval')) return reply;
+          if (await enforce('decideApproval', req, reply)) return reply;
           const { action, reason } = req.body ?? {};
           const map: Record<string, Approval['status']> = {
             approve: 'approved',
@@ -292,6 +395,7 @@ async function main(): Promise<void> {
 
       app.post<{ Params: { id: string } }>('/v1/infrastructure/:id/confirm', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('confirmInfra', req, reply)) return reply;
         // Human asserts "I created this infrastructure". In Phase 2 we mark it
         // fulfilled and record the validation checklist as satisfied; live
         // reachability validation is layered in later.
@@ -367,6 +471,7 @@ async function main(): Promise<void> {
         '/v1/expansion-proposals/:id/decision',
         async (req, reply) => {
           if (!guard(req)) return deny(reply);
+          if (await enforce('decideExpansion', req, reply)) return reply;
           const action = req.body?.action ?? '';
           const statusMap: Record<string, ExpansionProposal['status']> = {
             approve: 'approved',
@@ -471,6 +576,7 @@ async function main(): Promise<void> {
       });
       app.post<{ Params: { id: string } }>('/v1/checklists/:id/confirm', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('confirmChecklist', req, reply)) return reply;
         const res = await checklists.findOneAndUpdate({ checklistId: req.params.id }, { $set: { status: 'deployed', updatedAt: nowIso() } }, { returnDocument: 'after', projection: { _id: 0 } });
         if (!res) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'checklist not found'));
         return success(res);
@@ -478,6 +584,8 @@ async function main(): Promise<void> {
       // "Run activation check" — delegate the live check to the monitor-agent.
       app.post<{ Params: { id: string }; Body: { baseUrl?: string } }>('/v1/checklists/:id/activate', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'activation')) return reply;
+        if (await enforce('runActivation', req, reply)) return reply;
         const ck = await checklists.findOne({ checklistId: req.params.id });
         if (!ck) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'checklist not found'));
         const baseUrl = req.body?.baseUrl ?? `https://${ck.subdomain}`;
@@ -566,6 +674,7 @@ async function main(): Promise<void> {
       // Approve a repair plan → execute (sensitive actions stay gated by this approval).
       app.post<{ Params: { id: string }; Body: { action: string; baseUrl?: string } }>('/v1/repair-plans/:id/decision', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('decideRepairPlan', req, reply)) return reply;
         const action = req.body?.action ?? '';
         const map: Record<string, RepairPlan['status']> = { approve: 'approved', reject: 'rejected', request_changes: 'changes_requested' };
         const status = map[action];
@@ -583,6 +692,7 @@ async function main(): Promise<void> {
       // "Mark manual action done" / "re-run validation" → re-execute the plan.
       app.post<{ Params: { id: string }; Body: { baseUrl?: string } }>('/v1/incidents/:id/revalidate', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('revalidateIncident', req, reply)) return reply;
         const plan = await repairPlans.findOne({ incidentId: req.params.id }, { sort: { createdAt: -1 }, projection: { _id: 0 } });
         if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'no repair plan for incident'));
         const result = await delegateExecuteRepair(plan.repairPlanId, req.body?.baseUrl);
@@ -625,15 +735,8 @@ async function main(): Promise<void> {
       });
 
       // --- Phase 8: Learning Governance & Adaptive Intelligence ----------
-      // Actor role from auth: admin token → owner; internal token → agent.
-      const actorRole = (req: { headers: Record<string, string | string[] | undefined> }): RoleName =>
-        roleForAuth(hasValidAdminToken({ headers: req.headers, expectedInternalToken: env.FACTORY_INTERNAL_TOKEN, expectedAdminToken: env.FACTORY_ADMIN_TOKEN }));
-      const writeAudit = async (a: Parameters<typeof buildAuditLog>[0]): Promise<AuditLog> => {
-        const log = buildAuditLog(a);
-        await auditLogs.insertOne(log);
-        await ctx.publisher.publish({ type: EVENT_TYPES.AUDIT_LOGGED, taskId: null, payload: { action: log.action, targetId: log.targetId, actorId: log.actorId } });
-        return log;
-      };
+      // Actor role now comes from declaredRole() (admin+role header, or agent).
+      const actorRole = declaredRole;
 
       app.get('/v1/outcome-reviews', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await outcomeReviews.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray()); });
       app.get('/v1/scoring-profiles', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await scoringProfiles.find({}, { projection: { _id: 0 } }).sort({ version: -1 }).toArray()); });
@@ -654,6 +757,7 @@ async function main(): Promise<void> {
       // Approve/reject a scoring change → versions a new active profile (RBAC + audit).
       app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/scoring-change-proposals/:id/decision', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('decideScoringProposal', req, reply)) return reply;
         const role = actorRole(req);
         const action = req.body?.action ?? '';
         if (!['approve', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
@@ -684,6 +788,7 @@ async function main(): Promise<void> {
       // Approve/reject a policy change → activates a configurable rule (RBAC + audit).
       app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/policy-change-proposals/:id/decision', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('decidePolicyProposal', req, reply)) return reply;
         const role = actorRole(req);
         const action = req.body?.action ?? '';
         if (!['approve', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
@@ -718,6 +823,7 @@ async function main(): Promise<void> {
       // Approve/convert a system recommendation (RBAC + audit). Approving converts it to a task.
       app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/system-recommendations/:id/decision', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('decideRecommendation', req, reply)) return reply;
         const role = actorRole(req);
         const action = req.body?.action ?? '';
         if (!['approve', 'convert_to_task', 'convert_to_workflow', 'reject', 'request_changes'].includes(action)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid action'));
@@ -770,6 +876,7 @@ async function main(): Promise<void> {
       // Trigger a learning run now (manual trigger; the model supports continuous use).
       app.post<{ Body: { type?: string; reason?: string } }>('/v1/learning/trigger', async (req, reply) => {
         if (!guard(req)) return deny(reply);
+        if (await enforce('triggerLearning', req, reply)) return reply;
         const now = nowIso();
         const trig = { triggerId: genId('trig'), scheduleId: null, type: (req.body?.type ?? 'manual'), reason: req.body?.reason ?? 'manual trigger from dashboard', newRecords: 0, dispatchedTaskId: null as string | null, createdAt: now };
         const learnTask: Task = { taskId: genId('task'), goal: 'Analyze system history and recommend improvements', status: 'queued', priority: 'normal', createdBy: 'gateway-api', assignedServiceId: null, parentTaskId: null, requiresApproval: false, tags: ['learning', 'triggered'], error: null, createdAt: now, updatedAt: now };
@@ -791,6 +898,78 @@ async function main(): Promise<void> {
         if (!sc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'schedule not found'));
         await learningSchedules.updateOne({ scheduleId: sc.scheduleId }, { $set: { enabled: !sc.enabled, updatedAt: nowIso() } });
         return success({ scheduleId: sc.scheduleId, enabled: !sc.enabled });
+      });
+
+      // --- Phase 12: Security & production hardening ---------------------
+      const envAuditInput = () => ({
+        nodeEnv: env.NODE_ENV,
+        factoryEnv: env.FACTORY_ENV,
+        internalToken: env.FACTORY_INTERNAL_TOKEN,
+        adminToken: env.FACTORY_ADMIN_TOKEN,
+        sessionSecret: process.env.DASHBOARD_SESSION_SECRET,
+        mongoUri: env.MONGODB_URI,
+        s3: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, bucket: process.env.AWS_S3_BUCKET, region: process.env.AWS_REGION },
+        llm: { openai: process.env.OPENAI_API_KEY, anthropic: process.env.ANTHROPIC_API_KEY },
+        githubToken: process.env.GITHUB_TOKEN,
+      });
+
+      app.get('/v1/security/safe-mode', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success({ enabled: await isSafeMode() });
+      });
+      app.post<{ Body: { enabled?: boolean } }>('/v1/security/safe-mode', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await enforce('setSafeMode', req, reply)) return reply;
+        const enabled = Boolean(req.body?.enabled);
+        await systemSettings.updateOne({ settingId: SAFE_MODE_SETTING }, { $set: { value: enabled, updatedAt: nowIso() } }, { upsert: true });
+        const role = declaredRole(req);
+        await writeAudit({ actorType: 'human', actorId: role, role, action: enabled ? 'safe_mode_enabled' : 'safe_mode_disabled', targetType: 'safe_mode', targetId: SAFE_MODE_SETTING, after: { enabled } });
+        await writeSecEvent({ eventType: EVENT_TYPES.SAFE_MODE_CHANGED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: 'safe_mode', result: 'info', riskLevel: enabled ? 'high' : 'low', detail: `safe mode ${enabled ? 'enabled' : 'disabled'}` });
+        await ctx.publisher.publish({ type: EVENT_TYPES.SAFE_MODE_CHANGED, taskId: null, payload: { enabled, message: `Safe mode ${enabled ? 'ENABLED' : 'disabled'}` } });
+        return success({ enabled });
+      });
+
+      app.get('/v1/security/env', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const audit = auditEnvironment(envAuditInput());
+        return success({ ...audit, safeMode: await isSafeMode() });
+      });
+
+      app.post('/v1/security/check', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await enforce('runSecurityCheck', req, reply)) return reply;
+        const audit = auditEnvironment(envAuditInput());
+        const check = buildSecurityCheck('system', audit, await isSafeMode());
+        await securityChecks.insertOne(check);
+        const role = declaredRole(req);
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'security_check_run', targetType: 'security_check', targetId: check.checkId, after: { passed: check.passed, riskLevel: check.riskLevel } });
+        await writeSecEvent({ eventType: EVENT_TYPES.SECURITY_CHECK_COMPLETED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: 'system', result: check.passed ? 'success' : 'failure', riskLevel: check.riskLevel, detail: `security check ${check.passed ? 'passed' : 'found issues'} (${check.riskLevel})` });
+        await ctx.publisher.publish({ type: EVENT_TYPES.SECURITY_CHECK_COMPLETED, taskId: null, payload: { checkId: check.checkId, passed: check.passed, riskLevel: check.riskLevel, message: `Security check ${check.passed ? 'passed' : 'found issues'}` } });
+        return success(check);
+      });
+      app.get('/v1/security/checks', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await securityChecks.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      });
+      app.get<{ Querystring: { limit?: string } }>('/v1/security/events', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const limit = Math.min(Number(req.query.limit ?? 100), 500);
+        return success(await securityEvents.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(limit).toArray());
+      });
+      app.get('/v1/security/rate-limits', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success({ buckets: mutationLimiter.snapshot() });
+      });
+      // The dashboard reports auth events (login/logout/denials) here. Trusted by token.
+      app.post<{ Body: { eventType: string; actorId?: string; role?: string; result?: SecurityEvent['result']; target?: string; detail?: string; riskLevel?: SecurityEvent['riskLevel'] } }>('/v1/security/event', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const b = req.body ?? { eventType: 'unknown' };
+        const evt = await writeSecEvent({ eventType: b.eventType, actorId: b.actorId ?? 'anonymous', role: b.role ?? null, ip: clientIp(req), userAgent: userAgent(req), target: b.target ?? '', result: b.result ?? 'info', riskLevel: b.riskLevel ?? 'low', detail: b.detail ?? '' });
+        // Mirror denials/failures into the audit trail for a single governance record.
+        if (b.result === 'denied' || b.result === 'failure') {
+          await writeAudit({ actorType: b.role === 'agent' ? 'agent' : 'human', actorId: b.actorId ?? 'anonymous', role: (['owner', 'operator', 'viewer', 'agent'] as string[]).includes(b.role ?? '') ? (b.role as RoleName) : null, action: `security_${b.eventType}`, targetType: 'security', targetId: b.target ?? b.eventType, reason: b.detail ?? '' });
+        }
+        return success(evt);
       });
 
       // --- System status --------------------------------------------------

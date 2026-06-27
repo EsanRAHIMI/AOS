@@ -37,4 +37,6 @@ export const ERROR_CODES = {
   UPSTREAM: 'upstream_error',
   INTERNAL: 'internal_error',
   APPROVAL_REQUIRED: 'approval_required',
+  RATE_LIMITED: 'rate_limited',
+  SAFE_MODE: 'safe_mode_blocked',
 } as const;

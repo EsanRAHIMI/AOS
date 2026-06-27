@@ -45,3 +45,5 @@ export * from './governance/index.js';
 export * from './learning/index.js';
 // Phase 10 — Continuous Learning & Autonomous Improvement
 export * from './workflows/index.js';
+// Phase 12 — Security, Auth & Production Hardening
+export * from './security/index.js';

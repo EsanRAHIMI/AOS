@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { logoutAction } from '@/app/login/actions';
 
 /** Grouped navigation for the glass control-room sidebar. */
 const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
@@ -10,6 +11,7 @@ const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
   { title: 'Runtime', items: [['/monitor', 'Monitor'], ['/incidents', 'Incidents'], ['/repair-tasks', 'Repairs'], ['/repair-diagnoses', 'Diagnoses'], ['/repair-plans', 'Repair Plans']] },
   { title: 'Reason', items: [['/reasoning', 'Reasoning'], ['/strategic-plans', 'Strategic Plans'], ['/policy-decisions', 'Policy'], ['/decision-memory', 'Decisions'], ['/llm/status', 'LLM Status']] },
   { title: 'Govern', items: [['/governance', 'Governance'], ['/outcome-reviews', 'Outcome Reviews'], ['/scoring-profiles', 'Scoring Profiles'], ['/scoring-change-proposals', 'Scoring Proposals'], ['/policy-rules', 'Policy Rules'], ['/rbac', 'RBAC'], ['/audit-logs', 'Audit Logs']] },
+  { title: 'Secure', items: [['/security', 'Security'], ['/security/events', 'Security Events'], ['/security/env', 'Env Health'], ['/security/rate-limits', 'Rate Limits'], ['/security/safe-mode', 'Safe Mode']] },
   { title: 'Learn', items: [['/learning', 'Learning'], ['/learning-runs', 'Learning Runs'], ['/reliability', 'Reliability'], ['/patterns', 'Patterns'], ['/system-recommendations', 'Recommendations'], ['/improvement-workflows', 'Workflows'], ['/impact-assessments', 'Impact'], ['/memory-maintenance', 'Memory Maint.'], ['/learning/schedules', 'Schedules']] },
   { title: 'More', items: [['/docs', 'Docs'], ['/events', 'Events'], ['/logs', 'Logs'], ['/research', 'Research'], ['/settings', 'Settings']] },
 ];
@@ -19,7 +21,7 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function Sidebar() {
+export function Sidebar({ user }: { user?: { email: string; role: string } }) {
   const pathname = usePathname() ?? '/';
   return (
     <aside className="sidebar">
@@ -42,6 +44,17 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
+      {user && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--text)', wordBreak: 'break-all' }}>{user.email}</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
+            <span className={`badge ${user.role === 'owner' ? 'ok' : user.role === 'viewer' ? '' : 'warn'}`}>{user.role}</span>
+            <form action={logoutAction}>
+              <button type="submit" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12.5 }}>Sign out</button>
+            </form>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

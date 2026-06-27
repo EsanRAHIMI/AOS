@@ -14,3 +14,4 @@ export * from './reasoning.js';
 export * from './governance.js';
 export * from './learning.js';
 export * from './workflows.js';
+export * from './security.js';

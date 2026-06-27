@@ -2,6 +2,33 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-27 — Phase 12 security, auth & production hardening
+
+### D-058 Stateless HMAC session cookie (Web Crypto), scrypt passwords (node)
+Session tokens are HMAC-SHA256 signed via Web Crypto so the same verify path runs in middleware (edge)
+and server actions/components — no shared session store needed. Passwords use node `scrypt` (or a
+dev-only plain compare) in the login action. Cookie is HttpOnly + Secure + SameSite=Lax;
+`DASHBOARD_SESSION_SECRET` signs it. Admin/internal tokens never reach the browser.
+
+### D-057 Trust the dashboard's declared role only with the admin token
+The dashboard sends `x-factory-role`; the gateway honors it only alongside a valid admin token
+(server-to-server), otherwise the caller is `agent`. This lets the gateway record the true actor and
+enforce RBAC without a second identity system, and prevents client self-elevation.
+
+### D-056 Enforce RBAC + safe mode in BOTH dashboard and gateway
+The dashboard server actions deny early (best UX: explanatory `/denied` page) and the gateway re-checks
+every mutation (`enforce()`). Defense in depth: bypassing the UI still hits gateway RBAC + safe-mode.
+
+### D-055 Runtime safe mode in system_settings, seeded from env
+`AUTONOMY_SAFE_MODE` sets the boot default, but the live value lives in `system_settings` so an owner can
+toggle it instantly from the dashboard without a redeploy — required for the emergency kill-switch and
+the demo. Blocked attempts are audited + raised as security events.
+
+### D-054 Dashboard RBAC mirrored, not imported from @factory/shared
+The dashboard keeps a small `lib/rbac.ts` mirror of the action→permission map instead of importing the
+backend package, so the Next bundle stays free of Mongo/AWS/server-only code. The gateway remains the
+authoritative enforcer; the mirror is kept in sync and documented.
+
 ## 2026-06-27 — Phase 11.5 UI QA, cleanup & polish
 
 ### D-053 Responsive tables via global CSS, not 40 rewrites

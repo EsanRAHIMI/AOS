@@ -405,3 +405,61 @@ Verification:
   reliability, monitor, validations, evaluations, etc.) remain responsive scrollable tables rather than
   cards — the right UX for dense operator data; they already inherit the design system. A global command
   palette and per-page skeletons beyond the route-level loader are deferred to a later phase.
+
+## Phase 12 — Security, Auth & Production Hardening — COMPLETE (2026-06-27)
+Makes the live system safe to expose on a public domain. The kernel can now answer: who is using it,
+what they may do, which actions are sensitive, whether secrets/APIs are protected, and how to recover.
+All changes are additive — **no existing service contract was broken** (authorized owner calls behave
+exactly as before; new behavior is 401/403/429 for unauthorized/abusive callers).
+
+Delivered (shared):
+- **Security schemas + collections** — `security_checks`, `security_events` (+ `SecurityRiskLevel`).
+- **Security engine** (`shared/security`, pure + tested) — `auditEnvironment()` (env/secret/token/session
+  audit with placeholder detection + risk aggregation + recommendations), `RateLimiter` (fixed-window,
+  in-memory, Redis-replaceable), `buildSecurityCheck/buildSecurityEvent`.
+- **RBAC extended** — new permissions (create_task, decide_approval, confirm_infrastructure,
+  run_learning_trigger, github_delivery, manage_security); `DASHBOARD_ACTION_PERMISSIONS`,
+  `canRolePerformAction()`, `SAFE_MODE_BLOCKED_ACTIONS`/`isActionBlockedInSafeMode()`. owner=all,
+  operator=operational (no governance/scoring/policy), viewer=read-only, agent=none.
+- **Safe mode** — `AUTONOMY_SAFE_MODE` env default mirrored into `system_settings` and toggled at runtime.
+
+Delivered (gateway-api + service-kit):
+- **Role propagation** — `x-factory-role` honored only with a valid admin token (trusted dashboard);
+  otherwise the caller is `agent`. Drives accurate audit + RBAC.
+- **RBAC + safe-mode enforcement** on every mutation endpoint (`enforce()`), each denial writing an
+  **audit log + security event**; governance decisions keep their existing permission checks.
+- **Rate limiting** on task creation, approvals, and activation (429 + security event on abuse).
+- **Security endpoints** — `GET/POST /v1/security/safe-mode`, `POST /v1/security/check`,
+  `GET /v1/security/checks|events|env|rate-limits`, `POST /v1/security/event`.
+- **Production-safe errors** — `setErrorHandler` in the gateway and in `service-kit` (every service):
+  no stack traces to clients, request id in the envelope, `x-request-id` on every response.
+- **Service-to-service** — verified all `/.factory/*` and every custom service route require the
+  internal token; only `GET /health` is public.
+
+Delivered (dashboard-web):
+- **Authentication** — `/login` page, scrypt-hashed (or dev-plain) credentials, HMAC-signed **HttpOnly,
+  Secure, SameSite=Lax** session cookie via `DASHBOARD_SESSION_SECRET`, server-side verification,
+  logout, and `middleware.ts` that redirects unauthenticated users to login. Admin/internal tokens never
+  reach the browser. Local dev seeds owner/operator/viewer demo logins when no users are configured.
+- **RBAC enforcement in actions** — every sensitive server action calls `requirePermission()` (role +
+  safe-mode); denials report a security event (mirrored to audit) and redirect to `/denied`. The gateway
+  enforces the same rules as defense in depth.
+- **Security dashboard** — `/security` (auth status, current user/role, safe mode, env posture, latest
+  check, recent events, run-check), `/security/events`, `/security/env`, `/security/rate-limits`,
+  `/security/safe-mode`; plus a global **safe-mode banner**, a user/role chip + sign-out in the shell.
+- **Backup/recovery runbook** (`docs/backup-and-recovery.md`) — Mongo/S3 backup, secret rotation,
+  Dokploy rollback/restart, incident response, and the emergency safe-mode switch; `scripts/hash-password.mjs`.
+
+Verification:
+- **Full workspace build/typecheck passing** — all 14 packages (`shared`, `service-kit`, 12 services)
+  compile; dashboard `next build` ✓ Compiled successfully.
+- **Security-engine smoke PASS (22/22):** weak env → fail/critical + recommendations; strong env →
+  pass/low; owner allowed / viewer denied / operator partial / agent none; safe mode blocks mutations
+  but not the security controls; rate limiter allows N then 429s; session HMAC round-trips and rejects
+  tampering. This exercises the exact compiled logic behind the demo flow (log in → role visible →
+  viewer denied → audit+security event → owner runs check → env/token/session/safe-mode verified →
+  result stored → safe mode blocks mutations → owner disables → mutations resume).
+- Scope: only `shared/`, `packages/service-kit/`, `services/gateway-api/`, `services/dashboard-web/`,
+  `scripts/`, and `docs/` changed. No Docker; independent Dokploy deploy intact; Phase 11 UI polish
+  preserved. Known non-blocking note: Next 16 deprecates the `middleware` filename in favor of `proxy`
+  (still compiles and runs as “Proxy (Middleware)”).

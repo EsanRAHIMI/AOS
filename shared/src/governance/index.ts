@@ -129,18 +129,76 @@ export const PERMISSION_CATALOG = [
   'view_dashboard',
   'view_evidence',
   'manage_secrets',
+  // Phase 12 — additional sensitive dashboard actions
+  'create_task',
+  'decide_approval',
+  'confirm_infrastructure',
+  'run_learning_trigger',
+  'github_delivery',
+  'manage_security',
 ] as const;
 export type PermissionId = (typeof PERMISSION_CATALOG)[number];
 
 export const ROLE_PERMISSIONS: Record<RoleName, PermissionId[]> = {
   owner: [...PERMISSION_CATALOG],
-  operator: ['run_activation', 'run_repair', 'approve_repair', 'view_dashboard', 'view_evidence'],
+  operator: [
+    'run_activation',
+    'run_repair',
+    'approve_repair',
+    'approve_deployment',
+    'confirm_infrastructure',
+    'create_task',
+    'decide_approval',
+    'run_learning_trigger',
+    'view_dashboard',
+    'view_evidence',
+  ],
   viewer: ['view_dashboard', 'view_evidence'],
   agent: [],
 };
 
 export function hasPermission(role: RoleName, permission: string): boolean {
   return (ROLE_PERMISSIONS[role] ?? []).includes(permission as PermissionId);
+}
+
+/**
+ * Single source of truth mapping every sensitive dashboard action to the
+ * permission it requires. Both the dashboard server actions and the gateway
+ * use this so enforcement is identical on both sides.
+ */
+export const DASHBOARD_ACTION_PERMISSIONS: Record<string, PermissionId> = {
+  createTask: 'create_task',
+  decideApproval: 'decide_approval',
+  decideScoringProposal: 'approve_scoring_change',
+  decidePolicyProposal: 'approve_policy_change',
+  decideRecommendation: 'approve_recommendation',
+  decideExpansion: 'approve_expansion',
+  confirmInfra: 'confirm_infrastructure',
+  confirmChecklist: 'approve_deployment',
+  runActivation: 'run_activation',
+  decideRepairPlan: 'run_repair',
+  revalidateIncident: 'run_repair',
+  triggerLearning: 'run_learning_trigger',
+  githubDelivery: 'github_delivery',
+  runSecurityCheck: 'manage_security',
+  setSafeMode: 'manage_security',
+};
+
+/** True when `role` may perform the named sensitive dashboard action. */
+export function canRolePerformAction(role: RoleName, action: string): boolean {
+  const perm = DASHBOARD_ACTION_PERMISSIONS[action];
+  if (!perm) return true; // not a gated action
+  return hasPermission(role, perm);
+}
+
+/**
+ * Mutating actions blocked when the kernel is in safe mode. Safe mode allows
+ * only read/monitor/report/recommendation surfacing — never execution.
+ */
+export const SAFE_MODE_BLOCKED_ACTIONS = new Set<string>(Object.keys(DASHBOARD_ACTION_PERMISSIONS).filter((a) => a !== 'runSecurityCheck' && a !== 'setSafeMode'));
+
+export function isActionBlockedInSafeMode(action: string): boolean {
+  return SAFE_MODE_BLOCKED_ACTIONS.has(action);
 }
 
 export function buildSeedRoles(): Role[] {
@@ -166,6 +224,12 @@ export function buildSeedPermissions(): Permission[] {
     view_dashboard: 'View the dashboard.',
     view_evidence: 'View evidence records.',
     manage_secrets: 'Manage secret material.',
+    create_task: 'Create a new task / goal.',
+    decide_approval: 'Approve or reject a pending approval.',
+    confirm_infrastructure: 'Confirm infrastructure / deployment creation.',
+    run_learning_trigger: 'Trigger a learning run.',
+    github_delivery: 'Deliver code to GitHub.',
+    manage_security: 'Run security checks and toggle safe mode.',
   };
   return PERMISSION_CATALOG.map((p) => ({ permissionId: p, description: map[p] ?? p }));
 }
@@ -174,6 +238,8 @@ export function buildSeedUsers(): RbacUser[] {
   const now = nowIso();
   return [
     { userId: 'user_owner', name: 'Owner', role: 'owner', createdAt: now },
+    { userId: 'user_operator', name: 'Operator', role: 'operator', createdAt: now },
+    { userId: 'user_viewer', name: 'Viewer', role: 'viewer', createdAt: now },
     { userId: 'svc_agent', name: 'Internal agent', role: 'agent', createdAt: now },
   ];
 }

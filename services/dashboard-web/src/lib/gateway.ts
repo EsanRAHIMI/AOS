@@ -4,6 +4,8 @@
  * exposed to the browser.
  */
 import 'server-only';
+import { cookies } from 'next/headers';
+import { SESSION_COOKIE, verifySession, sessionSecret } from './session';
 
 const API = process.env.FACTORY_API_URL ?? 'http://localhost:4101';
 const ADMIN = process.env.FACTORY_ADMIN_TOKEN ?? '';
@@ -14,6 +16,21 @@ export interface ApiEnvelope<T> {
   error?: { code: string; message: string };
 }
 
+/**
+ * Declare the logged-in user's role to the gateway. Only meaningful alongside
+ * the admin token (server-side), so the gateway records the true actor and
+ * enforces RBAC. Derived from the signed session — never from client input.
+ */
+async function roleHeader(): Promise<Record<string, string>> {
+  try {
+    const token = (await cookies()).get(SESSION_COOKIE)?.value;
+    const session = token ? await verifySession(token, sessionSecret()) : null;
+    return session ? { 'x-factory-role': session.role } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
     const res = await fetch(`${API}${path}`, {
@@ -21,6 +38,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
       headers: {
         'content-type': 'application/json',
         'x-factory-admin-token': ADMIN,
+        ...(await roleHeader()),
         ...(init?.headers ?? {}),
       },
       cache: 'no-store',
@@ -122,4 +140,14 @@ export const gateway = {
   memoryMaintenance: () => call<unknown[]>('/v1/memory-maintenance'),
   triggerLearning: (type?: string, reason?: string) =>
     call<{ triggered?: boolean; taskId?: string }>('/v1/learning/trigger', { method: 'POST', body: JSON.stringify({ type, reason }) }),
+  // Phase 12 — Security, Auth & Production Hardening
+  securityChecks: () => call<unknown[]>('/v1/security/checks'),
+  runSecurityCheck: () => call<{ checkId?: string; passed?: boolean; riskLevel?: string }>('/v1/security/check', { method: 'POST' }),
+  securityEvents: (limit = 100) => call<unknown[]>(`/v1/security/events?limit=${limit}`),
+  securityEnv: () => call<{ checks: Array<{ id: string; label: string; passed: boolean; severity: string; detail: string }>; passed: boolean; riskLevel: string; recommendations: string[]; safeMode: boolean }>('/v1/security/env'),
+  safeMode: () => call<{ enabled: boolean }>('/v1/security/safe-mode'),
+  setSafeMode: (enabled: boolean) => call<{ enabled: boolean }>('/v1/security/safe-mode', { method: 'POST', body: JSON.stringify({ enabled }) }),
+  rateLimits: () => call<{ buckets: Array<{ key: string; count: number; resetAt: string }> }>('/v1/security/rate-limits'),
+  reportSecurityEvent: (e: { eventType: string; actorId?: string; role?: string; result?: string; target?: string; detail?: string; riskLevel?: string }) =>
+    call<unknown>('/v1/security/event', { method: 'POST', body: JSON.stringify(e) }),
 };

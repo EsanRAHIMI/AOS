@@ -14,6 +14,18 @@ export const BaseEnvSchema = z.object({
   FACTORY_INTERNAL_TOKEN: z.string().min(1, 'FACTORY_INTERNAL_TOKEN is required'),
   FACTORY_ADMIN_TOKEN: z.string().optional().default(''),
 
+  /**
+   * Emergency kill-switch. When true, services refuse mutation/deploy/repair/
+   * governance execution and operate read/monitor/report-only. The live value
+   * is mirrored in `system_settings` so the owner can toggle it at runtime;
+   * this env provides the initial/default.
+   */
+  AUTONOMY_SAFE_MODE: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .default(false)
+    .transform((v) => v === true || v === 'true' || v === '1'),
+
   SERVICE_ID: z.string().min(1),
   SERVICE_NAME: z.string().min(1),
   SERVICE_DOMAIN: z.string().optional().default(''),

@@ -16,7 +16,7 @@ function active(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function MobileTopBar() {
+export function MobileTopBar({ user }: { user?: { email: string; role: string } }) {
   return (
     <header className="mobile-topbar">
       <div className="brand" style={{ padding: 0 }}>
@@ -26,7 +26,10 @@ export function MobileTopBar() {
           <small>control room</small>
         </span>
       </div>
-      <Link href="/tasks" className="btn btn-primary" style={{ padding: '8px 14px', fontSize: 13 }}>+ Task</Link>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {user && <span className={`badge ${user.role === 'owner' ? 'ok' : user.role === 'viewer' ? '' : 'warn'}`}>{user.role}</span>}
+        <Link href="/tasks" className="btn btn-primary" style={{ padding: '8px 14px', fontSize: 13 }}>+ Task</Link>
+      </div>
     </header>
   );
 }

@@ -9,6 +9,7 @@ import {
   FACTORY_ENDPOINTS,
   INTERNAL_TOKEN_HEADER,
   ADMIN_TOKEN_HEADER,
+  REQUEST_ID_HEADER,
   buildStatus,
   success,
   failure,
@@ -103,6 +104,25 @@ export async function createFactoryService(opts: CreateServiceOptions): Promise<
   });
 
   await app.register(cors, { origin: true });
+
+  // Echo the request id on every response for traceability.
+  app.addHook('onSend', (req, reply, payload, done) => {
+    reply.header(REQUEST_ID_HEADER, String(req.id));
+    done(null, payload);
+  });
+
+  // Production-safe error envelope: never leak stack traces to clients; include
+  // a request id so a failure can be correlated with structured logs.
+  app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
+    const requestId = String(req.id);
+    log.error({ err, requestId }, 'unhandled request error');
+    const statusCode = err.statusCode ?? 500;
+    const isProd = process.env.NODE_ENV === 'production';
+    const code = statusCode >= 500 ? ERROR_CODES.INTERNAL : ERROR_CODES.VALIDATION;
+    const message = statusCode >= 500 && isProd ? 'internal error' : err.message;
+    reply.header(REQUEST_ID_HEADER, requestId);
+    reply.code(statusCode).send(failure(code, message, { requestId }));
+  });
 
   // Capture every log line into the ring buffer for /.factory/logs.
   app.addHook('onResponse', (req, reply, done) => {

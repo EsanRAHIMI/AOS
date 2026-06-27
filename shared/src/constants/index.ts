@@ -178,6 +178,9 @@ export const COLLECTIONS = {
   IMPROVEMENT_WORKFLOWS: 'improvement_workflows',
   IMPACT_ASSESSMENTS: 'impact_assessments',
   MEMORY_MAINTENANCE_RUNS: 'memory_maintenance_runs',
+  // Phase 12 — Security, Auth & Production Hardening
+  SECURITY_CHECKS: 'security_checks',
+  SECURITY_EVENTS: 'security_events',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -265,6 +268,15 @@ export const EVENT_TYPES = {
   WORKFLOW_COMPLETED: 'improve.workflow.completed',
   IMPACT_ASSESSED: 'improve.impact.assessed',
   MEMORY_MAINTAINED: 'improve.memory.maintained',
+  // Phase 12 — Security, Auth & Production Hardening
+  LOGIN_SUCCEEDED: 'security.login.succeeded',
+  LOGIN_FAILED: 'security.login.failed',
+  LOGOUT: 'security.logout',
+  RBAC_DENIED: 'security.rbac.denied',
+  AUTH_FAILED: 'security.auth.failed',
+  RATE_LIMITED: 'security.rate.limited',
+  SECURITY_CHECK_COMPLETED: 'security.check.completed',
+  SAFE_MODE_CHANGED: 'security.safe_mode.changed',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
@@ -289,5 +301,13 @@ export const S3_PREFIXES = {
 export const INTERNAL_TOKEN_HEADER = 'x-factory-internal-token';
 /** Header used to carry the privileged admin token. */
 export const ADMIN_TOKEN_HEADER = 'x-factory-admin-token';
+/**
+ * Header the trusted dashboard server sets to declare the authenticated user's
+ * role. Only honored by the gateway when accompanied by a valid admin token, so
+ * an untrusted client cannot self-elevate.
+ */
+export const ROLE_HEADER = 'x-factory-role';
+/** Request id echoed in responses and error envelopes for traceability. */
+export const REQUEST_ID_HEADER = 'x-request-id';
 
 export const SERVICE_VERSION = '0.1.0';

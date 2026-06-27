@@ -144,11 +144,22 @@ Phase 10 candidates:
 6. Consistency: design-system components on converted pages; button intent normalized — DONE.
 7. Typecheck + `next build` clean; only dashboard-web + docs changed — DONE.
 
-Phase 12 candidates:
-8. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
-9. Full execution of improve_scoring/policy/prompt workflows end-to-end through governance.
-10. Cross-run impact trends; report-agent for periodic improvement digests.
-11. Global command palette; convert remaining ~38 read-only data tables to richer mobile views if desired.
+## Phase 12 — Security, Auth & Production Hardening — DONE
+1. Dashboard login + HMAC HttpOnly session cookie + logout + middleware route protection — DONE.
+2. RBAC enforced in dashboard actions and gateway (owner/operator/viewer/agent); denials audited — DONE.
+3. Gateway mutation protection, role propagation, rate limiting, prod-safe errors + request id — DONE.
+4. Internal-token verified on all service `/.factory/*` + custom routes; `/health` public — DONE.
+5. Env/secret audit, security_checks + security_events, `/security/*` dashboard — DONE.
+6. Safe mode (env default + runtime toggle in system_settings) blocks mutations; banner — DONE.
+7. Backup/recovery runbook, secret rotation, Dokploy rollback, password-hash script — DONE.
+8. Full build/typecheck + 22/22 security-engine smoke; scope limited to security surfaces + docs — DONE.
+
+Phase 13 candidates:
+9. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
+10. Cross-run impact trends; report-agent for periodic improvement/security digests.
+11. OIDC/JWT login + per-user RBAC store (beyond env users); session revocation.
+12. Redis-backed rate limiter + distributed safe-mode signal; rename `middleware.ts` → `proxy.ts` (Next 16).
+13. Global command palette; convert remaining ~38 read-only data tables to richer mobile views if desired.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE
