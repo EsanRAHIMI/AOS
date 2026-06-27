@@ -127,10 +127,28 @@ Phase 10 candidates:
 5. Continuous memory maintenance (deprecate superseded; token budget) — DONE.
 6. Dashboard: workflows(+detail)/impact/memory-maintenance/schedules/triggers — DONE.
 
-Phase 11 candidates:
-7. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
-8. Full execution of improve_scoring/policy/prompt workflows end-to-end through governance.
-9. Cross-run impact trends; report-agent for periodic improvement digests.
+## Phase 11 — Control-Room Experience (Premium Glass UI) — DONE (design-only)
+1. Original glass design system (tokens, blobs, grain, CSS motion; legacy classes preserved) — DONE.
+2. New shell: glass sidebar + mobile top/bottom chrome + responsive app-shell — DONE.
+3. Reusable UI components (PageHeader/MetricCard/EmptyState/StatusPill) — DONE.
+4. Priority pages redesigned (overview, tasks, tasks/:id, agents, services, approvals, capabilities) — DONE.
+5. Mobile-first cards, vertical live timeline, clear/safe approvals — DONE.
+6. Typecheck + `next build` clean; no backend/API/contract changes — DONE.
+
+## Phase 11.5 — UI QA, Cleanup & Product Polish — DONE
+1. Removed dead UI code (Nav.tsx, `.menu-btn`); kept used Placeholder.tsx — DONE.
+2. Global responsive tables (no page overflows on mobile); 5 action+table pages → cards — DONE.
+3. Safe-area padding for top bar + content; touch-friendly controls — DONE.
+4. Route-level loading skeleton, error boundary (retry), and 404 across all 64 routes — DONE.
+5. Accessibility: focus-visible, tap-highlight reset, contrast, reduced-motion — DONE.
+6. Consistency: design-system components on converted pages; button intent normalized — DONE.
+7. Typecheck + `next build` clean; only dashboard-web + docs changed — DONE.
+
+Phase 12 candidates:
+8. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
+9. Full execution of improve_scoring/policy/prompt workflows end-to-end through governance.
+10. Cross-run impact trends; report-agent for periodic improvement digests.
+11. Global command palette; convert remaining ~38 read-only data tables to richer mobile views if desired.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

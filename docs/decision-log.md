@@ -2,6 +2,40 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-27 — Phase 11.5 UI QA, cleanup & polish
+
+### D-053 Responsive tables via global CSS, not 40 rewrites
+Wide tables scroll horizontally inside their card on mobile (`.card{overflow-x:auto}` +
+`table{white-space:nowrap;min-width:max-content}`). This fixes viewport overflow for every table page at
+once. Only the 5 table pages with inline action buttons were hand-converted to cards (buttons in a
+horizontally-scrolling row are bad on touch); the rest stay scrollable hybrids, which is the right UX for
+dense operator data.
+
+### D-052 Route-level loading/error/not-found over per-page states
+Added `app/loading.tsx`, `app/error.tsx` (client boundary with retry), and `app/not-found.tsx`. One set of
+files gives all 64 routes polished loading, error, and 404 states for free, instead of touching each page.
+
+### D-051 Keep dead-but-harmless code explicit
+Removed truly-unused `Nav.tsx` and the `.menu-btn` rule. Kept `Placeholder.tsx` (used by 5 pages) and the
+`.layout` selector (harmless, paired with `.app-shell`) — documented rather than risk-removed.
+
+## 2026-06-27 — Phase 11 control-room experience (premium glass UI)
+
+### D-050 Rewrite the design system, preserve legacy class names
+Rather than editing ~60 pages, `globals.css` was rewritten around the same class names the pages already
+use (`.card`, `.badge`, `.label`, `.sub`, `.h1`, `.feed`, …). Every page inherits the premium glass look
+for free; only the priority pages were hand-redesigned. Lowest risk, widest coverage.
+
+### D-049 Pure-CSS design system, no new UI dependencies
+Glass, depth, ambient blobs, grain, and motion (`fadeInUp`/`shimmer`/`pulse`) are all CSS — no Framer
+Motion or component library added. Keeps the dashboard light and Dokploy-deployable, honors
+`prefers-reduced-motion`, and avoids bundle/security surface from new deps.
+
+### D-048 UI-only phase — backend strictly untouched
+Phase 11 changed only `services/dashboard-web` presentation. `lib/gateway.ts`, all server actions, the
+`/api/stream` SSE proxy, and every service contract are unchanged; admin/internal tokens stay
+server-side. Design work must never alter behavior or contracts.
+
 ## 2026-06-26 — Phase 10 continuous learning & autonomous improvement
 
 ### D-047 Approval converts recommendations into structured workflows (not generic tasks)

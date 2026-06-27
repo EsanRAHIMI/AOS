@@ -333,3 +333,75 @@ Verification:
 - All 26 Phase 10 acceptance criteria met. No Docker; independent Dokploy deploy intact; nothing
   executes without approval; workflows structured + evidence-backed; impact never faked; hardcoded
   safety blocks intact; deterministic fallback retained.
+
+## Phase 11 — Control-Room Experience (Premium Glass UI) — COMPLETE (2026-06-27)
+A design-only phase: the dashboard becomes a premium, mobile-first, glass/visionOS-inspired
+Autonomous OS Control Room. **No API route, business logic, or service contract was changed** —
+only `services/dashboard-web` presentation (design system, layout, components, the priority pages).
+
+Delivered:
+- **Original glass design system** (`globals.css`, rewritten) — dark layered background with ambient
+  gradient blobs + SVG noise grain, translucent glass surfaces, soft blur, depth shadows, a token
+  scale (bg/glass/text/border/status colors, radius, spacing, blur, motion), CSS-only motion
+  (`fadeInUp`/`shimmer`/`pulse`), `prefers-reduced-motion` support. Legacy class names are preserved,
+  so all ~60 pages inherit the premium look automatically. No new runtime dependencies.
+- **New shell** — glass grouped `Sidebar` (8 nav groups, active states via `usePathname`); mobile
+  `MobileTopBar` (brand + quick "+ Task") and `MobileTabBar` (bottom nav, safe-area aware); `layout.tsx`
+  rewired to the responsive app-shell with a `viewport` export. Desktop = sidebar + main; tablet/mobile
+  = top bar + stacked cards + bottom tab bar.
+- **Reusable UI** (`components/ui.tsx`) — `PageHeader` (breadcrumbs/subtitle/actions), `MetricCard`,
+  `EmptyState`, `StatusPill` + `statusTone` mapper.
+- **Priority pages redesigned** — /overview (command bar, metric grid, live activity, pending
+  approvals, latest task, reliability bars), /tasks (command bar + status metrics + task cards),
+  /tasks/:id (mission control: vertical live timeline cards + report + reasoning/learning/improvement
+  reports + evidence), /agents + /services (cards with capability/type chips), /approvals (risk-toned
+  cards with clear approve/reject), /capabilities (lifecycle ladder grouped proposed→generated→active→
+  failed); light header polish on /learning + /governance. Dense tables wrapped for horizontal scroll
+  on mobile; `CreateTaskForm` gained a `command` variant; `LiveEvents`/`LiveTaskTimeline` restyled to
+  the live-dot + vertical-timeline language.
+
+Verification:
+- Dashboard **typecheck passing** (`tsc --noEmit`) and **`next build` compiled successfully** — all
+  ~60 routes build with zero errors/warnings.
+- Responsive review: desktop sidebar + main, mobile top/bottom chrome with stacked cards, big tap
+  targets, readable typography, accessible status contrast.
+- **No backend touched** — `lib/gateway.ts`, all `app/actions.ts` server actions, the `/api/stream`
+  SSE proxy, and every service contract are unchanged; admin/internal tokens remain server-side only.
+  (Old `components/Nav.tsx` is now unused/dead but left in place; harmless.)
+
+## Phase 11.5 — UI QA, Cleanup & Product Polish — COMPLETE (2026-06-27)
+A polish-only pass to make the Phase 11 redesign feel finished, consistent, and production-ready.
+**Dashboard-web + docs only — no backend, shared package, or API contract changed.**
+
+Cleaned / fixed:
+- **Dead code removed** — deleted the now-unused `components/Nav.tsx` (no imports remained) and the
+  dead `.menu-btn` rule. `components/Placeholder.tsx` was checked and **kept** (used by 5 pages).
+  `.layout` is kept intentionally (harmless combined selector alongside `.app-shell`).
+- **Responsive tables (global, zero per-page edits)** — on ≤1024px a wide `<table>` now scrolls
+  horizontally inside its card (`.card{overflow-x:auto}` + `table{white-space:nowrap;min-width:max-content}`)
+  so no page overflows the viewport. The ~38 read-only dense data tables stay as scrollable hybrids
+  (appropriate for operator pages); the 5 table pages with inline action buttons were converted to
+  card layouts: **infrastructure, expansion-proposals, deployment/checklists, learning/schedules,
+  incidents/:id** (key/value `<dl>`s, chips, full-width touch-friendly buttons, flex inputs that no
+  longer use fixed pixel widths).
+- **Safe-area + mobile chrome** — `.main` and `.mobile-topbar` now pad with `env(safe-area-inset-*)`
+  so content clears the notch and the bottom tab bar on iPhone-sized screens.
+- **Loading / error / 404 states (cover all 64 routes)** — added `app/loading.tsx` (skeleton),
+  `app/error.tsx` (client error boundary with "Try again" + back, shows ref/digest), and
+  `app/not-found.tsx`. Secondary pages’ plain `.empty` blocks upgraded to `EmptyState` on the
+  converted pages.
+- **Accessibility basics** — global `:focus-visible` outline (keyboard users), `-webkit-tap-highlight-color`
+  reset, status colors keep contrast, `prefers-reduced-motion` still disables all animation, buttons/inputs
+  carry real labels/placeholders.
+- **Consistency** — converted pages use `PageHeader`/`MetricCard`/`StatusPill`/`EmptyState`; verified every
+  `btn-primary` is paired with the base `.btn`; button intent normalized (ok / ghost / err).
+
+Verification:
+- Dashboard **typecheck clean** (`tsc --noEmit`, no output) and **`next build` ✓ Compiled successfully**
+  (16.7s; static pages generated; exit 0).
+- **Scope confirmed by git** — only `services/dashboard-web/` and `docs/` changed; backend, shared, and
+  contracts untouched.
+- **What remains (intentional):** the ~38 read-only data tables (audit-logs, llm-traces, patterns,
+  reliability, monitor, validations, evaluations, etc.) remain responsive scrollable tables rather than
+  cards — the right UX for dense operator data; they already inherit the design system. A global command
+  palette and per-page skeletons beyond the route-level loader are deferred to a later phase.

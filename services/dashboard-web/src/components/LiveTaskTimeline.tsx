@@ -33,19 +33,21 @@ export function LiveTaskTimeline({ taskId, initial }: { taskId: string; initial:
         <span className="label">Live timeline</span>
         <span className="live"><span className={`dot ${live ? 'on' : ''}`} /> {live ? 'live' : 'offline'}</span>
       </div>
-      <div className="feed">
-        {rows.length === 0 ? (
-          <div className="empty">Waiting for the orchestrator…</div>
-        ) : (
-          rows.map((r, i) => (
-            <div key={i}>
-              <span className="m">{new Date(r.at).toLocaleTimeString()} </span>
-              <span className="t">{r.source}</span>{' '}
-              <span className={r.level === 'warn' ? 'badge warn' : ''}>{r.message}</span>
-            </div>
-          ))
-        )}
-      </div>
+      {rows.length === 0 ? (
+        <div className="empty">Waiting for the orchestrator…</div>
+      ) : (
+        <div className="timeline">
+          {rows.map((r, i) => {
+            const tone = r.level === 'warn' ? 'warn' : /fail|error/.test(r.type) ? 'err' : /complete|finish|fulfill/.test(r.type) ? 'ok' : '';
+            return (
+              <div className={`ti ${tone}`} key={i}>
+                <div className="m" style={{ fontSize: 11.5 }}>{new Date(r.at).toLocaleTimeString()} · {r.source}</div>
+                <div style={{ fontSize: 13 }}>{r.message}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -12,8 +12,7 @@ export default async function LearningPage() {
   const keyFacts = ctx && Array.isArray(ctx.keyFacts) ? (ctx.keyFacts as string[]) : [];
   return (
     <>
-      <h1 className="h1">Operational Learning</h1>
-      <p className="sub">What the kernel learned from its whole history — reliability, patterns, and recommendations.</p>
+      <PageHeader title="Operational Learning" subtitle="What the kernel learned from its whole history — reliability, patterns, and recommendations." />
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <div className="card"><div className="label">Learning runs</div><div className="stat">{lr.length}</div></div>
         <div className="card"><div className="label">Records analyzed</div><div className="stat">{String(latest?.recordsAnalyzed ?? 0)}</div></div>
@@ -23,7 +22,7 @@ export default async function LearningPage() {
       <div className="grid cols-2">
         <div className="card">
           <div className="label" style={{ marginBottom: 10 }}>Compressed context (what future agents load first)</div>
-          {keyFacts.length === 0 ? <div className="empty">Run "Analyze system history and recommend improvements".</div> : (
+          {keyFacts.length === 0 ? <EmptyState icon="✦" title="No compressed context yet" hint='Run "Analyze system history and recommend improvements".' /> : (
             <ul className="sub" style={{ marginTop: 0 }}>{keyFacts.map((f, i) => <li key={i}>{f}</li>)}</ul>
           )}
         </div>

@@ -1,38 +1,43 @@
 import { gateway } from '@/lib/gateway';
 import { timeAgo } from '@/lib/format';
 import { triggerLearningAction } from '@/app/actions';
+import { PageHeader, EmptyState } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export default async function SchedulesPage() {
   const rows = (await gateway.learningSchedules()) as Array<Record<string, unknown>> | null;
+  const list = rows ?? [];
   return (
     <>
-      <h1 className="h1">Learning Schedules</h1>
-      <p className="sub">Continuous learning cadence + triggers. The scheduler is continuous-ready; trigger one now below.</p>
-      <form action={triggerLearningAction} style={{ marginBottom: 16 }}>
-        <button className="btn-ok" type="submit">Trigger a learning run now</button>
-      </form>
-      <div className="card">
-        {!rows || rows.length === 0 ? (
-          <div className="empty">No schedules.</div>
-        ) : (
-          <table>
-            <thead><tr><th>Name</th><th>Cadence</th><th>Trigger</th><th>Min new records</th><th>Enabled</th><th>Last run</th></tr></thead>
-            <tbody>
-              {rows.map((s, i) => (
-                <tr key={i}>
-                  <td>{String(s.name)}</td>
-                  <td className="m">{String(s.cadence)}</td>
-                  <td className="m">{String(s.triggerType)}</td>
-                  <td className="m">{String(s.minNewRecords)}</td>
-                  <td><span className={`badge ${s.enabled ? 'ok' : 'err'}`}>{s.enabled ? 'on' : 'off'}</span></td>
-                  <td className="m">{s.lastRunAt ? timeAgo(String(s.lastRunAt)) : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <PageHeader
+        title="Learning Schedules"
+        subtitle="Continuous learning cadence + triggers. The scheduler is continuous-ready; trigger one now."
+        actions={
+          <form action={triggerLearningAction}>
+            <button className="btn btn-primary" type="submit">Trigger a learning run now</button>
+          </form>
+        }
+      />
+      {list.length === 0 ? (
+        <div className="card"><EmptyState icon="✦" title="No schedules" hint="A default daily schedule is seeded once the orchestrator runs." /></div>
+      ) : (
+        <div className="card-grid">
+          {list.map((s, i) => (
+            <div className="card" key={i}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <b style={{ fontSize: 14.5 }}>{String(s.name)}</b>
+                <span className={`badge ${s.enabled ? 'ok' : 'err'}`}>{s.enabled ? 'on' : 'off'}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span className="chip">{String(s.cadence)}</span>
+                <span className="chip">{String(s.triggerType)}</span>
+                <span className="chip">min {String(s.minNewRecords)} records</span>
+              </div>
+              <div className="m" style={{ fontSize: 12 }}>Last run: {s.lastRunAt ? timeAgo(String(s.lastRunAt)) : '—'}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }

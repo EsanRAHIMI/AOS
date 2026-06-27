@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
+import { PageHeader } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export default async function GovernancePage() {
@@ -10,8 +11,7 @@ export default async function GovernancePage() {
   const pending = props.filter((p) => p.status === 'waiting_approval').length;
   return (
     <>
-      <h1 className="h1">Governance</h1>
-      <p className="sub">How the kernel governs its own evolution — learning under approval, versioned and audited.</p>
+      <PageHeader title="Governance" subtitle="How the kernel governs its own evolution — learning under approval, versioned and audited." />
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <div className="card"><div className="label">Active scoring profile</div><div className="stat">v{String(active?.version ?? 1)}</div></div>
         <div className="card"><div className="label">Outcome reviews</div><div className="stat">{(reviews ?? []).length}</div></div>
