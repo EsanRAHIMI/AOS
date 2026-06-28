@@ -221,6 +221,25 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  services/internet-research-service:
+    dependencies:
+      '@factory/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@factory/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
   services/memory-agent:
     dependencies:
       '@factory/service-kit':
@@ -260,6 +279,63 @@ importers:
         version: 5.9.3
 
   services/orchestrator-agent:
+    dependencies:
+      '@factory/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@factory/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  services/qa-agent:
+    dependencies:
+      '@factory/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@factory/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  services/report-agent:
+    dependencies:
+      '@factory/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@factory/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.20.0
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  services/reviewer-agent:
     dependencies:
       '@factory/service-kit':
         specifier: workspace:*
