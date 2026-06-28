@@ -173,12 +173,20 @@ Phase 10 candidates:
 7. Product readiness checklist from real state — DONE.
 8. Language cleanup + contextual empty states; typecheck + build clean; security intact — DONE.
 
-Phase 15 candidates:
-9. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
-10. Real web-fetch capability for the research service (currently LLM-synthesized + curated sources).
-11. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
-12. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
-13. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette; persist action_templates if dynamic templates are needed.
+## Phase 15 — Safe Real Operations inside Overview — DONE (no new mission-control page)
+1. operation_plans / dokploy_targets / deployment_snapshots models + classification engine — DONE.
+2. Protected-core detection → critical + owner-only approval; safe mode blocks operation approval — DONE.
+3. Gateway operation lifecycle (create→target→decision→executed) with real /health + registry verification — DONE.
+4. Manual Dokploy instructions when no API token (no fake success / no fake targets) + snapshot on existing-app — DONE.
+5. /overview = Mission Control: command panel, active operation console, timeline, target/risk/approval/manual/verify/evidence/next-action — DONE.
+6. All services typecheck + dashboard build; 16/16 ops-engine smoke; security + governed AI intact — DONE.
+
+Phase 16 candidates:
+7. Wire a real Dokploy API client (deploy/restart/env) behind the existing approval+snapshot+verify gates.
+8. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
+9. Real web-fetch for the research service; real timer-driven scheduler.
+10. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
+11. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

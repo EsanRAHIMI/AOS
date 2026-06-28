@@ -191,3 +191,46 @@ export async function setSafeModeAction(formData: FormData): Promise<void> {
   revalidatePath('/security/safe-mode');
   revalidatePath('/');
 }
+
+/* -------------------- Phase 15: safe real operations -------------------- */
+
+export async function createOperationAction(formData: FormData): Promise<void> {
+  await requirePermission('createOperation');
+  const goal = String(formData.get('goal') ?? '').trim();
+  const operationType = String(formData.get('operationType') ?? 'health_check_only');
+  if (!goal) return;
+  await gateway.createOperation(goal, operationType);
+  revalidatePath('/');
+}
+
+export async function confirmOperationTargetAction(formData: FormData): Promise<void> {
+  await requirePermission('confirmOperationTarget');
+  const id = String(formData.get('operationPlanId'));
+  const portRaw = String(formData.get('port') ?? '').trim();
+  await gateway.confirmOperationTarget(id, {
+    projectName: String(formData.get('projectName') ?? '').trim(),
+    environmentName: String(formData.get('environmentName') ?? 'production').trim() || 'production',
+    appName: String(formData.get('appName') ?? '').trim(),
+    serviceId: String(formData.get('serviceId') ?? '').trim(),
+    domain: String(formData.get('domain') ?? '').trim(),
+    port: portRaw ? Number(portRaw) : null,
+    rootDir: String(formData.get('rootDir') ?? '').trim(),
+  });
+  revalidatePath('/');
+}
+
+export async function decideOperationAction(formData: FormData): Promise<void> {
+  await requirePermission('decideOperation');
+  const id = String(formData.get('operationPlanId'));
+  await gateway.decideOperation(id, String(formData.get('action')));
+  revalidatePath('/');
+  revalidatePath('/approvals');
+}
+
+export async function markOperationExecutedAction(formData: FormData): Promise<void> {
+  await requirePermission('decideOperation');
+  const id = String(formData.get('operationPlanId'));
+  const baseUrl = String(formData.get('baseUrl') ?? '').trim() || undefined;
+  await gateway.markOperationExecuted(id, baseUrl);
+  revalidatePath('/');
+}

@@ -2,6 +2,23 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-27 — Phase 15 safe real operations inside overview
+
+### D-068 Overview IS Mission Control — no separate page
+The guided operation journey (command → target → risk → approval → execute → verify → evidence → next)
+lives entirely on `/overview` via `OperationCommand` + `OperationConsole`. Other pages stay as archives.
+No `/mission-control` route is created.
+
+### D-067 Protected core escalates to critical + owner-only; safe mode blocks operation approval
+A mutation targeting any of the 9 protected core services is re-classified to `protected_core_update`
+(critical) and can only be approved by an owner. Approving any mutating operation is blocked while safe
+mode is on. Both are enforced server-side in the gateway (defense in depth over the dashboard UI).
+
+### D-066 No fake Dokploy — manual instructions + real verification
+Without a Dokploy API token, the gateway records the target as `manual_user_confirmed`, emits the exact
+manual Dokploy steps, waits for the operator's confirmation, then runs a **real** HTTP `/health` + registry
+check for verification. Success is never simulated; existing-app changes capture a snapshot first for rollback.
+
 ## 2026-06-27 — Phase 14 real product experience & onboarding
 
 ### D-065 No fake data — product layer reads only real state

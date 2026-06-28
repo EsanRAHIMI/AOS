@@ -16,3 +16,4 @@ export * from './learning.js';
 export * from './workflows.js';
 export * from './security.js';
 export * from './intelligence.js';
+export * from './operations-plan.js';

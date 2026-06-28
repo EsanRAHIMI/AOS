@@ -35,6 +35,9 @@ export const ACTION_PERMISSION: Record<string, string> = {
   triggerLearning: 'run_learning_trigger',
   runSecurityCheck: 'manage_security',
   setSafeMode: 'manage_security',
+  createOperation: 'create_task',
+  confirmOperationTarget: 'create_task',
+  decideOperation: 'approve_deployment',
 };
 
 export function canRolePerformAction(role: Role, action: string): boolean {

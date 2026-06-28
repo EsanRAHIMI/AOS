@@ -49,3 +49,5 @@ export * from './workflows/index.js';
 export * from './security/index.js';
 // Phase 13 — Real Intelligence Integration
 export * from './intelligence/index.js';
+// Phase 15 — Safe Real Operations
+export * from './operations/index.js';

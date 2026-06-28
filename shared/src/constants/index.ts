@@ -189,6 +189,10 @@ export const COLLECTIONS = {
   REVIEW_REPORTS: 'review_reports',
   QA_REPORTS: 'qa_reports',
   INTELLIGENCE_REPORTS: 'intelligence_reports',
+  // Phase 15 — Safe Real Operations
+  OPERATION_PLANS: 'operation_plans',
+  DOKPLOY_TARGETS: 'dokploy_targets',
+  DEPLOYMENT_SNAPSHOTS: 'deployment_snapshots',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -291,6 +295,13 @@ export const EVENT_TYPES = {
   QA_COMPLETED: 'intel.qa.completed',
   REPORT_GENERATED: 'intel.report.generated',
   LLM_BUDGET_EXCEEDED: 'intel.llm.budget',
+  // Phase 15 — Safe Real Operations
+  OPERATION_CREATED: 'ops.operation.created',
+  OPERATION_UPDATED: 'ops.operation.updated',
+  OPERATION_APPROVED: 'ops.operation.approved',
+  OPERATION_EXECUTED: 'ops.operation.executed',
+  OPERATION_VERIFIED: 'ops.operation.verified',
+  OPERATION_COMPLETED: 'ops.operation.completed',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

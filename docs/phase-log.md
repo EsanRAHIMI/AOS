@@ -562,3 +562,48 @@ Verification:
 - Security/RBAC/safe-mode intact (template runs go through the RBAC + safe-mode-gated action; no secrets to
   the browser). Premium/responsive design preserved. No Docker; Dokploy independence intact.
 - Scope: only `services/dashboard-web/` and `docs/` changed for Phase 14.
+
+## Phase 15 — Safe Real Operations inside Overview — COMPLETE (2026-06-27)
+`/overview` becomes the single guided **Mission Control** for real, safety-gated operations — no new
+mission-control page, no fake data, no fake Dokploy success, no silent self-modification.
+
+Delivered (shared):
+- **Operation plan model** (`operation_plans`) — goal, operationType, full target (project/env/app/service/
+  domain/port/rootDir/env), riskLevel, protectedCore, requiredApprovals, 13-step timeline, verification +
+  rollback plans, manual instructions, snapshotId/targetId, evidenceIds, status (draft→…→completed/failed/
+  rolled_back/cancelled), nextAction. **Dokploy target registry** (`dokploy_targets`) and **deployment
+  snapshots** (`deployment_snapshots`).
+- **Classification engine** — `classifyOperation` (health_check_only=low, new_app=medium, existing_app_*
+  =high, protected_core_update=critical); a mutation targeting one of the **9 protected core services**
+  (dashboard-web, gateway-api, orchestrator-agent, service-registry, event-bus-service, monitor-agent,
+  memory-agent, documentation-service, devops-agent) **escalates to critical + owner-only approval**.
+  `buildOperationPlan/buildSnapshot/buildManualInstructions/buildVerification/RollbackPlan/setStep/nextActionFor`.
+
+Delivered (gateway — RBAC + safe-mode enforced):
+- `POST /v1/operations` (create plan; read-only, not safe-mode-blocked), `/target` (confirm real Dokploy
+  target → manual_user_confirmed, re-classify, capture target, manual steps), `/decision` (approve/reject/
+  changes — **protected/critical require OWNER**, **safe mode blocks approval of mutations**, snapshot on
+  existing-app approval), `/executed` (“I did this in Dokploy” → **real HTTP `/health` + registry
+  verification** → evidence → completed/failed). `GET /v1/operations(+/active+/:id)`, `/v1/dokploy-targets`.
+  Without a Dokploy API token the gateway emits **exact manual instructions** and verifies for real — never
+  faking success.
+
+Delivered (overview = Mission Control, dashboard-only):
+- **Main command panel** (`OperationCommand`) — goal + operation-type selector (with live risk) + quick
+  starts → creates a real operation plan.
+- **Active operation console** (`OperationConsole`) on `/overview` showing, for the live operation: goal/
+  status/risk/protected-core/elapsed/target; the **13-step visual timeline**; the contextual card for the
+  current state — **target confirmation** form, **risk & approval** card (operation/risk/protected/approvals/
+  policy/safe-mode + approve/reject/changes, owner-gated for protected), **manual Dokploy steps + “I did
+  this”**, **verification result** (domain/health/registry/manifest), **evidence summary**, and an
+  always-visible **Next action**. Live events preview stays on the page. Other pages remain as archives.
+
+Verification:
+- **All 16 services + shared + service-kit typecheck clean**; dashboard `next build` ✓ Compiled.
+- **Operations-engine smoke PASS (16/16):** risk rules; protected-core escalation to critical/owner-only;
+  health-check-of-core stays low/read-only; 13-step timeline + verification/rollback plans; snapshot env
+  fingerprint; manual Dokploy steps; step transitions.
+- No fake data, no fake Dokploy targets (manual_user_confirmed or real API only), no fake success
+  (verification is a real HTTP/registry check). Protected core can't be modified without owner approval;
+  safe mode blocks operation approval; RBAC (Phase 12) and governed AI (Phase 13) intact. No Docker;
+  Dokploy independence intact. Scope: `shared/`, `services/gateway-api/`, `services/dashboard-web/`, `docs/`.

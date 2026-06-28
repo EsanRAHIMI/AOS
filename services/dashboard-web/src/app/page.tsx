@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
+import { getSession } from '@/lib/auth';
 import { LiveEvents } from '@/components/LiveEvents';
-import { CreateTaskForm } from '@/components/CreateTaskForm';
+import { OperationCommand } from '@/components/OperationCommand';
+import { OperationConsole } from '@/components/OperationConsole';
 import { NextBestAction } from '@/components/NextBestAction';
 import { PageHeader, MetricCard, EmptyState, StatusPill } from '@/components/ui';
 import { timeAgo } from '@/lib/format';
@@ -9,12 +11,14 @@ import { timeAgo } from '@/lib/format';
 export const dynamic = 'force-dynamic';
 
 export default async function OverviewPage() {
-  const [status, services, approvals, tasks, reliability] = await Promise.all([
+  const [session, status, services, approvals, tasks, reliability, safe] = await Promise.all([
+    getSession(),
     gateway.systemStatus(),
     gateway.services() as Promise<Array<Record<string, unknown>> | null>,
     gateway.approvals() as Promise<Array<Record<string, unknown>> | null>,
     gateway.tasks() as Promise<Array<Record<string, unknown>> | null>,
     gateway.reliability() as Promise<Array<Record<string, unknown>> | null>,
+    gateway.safeMode(),
   ]);
   const svc = services ?? [];
   const appr = approvals ?? [];
@@ -25,17 +29,21 @@ export default async function OverviewPage() {
   return (
     <>
       <PageHeader
-        title="Control Room"
-        subtitle="Live state of the autonomous operating-system kernel — what's running, what needs you, and what changed."
+        title="Mission Control"
+        subtitle="Start, monitor, approve, verify and understand real operations — all from here. Other pages are archives; the main journey stays on this page."
         actions={<Link href="/start" className="btn btn-ghost">New here? Start guide</Link>}
       />
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="label" style={{ marginBottom: 10 }}>Command</div>
-        <CreateTaskForm variant="command" />
-        <div className="m" style={{ fontSize: 12.5, marginTop: 8 }}>
-          Try a real <Link href="/start/actions">action template</Link>, or type a goal like “Analyze system history and recommend improvements”.
+        <div className="label" style={{ marginBottom: 10 }}>Command — start a real operation</div>
+        <OperationCommand />
+        <div className="m" style={{ fontSize: 12.5, marginTop: 10 }}>
+          Need an AI / research task instead? Use a real <Link href="/start/actions">action template</Link>. Operations here go through target → risk → approval → execute → verify, safely.
         </div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <OperationConsole role={session?.role ?? 'viewer'} safeMode={Boolean(safe?.enabled)} />
       </div>
 
       <div style={{ marginBottom: 16 }}>

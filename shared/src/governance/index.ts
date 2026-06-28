@@ -182,6 +182,10 @@ export const DASHBOARD_ACTION_PERMISSIONS: Record<string, PermissionId> = {
   githubDelivery: 'github_delivery',
   runSecurityCheck: 'manage_security',
   setSafeMode: 'manage_security',
+  // Phase 15 — Safe Real Operations
+  createOperation: 'create_task',
+  confirmOperationTarget: 'create_task',
+  decideOperation: 'approve_deployment',
 };
 
 /** True when `role` may perform the named sensitive dashboard action. */

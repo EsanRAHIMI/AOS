@@ -159,4 +159,13 @@ export const gateway = {
   reviews: (taskId?: string) => call<unknown[]>(`/v1/reviews${taskId ? `?taskId=${taskId}` : ''}`),
   qa: (taskId?: string) => call<unknown[]>(`/v1/qa${taskId ? `?taskId=${taskId}` : ''}`),
   reports: (taskId?: string) => call<unknown[]>(`/v1/reports${taskId ? `?taskId=${taskId}` : ''}`),
+  // Phase 15 — Safe Real Operations
+  operations: () => call<unknown[]>('/v1/operations'),
+  activeOperation: () => call<Record<string, unknown> | null>('/v1/operations/active'),
+  operation: (id: string) => call<{ plan: Record<string, unknown>; snapshot: Record<string, unknown> | null; target: Record<string, unknown> | null }>(`/v1/operations/${id}`),
+  dokployTargets: () => call<unknown[]>('/v1/dokploy-targets'),
+  createOperation: (goal: string, operationType: string) => call<{ operationPlanId?: string }>('/v1/operations', { method: 'POST', body: JSON.stringify({ goal, operationType }) }),
+  confirmOperationTarget: (id: string, target: Record<string, unknown>) => call<Record<string, unknown>>(`/v1/operations/${id}/target`, { method: 'POST', body: JSON.stringify(target) }),
+  decideOperation: (id: string, action: string) => call<Record<string, unknown>>(`/v1/operations/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  markOperationExecuted: (id: string, baseUrl?: string) => call<Record<string, unknown>>(`/v1/operations/${id}/executed`, { method: 'POST', body: JSON.stringify({ baseUrl }) }),
 };
