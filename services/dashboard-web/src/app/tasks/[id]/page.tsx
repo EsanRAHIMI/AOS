@@ -21,6 +21,11 @@ interface TaskReport {
   workflowId?: string | null; workflowType?: string; impact?: string;
   workflowSteps?: Array<{ name: string; engine: string; status: string }>;
   beforeMetrics?: Record<string, number>; afterMetrics?: Record<string, number>;
+  // Phase 13 — intelligence
+  research?: { reportId: string; mode: string; sourceCount: number } | null;
+  planId?: string | null; reviewId?: string | null; reviewPassed?: boolean | null;
+  qaId?: string | null; qaPassed?: boolean | null; reportId?: string | null;
+  llmMode?: string;
 }
 
 export default async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -43,6 +48,25 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
   const report = (task.result ?? null) as TaskReport | null;
   const status = String(task.status);
 
+  const MODE_LABEL: Record<string, string> = {
+    intelligence: 'Researched the topic, produced an evidence-grounded plan, reviewed it, QA-checked it, and wrote an executive report.',
+    strategic_reasoning: 'Reasoned over multiple candidate plans, scored them, checked policy, and selected one with justification.',
+    learning: 'Analyzed the kernel’s history to compute reliability, mine patterns, and produce recommendations.',
+    improvement: 'Converted an approved recommendation into a structured workflow and measured its impact.',
+    delegation: 'Delegated the goal across architect, builder, devops, documentation and memory agents.',
+    activation: 'Validated a capability against reality, delivered it, and browser-tested it.',
+    repair: 'Diagnosed an incident and prepared a repair plan for your approval.',
+    production_activation: 'Prepared a production activation checklist for you to create in Dokploy.',
+    build_from_proposal: 'Built a new service from an approved expansion proposal.',
+    capability_analysis: 'Analyzed required capabilities and detected gaps.',
+  };
+  const did = report?.mode ? (MODE_LABEL[report.mode] ?? 'Ran the appropriate pipeline for this goal.') : 'Work is in progress.';
+  const nextStep =
+    status === 'awaiting_approval' ? 'This task is paused for your approval — review it in Approvals (and Infrastructure for deploys).'
+    : status === 'completed' ? 'Done. Review the evidence below; explore Reports and Evidence for the full proof.'
+    : status === 'failed' || status === 'cancelled' ? 'This task did not complete — check the timeline and evidence for why, then try again or repair the service.'
+    : 'In progress — watch the live timeline on the left.';
+
   return (
     <>
       <PageHeader
@@ -51,6 +75,16 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
         crumbs={[['/tasks', 'Tasks'], [`/tasks/${id}`, id]]}
         actions={<StatusPill status={status} />}
       />
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="label" style={{ marginBottom: 8 }}>In plain language</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 14px', fontSize: 13.5 }}>
+          <span className="m">Your goal</span><span>{String(task.goal)}</span>
+          <span className="m">What the kernel did</span><span>{did}</span>
+          <span className="m">Status</span><span><StatusPill status={status} /></span>
+          <span className="m">What to do next</span><span>{nextStep}</span>
+        </div>
+      </div>
 
       <div className="grid cols-2">
         <LiveTaskTimeline taskId={id} initial={initial} />
@@ -133,6 +167,24 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
           {(report.workflowSteps ?? []).length > 0 && (
             <div className="feed">{(report.workflowSteps ?? []).map((s, i) => (<div key={i}><span className="t">{s.engine}</span> <span className="m">— {s.name}</span> <span className={`badge ${s.status === 'done' ? 'ok' : s.status === 'skipped' ? 'warn' : ''}`}>{s.status}</span></div>))}</div>
           )}
+        </div>
+      )}
+
+      {report?.mode === 'intelligence' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="label" style={{ marginBottom: 10 }}>Real intelligence report</div>
+          <p style={{ marginTop: 0 }}>
+            Reasoning: <b>{report.llmMode === 'real' ? 'real LLM provider' : 'deterministic fallback'}</b>
+            {typeof report.llmCostUsd === 'number' ? <> · cost <b>${report.llmCostUsd.toFixed(4)}</b></> : null}
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {report.research && <a href={`/research/${report.research.reportId}`} className="chip">Research · {report.research.sourceCount} sources ({report.research.mode})</a>}
+            {report.planId && <span className="chip">Plan: {report.planId}</span>}
+            {report.reviewId && <a href="/reviews" className={`badge ${report.reviewPassed ? 'ok' : 'err'}`}>Review {report.reviewPassed ? 'passed' : 'failed'}</a>}
+            {report.qaId && <a href="/qa" className={`badge ${report.qaPassed ? 'ok' : 'err'}`}>QA {report.qaPassed ? 'passed' : 'failed'}</a>}
+            {report.reportId && <a href="/reports" className="chip">Executive report</a>}
+          </div>
+          <p className="sub" style={{ marginTop: 10, marginBottom: 0 }}>{report.headline}</p>
         </div>
       )}
 

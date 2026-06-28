@@ -1,0 +1,23 @@
+{
+  "name": "@factory/qa-agent",
+  "version": "0.1.0",
+  "description": "QA acceptance verifier comparing output + evidence to the original goal.",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --env-file=.env --watch --import tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@factory/shared": "workspace:*",
+    "@factory/service-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.15.0"
+  }
+}

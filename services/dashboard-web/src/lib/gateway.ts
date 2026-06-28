@@ -150,4 +150,13 @@ export const gateway = {
   rateLimits: () => call<{ buckets: Array<{ key: string; count: number; resetAt: string }> }>('/v1/security/rate-limits'),
   reportSecurityEvent: (e: { eventType: string; actorId?: string; role?: string; result?: string; target?: string; detail?: string; riskLevel?: string }) =>
     call<unknown>('/v1/security/event', { method: 'POST', body: JSON.stringify(e) }),
+  // Phase 13 — Real Intelligence Integration
+  llmCosts: () => call<{ status: { provider: string; mode: string }; totals: { today: number; allTime: number; calls: number; realCount: number; fallbackCount: number }; byProvider: Record<string, { calls: number; costUsd: number }>; byAgent: Record<string, { calls: number; costUsd: number }>; mostExpensiveTask: { taskId: string; costUsd: number } | null; recent: Array<Record<string, unknown>> }>('/v1/llm/costs'),
+  llmPrompts: () => call<unknown[]>('/v1/llm/prompts'),
+  llmBudgetEvents: () => call<unknown[]>('/v1/llm/budget-events'),
+  research: (taskId?: string) => call<unknown[]>(`/v1/research${taskId ? `?taskId=${taskId}` : ''}`),
+  researchDetail: (id: string) => call<{ report: Record<string, unknown>; run: Record<string, unknown>; sources: Array<Record<string, unknown>> }>(`/v1/research/${id}`),
+  reviews: (taskId?: string) => call<unknown[]>(`/v1/reviews${taskId ? `?taskId=${taskId}` : ''}`),
+  qa: (taskId?: string) => call<unknown[]>(`/v1/qa${taskId ? `?taskId=${taskId}` : ''}`),
+  reports: (taskId?: string) => call<unknown[]>(`/v1/reports${taskId ? `?taskId=${taskId}` : ''}`),
 };

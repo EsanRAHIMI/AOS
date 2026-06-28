@@ -128,6 +128,12 @@ export interface GenerateStructuredOpts<T> {
   maxAttempts?: number;
   fast?: boolean;
   promptVersion?: string;
+  /**
+   * Force deterministic fallback without calling any provider. The orchestrator
+   * sets this when safe mode + LLM_SAFE_MODE_FALLBACK is on, or when a budget
+   * limit has been reached. The trace is still recorded (usedFallback=true).
+   */
+  forceFallback?: boolean;
 }
 
 export interface StructuredResult<T> {
@@ -203,7 +209,7 @@ export class LlmRouter {
     let data: T | null = null;
     let usedFallback = false;
 
-    if (this.providerName !== 'mock') {
+    if (this.providerName !== 'mock' && !opts.forceFallback) {
       const max = opts.maxAttempts ?? 2;
       while (attempts < max && data === null) {
         attempts++;
@@ -278,4 +284,49 @@ export function llmStatusFromEnv(env: NodeJS.ProcessEnv = process.env): LlmStatu
   };
 }
 
-export { promptFor, listPrompts, type VersionedPrompt } from './prompts.js';
+/* -------------------- Phase 13: budget + cost helpers -------------------- */
+
+import type { LlmCostRecord, LlmBudgetEvent } from '../schemas/intelligence.js';
+
+/** Provider/budget governance config from env. */
+export interface LlmGovernanceConfig {
+  allowedProviders: string[];
+  maxCostPerTaskUsd: number;
+  maxTokensPerTask: number;
+  dailyCostLimitUsd: number;
+  safeModeFallback: boolean;
+}
+
+export function llmGovernanceFromEnv(env: NodeJS.ProcessEnv = process.env): LlmGovernanceConfig {
+  return {
+    allowedProviders: (env.LLM_ALLOWED_PROVIDERS || 'anthropic,openai').split(',').map((s) => s.trim()).filter(Boolean),
+    maxCostPerTaskUsd: Number(env.LLM_MAX_COST_PER_TASK_USD ?? 0.5),
+    maxTokensPerTask: Number(env.LLM_MAX_TOKENS_PER_TASK ?? 120000),
+    dailyCostLimitUsd: Number(env.LLM_DAILY_COST_LIMIT_USD ?? 20),
+    safeModeFallback: (env.LLM_SAFE_MODE_FALLBACK ?? 'true') !== 'false',
+  };
+}
+
+/** Turn a trace into a cost record (one per LLM call). */
+export function buildLlmCostRecord(trace: LlmTrace): LlmCostRecord {
+  return {
+    recordId: genId('cost'),
+    taskId: trace.taskId,
+    agentId: trace.agentId,
+    taskType: trace.taskType,
+    provider: trace.provider,
+    model: trace.model,
+    tokensIn: trace.tokensIn,
+    tokensOut: trace.tokensOut,
+    costUsd: trace.costUsd,
+    usedFallback: trace.usedFallback,
+    traceId: trace.traceId,
+    createdAt: nowIso(),
+  };
+}
+
+export function buildBudgetEvent(args: Omit<LlmBudgetEvent, 'budgetEventId' | 'createdAt'>): LlmBudgetEvent {
+  return { budgetEventId: genId('budget'), createdAt: nowIso(), ...args };
+}
+
+export { promptFor, listPrompts, agentPrompts, type VersionedPrompt, type AgentPrompt } from './prompts.js';

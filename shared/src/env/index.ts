@@ -56,6 +56,17 @@ export const LlmEnvSchema = z.object({
   OPENAI_API_KEY: z.string().optional().default(''),
   ANTHROPIC_API_KEY: z.string().optional().default(''),
   LLM_DEFAULT_PROVIDER: z.enum(['anthropic', 'openai']).default('anthropic'),
+  // Phase 13 — provider governance + budget controls.
+  LLM_ALLOWED_PROVIDERS: z.string().optional().default('anthropic,openai'),
+  LLM_MAX_COST_PER_TASK_USD: z.coerce.number().optional().default(0.5),
+  LLM_MAX_TOKENS_PER_TASK: z.coerce.number().optional().default(120000),
+  LLM_DAILY_COST_LIMIT_USD: z.coerce.number().optional().default(20),
+  // When true, an active safe mode also forces deterministic fallback (no provider calls).
+  LLM_SAFE_MODE_FALLBACK: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .default(true)
+    .transform((v) => v === true || v === 'true' || v === '1'),
 });
 
 /**

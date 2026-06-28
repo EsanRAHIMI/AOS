@@ -2,6 +2,45 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-27 — Phase 14 real product experience & onboarding
+
+### D-065 No fake data — product layer reads only real state
+Onboarding, system map, next-best-action, evidence explorer, reports center and readiness all source live
+gateway/registry data. There is no demo/simulation mode and no seeded sample records. Where live data is
+absent (e.g. a service hasn't registered), the UI says so honestly rather than fabricating it.
+
+### D-064 Action templates create real tasks via the existing RBAC-gated path
+Templates are static real prompts; the card posts the prompt to `createTaskAction`, which already enforces
+RBAC + safe mode. So "run a template" is a real task with no special demo code path.
+
+### D-063 Service catalog = documented config, not fabricated runtime data
+The system map's static catalog (id/role/domain/port/boundary) is real deployment configuration (same facts
+as the brief), kept in the dashboard to avoid importing backend code. Runtime status (registered/last-seen/
+version/capabilities) is merged in from the real registry only.
+
+## 2026-06-27 — Phase 13 real intelligence integration
+
+### D-062 LLM reasoning only via schema-validated structured output
+Every agent reasons through `router.generateStructured(zodSchema, { fallback })`. The validated result —
+or a schema-validated deterministic fallback — is the only thing returned, so raw model text can never
+mutate state. Each call emits an `LlmTrace` and a cost record.
+
+### D-061 Per-task budget + safe-mode force deterministic fallback
+The orchestrator sums `llm_cost_records` per task; on reaching `LLM_MAX_COST_PER_TASK_USD` it sets
+`forceFallback`, writes an `llm_budget_events` record and continues deterministically. Safe mode +
+`LLM_SAFE_MODE_FALLBACK` likewise forces fallback — the pipeline still runs (read-only analysis), it just
+stops calling providers. Provider failures fall back, never crash.
+
+### D-060 Reviewer and QA must be able to fail
+The reviewer-agent and qa-agent return real pass/fail verdicts and required fixes; QA never passes without
+evidence. Their deterministic fallbacks also fail inadequate inputs, so the gate is real even without keys.
+
+### D-059 Use canonical reserved ports for the 4 new services
+`reviewer-agent` (4106), `qa-agent` (4107), `report-agent` (4114), `internet-research-service` (4115) were
+already reserved in `constants` (ids/ports/subdomains). We used those rather than the spec's suggested
+4117–4120 so peer-discovery (`SERVICE_PORTS`) stays consistent. Research is `serviceType: integration`
+(the manifest enum has no `service`).
+
 ## 2026-06-27 — Phase 12 security, auth & production hardening
 
 ### D-058 Stateless HMAC session cookie (Web Crypto), scrypt passwords (node)

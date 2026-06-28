@@ -154,12 +154,31 @@ Phase 10 candidates:
 7. Backup/recovery runbook, secret rotation, Dokploy rollback, password-hash script — DONE.
 8. Full build/typecheck + 22/22 security-engine smoke; scope limited to security surfaces + docs — DONE.
 
-Phase 13 candidates:
-9. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
-10. Cross-run impact trends; report-agent for periodic improvement/security digests.
-11. OIDC/JWT login + per-user RBAC store (beyond env users); session revocation.
-12. Redis-backed rate limiter + distributed safe-mode signal; rename `middleware.ts` → `proxy.ts` (Next 16).
-13. Global command palette; convert remaining ~38 read-only data tables to richer mobile views if desired.
+## Phase 13 — Real Intelligence Integration — DONE
+1. Provider governance + budget controls (allowed providers, cost/token caps, safe-mode fallback) — DONE.
+2. 13 versioned agent-prompt reasoning contracts; schema-validated outputs only — DONE.
+3. Intelligence engines (research/plan/review/QA/report) with deterministic fallback — DONE.
+4. New services: internet-research-service, reviewer-agent, qa-agent, report-agent — DONE.
+5. Orchestrator research→plan→review→QA→report pipeline; budget + safe-mode force fallback — DONE.
+6. Cost records + budget events; gateway reads + dashboard /llm,/llm/costs,/llm/prompts,/research,/reviews,/qa,/reports — DONE.
+7. Full typecheck (16 services) + dashboard build + 16/16 intelligence smoke; security intact — DONE.
+
+## Phase 14 — Real Product Experience & Onboarding Layer — DONE (dashboard-only, no fake data)
+1. Onboarding: /start, /start/overview, /start/actions, /start/system-map — DONE.
+2. Real action templates that create real tasks (RBAC-gated) — DONE.
+3. System map from real registry + documented catalog — DONE.
+4. Human-readable task lifecycle on task detail — DONE.
+5. Next-Best-Action panel on overview from real state — DONE.
+6. Proof & Evidence explorer + Reports center (real data, copy/print) — DONE.
+7. Product readiness checklist from real state — DONE.
+8. Language cleanup + contextual empty states; typecheck + build clean; security intact — DONE.
+
+Phase 15 candidates:
+9. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
+10. Real web-fetch capability for the research service (currently LLM-synthesized + curated sources).
+11. Real timer-driven scheduler (monitor-agent fires learning on thresholds).
+12. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
+13. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette; persist action_templates if dynamic templates are needed.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

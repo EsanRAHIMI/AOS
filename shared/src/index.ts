@@ -47,3 +47,5 @@ export * from './learning/index.js';
 export * from './workflows/index.js';
 // Phase 12 — Security, Auth & Production Hardening
 export * from './security/index.js';
+// Phase 13 — Real Intelligence Integration
+export * from './intelligence/index.js';

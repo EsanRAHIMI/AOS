@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { LiveEvents } from '@/components/LiveEvents';
 import { CreateTaskForm } from '@/components/CreateTaskForm';
+import { NextBestAction } from '@/components/NextBestAction';
 import { PageHeader, MetricCard, EmptyState, StatusPill } from '@/components/ui';
 import { timeAgo } from '@/lib/format';
 
@@ -23,14 +24,22 @@ export default async function OverviewPage() {
 
   return (
     <>
-      <PageHeader title="Control Room" subtitle="Live state of the autonomous operating-system kernel — what's running, what needs you, and what changed." />
+      <PageHeader
+        title="Control Room"
+        subtitle="Live state of the autonomous operating-system kernel — what's running, what needs you, and what changed."
+        actions={<Link href="/start" className="btn btn-ghost">New here? Start guide</Link>}
+      />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="label" style={{ marginBottom: 10 }}>Command</div>
         <CreateTaskForm variant="command" />
         <div className="m" style={{ fontSize: 12.5, marginTop: 8 }}>
-          Try: “Add browser testing capability”, “Improve the reliability of browser-testing-agent”, or “Analyze system history and recommend improvements”.
+          Try a real <Link href="/start/actions">action template</Link>, or type a goal like “Analyze system history and recommend improvements”.
         </div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <NextBestAction />
       </div>
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>

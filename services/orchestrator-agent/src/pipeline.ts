@@ -37,7 +37,11 @@ import {
   recommendationToWorkflow,
   buildImpactAssessment,
   buildMemoryMaintenanceRun,
+  llmGovernanceFromEnv,
+  buildBudgetEvent,
   CapabilityAnalysisSchema,
+  type LlmCostRecord,
+  type LlmBudgetEvent,
   type PeerClient,
   type Task,
   type Approval,
@@ -96,6 +100,108 @@ async function persistTrace(trace: LlmTrace, ctx: ServiceContext): Promise<void>
   });
 }
 
+type StepFn = (service: string, message: string, level?: 'info' | 'success' | 'warn', ref?: string) => Promise<void>;
+
+// ===========================================================================
+// Phase 13 — Real-intelligence pipeline:
+//   research → improvement plan → review → QA → executive report
+// Every stage is evidence-backed; LLM reasoning is schema-validated with a
+// deterministic fallback; cost is tracked and a per-task budget forces fallback.
+// ===========================================================================
+async function runResearchPipeline(args: PipelineArgs, steps: ReportStep[], step: StepFn): Promise<void> {
+  const { taskId, goal, ctx, peer } = args;
+  const tasks = collection<Task>(COLLECTIONS.TASKS);
+  const costCol = collection<LlmCostRecord>(COLLECTIONS.LLM_COST_RECORDS);
+  const gov = llmGovernanceFromEnv();
+
+  // Safe mode + LLM_SAFE_MODE_FALLBACK → deterministic fallback (read-only still runs).
+  const settings = collection<{ settingId: string; value: unknown }>(COLLECTIONS.SYSTEM_SETTINGS);
+  const sm = await settings.findOne({ settingId: 'safe_mode' });
+  let forceFallback = Boolean(sm?.value) && gov.safeModeFallback;
+  if (forceFallback) await step('orchestrator-agent', 'Safe mode active + LLM_SAFE_MODE_FALLBACK → deterministic reasoning only', 'warn');
+
+  const taskSpend = async (): Promise<number> => (await costCol.find({ taskId }).toArray()).reduce((a, c) => a + Number(c.costUsd ?? 0), 0);
+  const checkBudget = async (): Promise<void> => {
+    if (forceFallback) return;
+    const spent = await taskSpend();
+    if (spent >= gov.maxCostPerTaskUsd) {
+      forceFallback = true;
+      const be: LlmBudgetEvent = buildBudgetEvent({ scope: 'task', limitUsd: gov.maxCostPerTaskUsd, spentUsd: spent, action: 'fallback_forced', taskId, agentId: null, detail: `task LLM cost $${spent.toFixed(4)} ≥ limit $${gov.maxCostPerTaskUsd}` });
+      await collection<LlmBudgetEvent>(COLLECTIONS.LLM_BUDGET_EVENTS).insertOne(be);
+      await ctx.publisher.publish({ type: EVENT_TYPES.LLM_BUDGET_EXCEEDED, taskId, payload: { message: `LLM budget reached ($${spent.toFixed(3)}) — switching to deterministic fallback`, level: 'warn' } });
+      await step('orchestrator-agent', `LLM budget reached ($${spent.toFixed(3)} ≥ $${gov.maxCostPerTaskUsd}) → fallback`, 'warn');
+    }
+  };
+
+  await tasks.updateOne({ taskId }, { $set: { status: 'in_progress', assignedServiceId: 'orchestrator-agent', updatedAt: nowIso() } });
+  const evidenceIds: string[] = [];
+
+  // 1) Research (read-only, cited sources).
+  await step('orchestrator-agent', 'Strategic planner: research is required for this goal', 'info');
+  const r = await peer.dispatchTask<{ research?: { reportId: string; mode: string; sourceCount: number; evidenceId: string; summary: string; findings: string[]; recommendations: string[]; sources: Array<{ title: string; url: string; reliability: string }> } }>(
+    'internet-research-service', { taskId, goal, input: { topic: goal, forceFallback }, priority: 'normal' });
+  const research = r.data?.research;
+  if (research) { evidenceIds.push(research.evidenceId); await step('internet-research-service', `Research complete (${research.mode}): ${research.sourceCount} sources, ${research.findings.length} findings`, 'success', research.reportId); }
+  else await step('internet-research-service', 'Research unavailable', 'warn');
+  await checkBudget();
+  await sleep(PACE_MS);
+
+  // 2) Improvement plan grounded in research.
+  const a = await peer.dispatchTask<{ plan?: { planId: string; objective: string; content: string; evidenceId: string; mode: string; steps: unknown[] } }>(
+    'architect-agent', { taskId, goal, input: { action: 'improvement_plan', research: research ? { findings: research.findings, sources: research.sources.map((s) => s.url), reportId: research.reportId } : undefined, forceFallback }, priority: 'normal' });
+  const plan = a.data?.plan;
+  if (plan) { evidenceIds.push(plan.evidenceId); await step('architect-agent', `Improvement plan ready (${plan.mode}): ${Array.isArray(plan.steps) ? plan.steps.length : 0} steps`, 'success', plan.planId); }
+  else await step('architect-agent', 'Plan unavailable', 'warn');
+  await checkBudget();
+  await sleep(PACE_MS);
+
+  // 3) Reviewer reviews the plan (may FAIL).
+  const planContent = plan?.content ?? goal;
+  const rev = await peer.dispatchTask<{ review?: { reviewId: string; passed: boolean; mode: string; issues: unknown[]; evidenceId: string } }>(
+    'reviewer-agent', { taskId, goal, input: { target: 'improvement plan', content: planContent, evidenceIds, forceFallback }, priority: 'normal' });
+  const review = rev.data?.review;
+  if (review) { evidenceIds.push(review.evidenceId); await step('reviewer-agent', `Review ${review.passed ? 'passed' : 'found issues'} (${review.mode}): ${Array.isArray(review.issues) ? review.issues.length : 0} issues`, review.passed ? 'success' : 'warn', review.reviewId); }
+  else await step('reviewer-agent', 'Review unavailable', 'warn');
+  await checkBudget();
+  await sleep(PACE_MS);
+
+  // 4) QA verifies acceptance against the evidence (must not rubber-stamp).
+  const evidenceSummary = `research:${research?.reportId ?? 'none'}; plan:${plan?.planId ?? 'none'}; review:${review?.reviewId ?? 'none'}(${review?.passed ? 'passed' : 'failed'})`;
+  const q = await peer.dispatchTask<{ qa?: { qaId: string; passed: boolean; mode: string; gaps: string[]; verdict: string; evidenceId: string } }>(
+    'qa-agent', { taskId, goal, input: { goal, evidenceSummary, evidenceIds, forceFallback }, priority: 'normal' });
+  const qa = q.data?.qa;
+  if (qa) { evidenceIds.push(qa.evidenceId); await step('qa-agent', `QA ${qa.passed ? 'passed' : 'failed'} (${qa.mode})`, qa.passed ? 'success' : 'warn', qa.qaId); }
+  else await step('qa-agent', 'QA unavailable', 'warn');
+  await checkBudget();
+  await sleep(PACE_MS);
+
+  // 5) Executive report synthesizing everything.
+  const rep = await peer.dispatchTask<{ report?: { reportId: string; title: string; headline: string; mode: string; evidenceId: string } }>(
+    'report-agent', { taskId, goal, input: { title: `Executive report: ${goal}`, kind: 'executive', inputs: { goal, research: research?.summary, findings: research?.findings, recommendations: research?.recommendations, planObjective: plan?.objective, reviewPassed: review?.passed, qaPassed: qa?.passed }, evidenceIds, forceFallback }, priority: 'normal' });
+  const report = rep.data?.report;
+  if (report) { evidenceIds.push(report.evidenceId); await step('report-agent', `Executive report generated (${report.mode})`, 'success', report.reportId); }
+  else await step('report-agent', 'Report unavailable', 'warn');
+
+  const spent = await taskSpend();
+  const anyReal = !forceFallback && (research?.mode === 'real' || plan?.mode === 'real');
+  const finalReport = {
+    goal, taskId, status: 'completed' as const, mode: 'intelligence',
+    steps,
+    research: research ? { reportId: research.reportId, mode: research.mode, sourceCount: research.sourceCount } : null,
+    planId: plan?.planId ?? null,
+    reviewId: review?.reviewId ?? null, reviewPassed: review?.passed ?? null,
+    qaId: qa?.qaId ?? null, qaPassed: qa?.passed ?? null,
+    reportId: report?.reportId ?? null,
+    evidenceIds,
+    llmMode: anyReal ? 'real' : 'fallback',
+    llmCostUsd: Number(spent.toFixed(4)),
+    headline: `Researched, planned, reviewed (${review?.passed ? 'passed' : 'flagged'}), QA ${qa?.passed ? 'passed' : 'failed'}, and reported — ${anyReal ? 'real LLM' : 'deterministic fallback'}, $${spent.toFixed(4)}.`,
+    generatedAt: nowIso(),
+  };
+  await tasks.updateOne({ taskId }, { $set: { status: 'completed', result: finalReport, updatedAt: nowIso() } });
+  await ctx.publisher.publish({ type: EVENT_TYPES.TASK_COMPLETED, taskId, payload: { message: 'Intelligence report ready', report: true, status: 'completed' } });
+}
+
 // ===========================================================================
 // Main pipeline: capability analysis → gap/proposal OR delegation
 // ===========================================================================
@@ -120,6 +226,12 @@ export async function runPipeline(args: PipelineArgs): Promise<void> {
   // Continuous improvement → convert an approved recommendation into a workflow, run it, measure impact.
   if (/improvement workflow|turn .*(recommendation|learning).*workflow|measure the result|continuous improvement/i.test(goal)) {
     await runImprovementPipeline(args, steps, step);
+    return;
+  }
+
+  // Real-intelligence research → research → plan → review → QA → report (Phase 13).
+  if (/\bresearch\b|best practices?|current (best )?practice|state of the art|investigate/i.test(goal)) {
+    await runResearchPipeline(args, steps, step);
     return;
   }
 

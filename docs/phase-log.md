@@ -463,3 +463,102 @@ Verification:
   `scripts/`, and `docs/` changed. No Docker; independent Dokploy deploy intact; Phase 11 UI polish
   preserved. Known non-blocking note: Next 16 deprecates the `middleware` filename in favor of `proxy`
   (still compiles and runs as “Proxy (Middleware)”).
+
+## Phase 13 — Real Intelligence Integration — COMPLETE (2026-06-27)
+Moves the kernel from deterministic/fallback intelligence into real, governed, schema-validated AI
+reasoning, plus four new independently-deployable services. Security from Phase 12 is fully preserved:
+no API key reaches the browser, raw LLM text never mutates state, and safe mode / RBAC / policy / approvals
+still gate everything.
+
+Delivered (shared):
+- **Provider governance + budget** — `LLM_ALLOWED_PROVIDERS`, `LLM_MAX_COST_PER_TASK_USD`,
+  `LLM_MAX_TOKENS_PER_TASK`, `LLM_DAILY_COST_LIMIT_USD`, `LLM_SAFE_MODE_FALLBACK`; router gained a
+  `forceFallback` path; `buildLlmCostRecord`/`buildBudgetEvent`; `llm_cost_records` + `llm_budget_events`.
+- **Versioned agent-prompt registry** — 13 reasoning contracts (role, allowed/forbidden actions, output
+  schema, evidence/approval/policy requirements, fallback behavior, status, version, changelog) for all
+  12 agents; exposed at `/v1/llm/prompts`.
+- **Intelligence engines** (`shared/intelligence`) — `runResearch`, `runArchitecturePlan`, `runReview`,
+  `runQa`, `runReport`: each reasons through the LLM router into a **Zod-validated** structure with a
+  deterministic fallback, returns the trace for cost/evidence accounting. Schemas + collections for
+  research (`research_runs/sources/reports`), `review_reports`, `qa_reports`, `intelligence_reports`;
+  4 new evidence types.
+- **Real LLM calls** wired in the reasoning-critical agents (orchestrator capability+strategy, architect
+  improvement plans, reviewer, qa, report, research); other specialist agents stay deterministic with the
+  router available (“where appropriate”).
+
+Delivered (4 new independently-deployable services):
+- **internet-research-service** (port 4115, research.simorx.com) — read-only research, cited
+  reliability-scored sources, no mutations, browsing intent logged.
+- **reviewer-agent** (4106) — structured review; allowed to FAIL; never rubber-stamps.
+- **qa-agent** (4107) — acceptance criteria vs evidence; no pass without evidence.
+- **report-agent** (4114) — executive intelligence reports grounded only in supplied data.
+  (Service IDs/ports/subdomains were already reserved in `constants`; the spec's suggested 4117–4120 were
+  superseded by the canonical reserved ports so peer-discovery stays consistent.)
+
+Delivered (orchestrator + gateway + dashboard):
+- **Research pipeline** (orchestrator) — research → architect improvement plan → reviewer → QA →
+  executive report, evidence-linked, with per-task **budget enforcement** (exceed → deterministic
+  fallback + `llm_budget_events` + event) and **safe-mode fallback** (`LLM_SAFE_MODE_FALLBACK`).
+- **Gateway reads** (RBAC-guarded) — `/v1/llm/costs` (today/all-time, by provider/agent, fallback count,
+  most-expensive task), `/v1/llm/prompts`, `/v1/llm/budget-events`, `/v1/research(+/:id)`, `/v1/reviews`,
+  `/v1/qa`, `/v1/reports`.
+- **Dashboard** — `/llm` (provider/fallback/cost), `/llm/costs`, `/llm/prompts`, `/research(+/:id)`,
+  `/reviews`, `/qa`, `/reports`; task detail shows AI reasoning mode, cost, research sources, review/QA
+  verdicts and the executive report; new Intelligence nav group.
+
+Verification:
+- **Full typecheck passing** — `shared`, `service-kit`, and all **16 services** (12 prior + 4 new) compile;
+  dashboard `next build` ✓ Compiled successfully with the new `/llm*`, `/research*`, `/reviews`, `/qa`,
+  `/reports` routes.
+- **Intelligence demo smoke PASS (16/16)** against the exact scenario ("Research current best practices for
+  securing autonomous agent dashboards and create an improvement plan"): research returned 4 cited sources +
+  5 findings (fallback mode clearly marked, cost recorded) → architect produced a 5-step plan grounded in
+  the findings → reviewer **passed** a good plan and **FAILED** a thin one with required fixes → QA derived
+  criteria and **failed when given no evidence** → report-agent produced a 5-section executive report →
+  budget/governance parsed and budget event built → 13 versioned prompts with schema + allowed/forbidden.
+- **No security regression** — keys never reach the browser; LLM output is schema-validated (raw text never
+  mutates state); safe mode + `LLM_SAFE_MODE_FALLBACK` force deterministic reasoning; RBAC/policy/approval
+  intact. No Docker; each new service is an independent Dokploy app.
+
+## Phase 14 — Real Product Experience & Onboarding Layer — COMPLETE (2026-06-27)
+Makes the live kernel understandable and usable for a real operator **without any fake data, demo mode,
+or simulation**. Dashboard-only — no backend, contract, schema or service change; every page reads real
+gateway/registry state. Phase 12 security and Phase 13 governed AI are untouched.
+
+Delivered (all `services/dashboard-web` only):
+- **Onboarding** — `/start` (what the kernel is + live counts + 3-step path), `/start/overview`
+  (plain-language: how tasks flow, safe vs approval-gated, evidence, AI real/fallback, learning/governance,
+  safe mode), `/start/actions`, `/start/system-map`.
+- **Real action templates** (`lib/templates.ts`, `TemplateCard`) — 6 templates mapped to actually-implemented
+  pipelines (security check, research+plan, analyze history, improvement workflow, reliability, intel report),
+  each with title/real-prompt/what/services/outputs/risk/approval/where-to-see. Running one posts the real
+  prompt to the **RBAC-gated `createTaskAction`** → a real task. No demo sessions.
+- **System map** (`/system-map`, `SystemMap`) — the documented service catalog (id/role/domain/port/boundary)
+  merged with **live service-registry data** (registered? last seen? version? capabilities?); honest
+  “not registered” where the registry has nothing (no fabrication).
+- **Human-readable task lifecycle** — task detail now opens with an “In plain language” card (your goal /
+  what the kernel did / status / what to do next) derived from the real task mode + status.
+- **Next Best Action** panel on the overview — derived only from real state (safe mode, pending approvals,
+  open incidents, missing security check, no learning run, stale recommendations, fallback provider); each
+  suggestion links to the right page or runs a real template. No fake suggestions.
+- **Proof & Evidence Explorer** (`/evidence/explorer`) — real evidence grouped by type with plain-language
+  “what it proves / generated by”, linked to its task/service/capability.
+- **Reports Center** (`/reports/center`) — aggregates real intelligence/research/review/QA/security/learning
+  reports with summary, source task, copy-as-markdown and print (`ReportTools`).
+- **Product Readiness** (`/readiness`) — 10 checks from real state (services registered, security check,
+  safe mode, session secret, LLM provider, GitHub mode, S3, latest learning run, latest report, open critical
+  incidents) with pass/warn/fail/unknown and a “view” link each.
+- **Language cleanup + empty-state guidance** — sidebar adds a “Get started” group and humanizes labels
+  (LLM Traces → AI Reasoning Traces, Evidence → Proof & Evidence, Repairs → Repair Actions, Gaps → Missing
+  Capabilities, Activations → Live Activation, LLM Overview → Real Intelligence); empty states point to the
+  real next action.
+
+Verification:
+- Dashboard **typecheck clean** and **`next build` ✓ Compiled successfully** with the new `/start*`,
+  `/system-map`, `/readiness`, `/evidence/explorer`, `/reports/center` routes.
+- **No fake data / no demo mode** — every page sources real gateway/registry reads; templates create real
+  tasks; the catalog's static part is documented configuration (roles/domains/ports), dynamic status comes
+  only from the live registry.
+- Security/RBAC/safe-mode intact (template runs go through the RBAC + safe-mode-gated action; no secrets to
+  the browser). Premium/responsive design preserved. No Docker; Dokploy independence intact.
+- Scope: only `services/dashboard-web/` and `docs/` changed for Phase 14.

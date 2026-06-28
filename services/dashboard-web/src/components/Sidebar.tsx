@@ -5,15 +5,17 @@ import { logoutAction } from '@/app/login/actions';
 
 /** Grouped navigation for the glass control-room sidebar. */
 const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
-  { title: 'Operate', items: [['/', 'Overview'], ['/tasks', 'Tasks'], ['/agents', 'Agents'], ['/services', 'Services'], ['/approvals', 'Approvals'], ['/infrastructure', 'Infrastructure']] },
-  { title: 'Build', items: [['/capabilities', 'Capabilities'], ['/gaps', 'Gaps'], ['/expansion-proposals', 'Expansions'], ['/evaluations', 'Evaluations'], ['/skills', 'Skills']] },
-  { title: 'Reality', items: [['/validations', 'Validations'], ['/github', 'GitHub'], ['/evidence', 'Evidence'], ['/deployment/checklists', 'Checklists'], ['/activations', 'Activations']] },
-  { title: 'Runtime', items: [['/monitor', 'Monitor'], ['/incidents', 'Incidents'], ['/repair-tasks', 'Repairs'], ['/repair-diagnoses', 'Diagnoses'], ['/repair-plans', 'Repair Plans']] },
+  { title: 'Get started', items: [['/', 'Overview'], ['/start', 'Start guide'], ['/system-map', 'System map'], ['/readiness', 'Readiness']] },
+  { title: 'Operate', items: [['/tasks', 'Tasks'], ['/start/actions', 'Action templates'], ['/agents', 'Agents'], ['/services', 'Services'], ['/approvals', 'Approvals'], ['/infrastructure', 'Infrastructure']] },
+  { title: 'Build', items: [['/capabilities', 'Capabilities'], ['/gaps', 'Missing Capabilities'], ['/expansion-proposals', 'Expansions'], ['/evaluations', 'Evaluations'], ['/skills', 'Skills']] },
+  { title: 'Reality', items: [['/validations', 'Validations'], ['/github', 'GitHub'], ['/evidence/explorer', 'Proof & Evidence'], ['/deployment/checklists', 'Checklists'], ['/activations', 'Live Activation']] },
+  { title: 'Runtime', items: [['/monitor', 'Monitor'], ['/incidents', 'Incidents'], ['/repair-tasks', 'Repair Actions'], ['/repair-diagnoses', 'Diagnoses'], ['/repair-plans', 'Repair Plans']] },
   { title: 'Reason', items: [['/reasoning', 'Reasoning'], ['/strategic-plans', 'Strategic Plans'], ['/policy-decisions', 'Policy'], ['/decision-memory', 'Decisions'], ['/llm/status', 'LLM Status']] },
   { title: 'Govern', items: [['/governance', 'Governance'], ['/outcome-reviews', 'Outcome Reviews'], ['/scoring-profiles', 'Scoring Profiles'], ['/scoring-change-proposals', 'Scoring Proposals'], ['/policy-rules', 'Policy Rules'], ['/rbac', 'RBAC'], ['/audit-logs', 'Audit Logs']] },
+  { title: 'Intelligence', items: [['/llm', 'Real Intelligence'], ['/llm/costs', 'AI Costs & Budget'], ['/llm/prompts', 'Agent Prompts'], ['/llm-traces', 'AI Reasoning Traces'], ['/research', 'Research'], ['/reviews', 'Reviews'], ['/qa', 'QA'], ['/reports/center', 'Reports Center']] },
   { title: 'Secure', items: [['/security', 'Security'], ['/security/events', 'Security Events'], ['/security/env', 'Env Health'], ['/security/rate-limits', 'Rate Limits'], ['/security/safe-mode', 'Safe Mode']] },
   { title: 'Learn', items: [['/learning', 'Learning'], ['/learning-runs', 'Learning Runs'], ['/reliability', 'Reliability'], ['/patterns', 'Patterns'], ['/system-recommendations', 'Recommendations'], ['/improvement-workflows', 'Workflows'], ['/impact-assessments', 'Impact'], ['/memory-maintenance', 'Memory Maint.'], ['/learning/schedules', 'Schedules']] },
-  { title: 'More', items: [['/docs', 'Docs'], ['/events', 'Events'], ['/logs', 'Logs'], ['/research', 'Research'], ['/settings', 'Settings']] },
+  { title: 'More', items: [['/docs', 'Docs'], ['/events', 'Events'], ['/logs', 'Logs'], ['/settings', 'Settings']] },
 ];
 
 function isActive(pathname: string, href: string): boolean {

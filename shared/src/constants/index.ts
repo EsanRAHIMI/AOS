@@ -181,6 +181,14 @@ export const COLLECTIONS = {
   // Phase 12 — Security, Auth & Production Hardening
   SECURITY_CHECKS: 'security_checks',
   SECURITY_EVENTS: 'security_events',
+  // Phase 13 — Real Intelligence Integration
+  LLM_COST_RECORDS: 'llm_cost_records',
+  LLM_BUDGET_EVENTS: 'llm_budget_events',
+  RESEARCH_RUNS: 'research_runs',
+  RESEARCH_SOURCES: 'research_sources',
+  REVIEW_REPORTS: 'review_reports',
+  QA_REPORTS: 'qa_reports',
+  INTELLIGENCE_REPORTS: 'intelligence_reports',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -277,6 +285,12 @@ export const EVENT_TYPES = {
   RATE_LIMITED: 'security.rate.limited',
   SECURITY_CHECK_COMPLETED: 'security.check.completed',
   SAFE_MODE_CHANGED: 'security.safe_mode.changed',
+  // Phase 13 — Real Intelligence Integration
+  RESEARCH_COMPLETED_V2: 'intel.research.completed',
+  REVIEW_COMPLETED: 'intel.review.completed',
+  QA_COMPLETED: 'intel.qa.completed',
+  REPORT_GENERATED: 'intel.report.generated',
+  LLM_BUDGET_EXCEEDED: 'intel.llm.budget',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

@@ -76,6 +76,11 @@ export const EvidenceType = z.enum([
   'validation_after_repair',
   'activation_after_repair',
   'incident_closed',
+  // Phase 13 — intelligence evidence
+  'research_report',
+  'review_report',
+  'qa_report',
+  'intelligence_report',
 ]);
 export type EvidenceType = z.infer<typeof EvidenceType>;
 
