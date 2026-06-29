@@ -37,9 +37,11 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', buf(encoder.encode(secret)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
 
-/** Returns the session secret; falls back to a clearly-insecure dev default. */
+/** Dev fallback when DASHBOARD_SESSION_SECRET is unset (local only). */
+const DEV_SESSION_FALLBACK = 'dev-insecure-session-secret-change-me';
+
 export function sessionSecret(): string {
-  return process.env.DASHBOARD_SESSION_SECRET || 'dev-insecure-session-secret-change-me';
+  return process.env.DASHBOARD_SESSION_SECRET?.trim() || DEV_SESSION_FALLBACK;
 }
 
 export async function signSession(payload: SessionPayload, secret: string): Promise<string> {

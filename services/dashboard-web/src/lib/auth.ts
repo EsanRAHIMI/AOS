@@ -15,20 +15,46 @@ interface ConfiguredUser {
   password?: string; // dev-only plaintext fallback
 }
 
+const HEX = /^[0-9a-f]+$/i;
+
+/** Dynamic lookup so Next.js does not inline empty env at compile time. */
+function env(key: string): string | undefined {
+  return process.env[key];
+}
+
+function validScryptHash(hash: string | undefined): string | undefined {
+  const h = hash?.trim();
+  if (!h || !h.startsWith('scrypt$')) return undefined;
+  const [, saltHex, hashHex] = h.split('$');
+  if (!saltHex || !hashHex || !HEX.test(saltHex) || !HEX.test(hashHex)) return undefined;
+  return h;
+}
+
 /** Build the user list from env. In non-production, seed demo users if none set. */
 function configuredUsers(): ConfiguredUser[] {
   const users: ConfiguredUser[] = [];
   const add = (email: string | undefined, hash: string | undefined, pw: string | undefined, role: SessionRole) => {
-    if (email && email.trim()) users.push({ email: email.trim().toLowerCase(), passwordHash: hash || undefined, password: pw || undefined, role });
+    const e = email?.trim();
+    if (!e) return;
+    const passwordHash = validScryptHash(hash);
+    const password = passwordHash ? undefined : pw?.trim() || undefined;
+    // Skip half-configured users (email only) so they don't disable dev demo logins.
+    if (!passwordHash && !password) return;
+    users.push({ email: e.toLowerCase(), passwordHash, password, role });
   };
-  add(process.env.DASHBOARD_ADMIN_EMAIL, process.env.DASHBOARD_ADMIN_PASSWORD_HASH, process.env.DASHBOARD_ADMIN_PASSWORD, 'owner');
-  add(process.env.DASHBOARD_OPERATOR_EMAIL, process.env.DASHBOARD_OPERATOR_PASSWORD_HASH, process.env.DASHBOARD_OPERATOR_PASSWORD, 'operator');
-  add(process.env.DASHBOARD_VIEWER_EMAIL, process.env.DASHBOARD_VIEWER_PASSWORD_HASH, process.env.DASHBOARD_VIEWER_PASSWORD, 'viewer');
-  if (users.length === 0 && process.env.NODE_ENV !== 'production') {
-    // Local-dev convenience: three demo logins so the RBAC demo runs out of the box.
-    users.push({ email: 'owner@local', password: 'owner', role: 'owner' });
-    users.push({ email: 'operator@local', password: 'operator', role: 'operator' });
-    users.push({ email: 'viewer@local', password: 'viewer', role: 'viewer' });
+  add(env('DASHBOARD_ADMIN_EMAIL'), env('DASHBOARD_ADMIN_PASSWORD_HASH'), env('DASHBOARD_ADMIN_PASSWORD'), 'owner');
+  add(env('DASHBOARD_OPERATOR_EMAIL'), env('DASHBOARD_OPERATOR_PASSWORD_HASH'), env('DASHBOARD_OPERATOR_PASSWORD'), 'operator');
+  add(env('DASHBOARD_VIEWER_EMAIL'), env('DASHBOARD_VIEWER_PASSWORD_HASH'), env('DASHBOARD_VIEWER_PASSWORD'), 'viewer');
+  if (env('NODE_ENV') !== 'production') {
+    // Dev: always seed demo logins (even when a custom admin is configured).
+    const demos: ConfiguredUser[] = [
+      { email: 'owner@local', password: 'owner', role: 'owner' },
+      { email: 'operator@local', password: 'operator', role: 'operator' },
+      { email: 'viewer@local', password: 'viewer', role: 'viewer' },
+    ];
+    for (const d of demos) {
+      if (!users.some((u) => u.email === d.email)) users.push(d);
+    }
   }
   return users;
 }
