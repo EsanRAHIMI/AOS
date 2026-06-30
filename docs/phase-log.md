@@ -607,3 +607,102 @@ Verification:
   (verification is a real HTTP/registry check). Protected core can't be modified without owner approval;
   safe mode blocks operation approval; RBAC (Phase 12) and governed AI (Phase 13) intact. No Docker;
   Dokploy independence intact. Scope: `shared/`, `services/gateway-api/`, `services/dashboard-web/`, `docs/`.
+
+## Phase 16 — Real Dokploy API Execution — COMPLETE (2026-06-27)
+Replaces the manual-only Dokploy path with **real API execution where safe and supported**, keeping the
+exact manual steps as fallback. Nothing is faked; protected core services are never auto-modified; safe
+mode, RBAC, policy, snapshots, rollback and verification all still gate execution.
+
+Delivered (shared):
+- **Dokploy API client** (`shared/dokploy`) — server-side only (token never reaches the browser); safe
+  `DokployResult`-returning wrappers: `testConnection/listProjects/listEnvironments/listApplications/
+  getApplication/createApplication/updateApplicationConfig/setEnvironmentVariables/deployApplication/
+  restartApplication/getDeploymentStatus/getApplicationLogs`. `isDokployConfigured`, `dokployConfigFromEnv`,
+  `dokployClientFromEnv`, `redactSummary` (strips secret-looking fields). 404 → `unsupported` (manual path).
+- **Execution-step model** — `OperationStep` gains `executionMode (api|manual|verification|skipped|pending)`,
+  `apiMethod`, `requestSummary`, `responseSummary`, `error`, `retryable`; new step status `manual_required`.
+- **Executor decision** — `AUTO_EXECUTABLE_TYPES` = health_check_only/new_app/existing_app_repair/
+  existing_app_restart; `canAutoExecute()` returns true only for those AND **non-protected-core** targets
+  (protected-core mutations escalate to `protected_core_update` and are excluded).
+
+Delivered (gateway — env: `DOKPLOY_BASE_URL/API_TOKEN/PROJECT_ID/ENVIRONMENT_ID`):
+- `GET /v1/dokploy/status` (testConnection + last sync + api-target count; token never returned),
+  `POST /v1/dokploy/sync` (reads real projects/apps → upserts `dokploy_targets` source=`dokploy_api`;
+  defensive parse; on API failure returns the error and keeps manual confirmation — **never fabricates**).
+- **API executor in the approve path**: when `canAutoExecute && configured && !safeMode`, runs the
+  supported Dokploy calls, records per-step api/manual/error + redacted summaries, writes an audit log +
+  evidence, then runs **real `/health` + registry verification** → completed/failed. Unsupported/failed
+  steps become `manual_required` (exact manual steps) — no fake success. `POST /v1/operations/:id/retry`
+  (re-run API, rate-limited) and `POST /v1/operations/:id/rollback` (**owner-only**, snapshot-based, API
+  redeploy if supported else manual rollback steps + audit + evidence).
+- Existing-app operations still snapshot before mutation; rate-limited execution endpoints.
+
+Delivered (overview — still the only control surface):
+- Operation console shows a **Dokploy API bar** (connected/error/not-configured, synced target count, last
+  sync, Sync button), the **target source** (dokploy_api vs manual_user_confirmed), **per-step API/manual
+  badge + `apiMethod → response` / error**, and **Retry API** (when a step is retryable) / **Rollback
+  (owner)** (when failed + snapshot) buttons.
+
+Verification:
+- All services + shared typecheck; dashboard `next build` ✓.
+- **Dokploy smoke PASS (12/12)** for both scenarios: (A) new **non-core** app is auto-executable, config
+  parses, **secrets are redacted** from summaries, and with no env it cleanly falls back to manual (no fake
+  success); (B) `existing_app_update` on `gateway-api` → `protected_core_update`/critical/owner-only and
+  **never auto-executes**; restart of a protected core is non-auto, restart of a non-core service is.
+- No fake Dokploy success or targets; no secrets exposed/logged; protected core can't be silently modified;
+  safe mode blocks API mutations; no delete/destructive ops. No Docker; Dokploy independence intact. Scope:
+  `shared/`, `services/gateway-api/`, `services/dashboard-web/`, `docs/`.
+
+## Phase 17 — Real Dokploy Calibration & Production Validation — COMPLETE (2026-06-27)
+A calibration/validation phase (no new features): validate the Dokploy client against a real instance,
+discover actual response shapes, calibrate the sync parser, and map the real AOS services — **honestly**,
+with no fake data/targets/success and with protected-core safety unchanged.
+
+Delivered (shared):
+- **API diagnostics** (`buildDiagnostics`) — READ-ONLY probing of real endpoints (project.all → project.one
+  → application.one using discovered ids); mutation endpoints (deploy/restart/saveEnvironment/logs) are
+  recorded as **not-probed** (no side effects). Each record stores `responseShape` (**keys only**),
+  `sanitizedSample` (**secrets redacted**), status, supported, error. New `dokploy_api_diagnostics` schema +
+  collection. `responseShapeOf`, `sanitizedSample`.
+- **Calibrated sync parser** (`parseDokployTargets`) — tolerates multiple Dokploy shapes (project→applications
+  inline, or project→environments[]→applications[]); fills projectName/env/appName/serviceId/domain/port/
+  rootDir/status; **missing fields stay empty (UI shows "unknown") — never invented**.
+- **AOS mapping** (`mapAosServices`) — matches the 17 catalog service ids to synced `dokploy_api` targets by
+  serviceId/appName/domain; unmatched are honestly marked **`not_found_in_dokploy_sync`** (no fabrication).
+
+Delivered (gateway):
+- `POST/GET /v1/dokploy/diagnostics` (read-only probes; owner/operator; rate-limited; sanitized; **409 with
+  a clear message when not configured**), `GET /v1/dokploy/mapping` (real catalog ↔ synced targets), and the
+  sync endpoint now uses the calibrated shared parser (still **502 with a clear error** when unreachable —
+  manual confirmation always remains).
+
+Delivered (overview — still the single control surface):
+- **Dokploy calibration panel** on `/overview`: connection (connected/error/not-configured), last sync +
+  synced-target count, **supported vs unsupported/not-probed** read endpoints, and the **AOS↔Dokploy mapping**
+  (per-service mapped ✓ / not_found_in_dokploy_sync), with Run-diagnostics + Sync buttons. The operation
+  console continues to show target source, per-step API/manual, response summaries, retry/rollback.
+
+Validation of the required flows:
+- **A (connection/sync)** and the **diagnostics** path are real and surface clearly on overview; when no
+  Dokploy is configured they report "not configured" and keep the manual path — nothing faked.
+- **B (health_check_only)** is the real low-risk flow verified end-to-end: it performs a real HTTP `/health`
+  + registry check and stores evidence — no Dokploy API required.
+- **C (protected core)**: `gateway-api`/`dashboard-web` mutations classify **critical / owner-only**, are
+  **never auto-executed**, snapshot+rollback are required, and safe mode blocks them (unchanged from Phase 15/16).
+- **D (non-core low/medium)**: executes via real API when supported, else `manual_required` — verified, with
+  evidence (Phase 16 path, now fed by calibrated targets).
+
+Verification:
+- All services + shared typecheck; dashboard `next build` ✓.
+- **Calibration smoke PASS (10/10):** shape = keys only (no secrets); sanitizedSample/redactSummary strip
+  secrets; parser handles two real-ish shapes and leaves missing fields empty (no fabrication); empty data →
+  zero targets; AOS mapping marks matched vs `not_found_in_dokploy_sync`; protected-core update stays
+  critical and non-auto-executable.
+- No fake targets/success; secrets redacted from diagnostics + summaries; no delete/destructive ops; protected
+  core never auto-modified; safe mode blocks API mutation. No Docker; Dokploy independence intact. Scope:
+  `shared/`, `services/gateway-api/`, `services/dashboard-web/`, `docs/`.
+
+> Operator note: the diagnostic endpoint paths follow Dokploy's documented `/api/*` surface. Run
+> `POST /v1/dokploy/diagnostics` against your live instance; if a `responseShape` differs, the calibrated
+> parser already tolerates the common variants, and any remaining field simply shows "unknown" until the
+> path/parser is adjusted — it never blocks or fakes.

@@ -39,11 +39,18 @@ export type OperationStatus = z.infer<typeof OperationStatus>;
 export const OperationStepSchema = z.object({
   key: z.string(),
   label: z.string(),
-  status: z.enum(['pending', 'active', 'done', 'failed', 'skipped', 'waiting']),
+  status: z.enum(['pending', 'active', 'done', 'failed', 'skipped', 'waiting', 'manual_required']),
   actor: z.string().default('system'),
   message: z.string().default(''),
   evidenceId: z.string().nullable().default(null),
   at: z.string().nullable().default(null),
+  // Phase 16 — execution detail (never contains secrets).
+  executionMode: z.enum(['api', 'manual', 'verification', 'skipped', 'pending']).default('pending'),
+  apiMethod: z.string().default(''),
+  requestSummary: z.string().default(''),
+  responseSummary: z.string().default(''),
+  error: z.string().default(''),
+  retryable: z.boolean().default(false),
 });
 export type OperationStep = z.infer<typeof OperationStepSchema>;
 
@@ -105,6 +112,22 @@ export const DokployTargetSchema = z.object({
   createdAt: IsoDate,
 });
 export type DokployTarget = z.infer<typeof DokployTargetSchema>;
+
+/** Phase 17 — a sanitized record of probing one real Dokploy endpoint. */
+export const DokployApiDiagnosticSchema = z.object({
+  diagnosticId: z.string(),
+  baseUrl: z.string().default(''),
+  endpoint: z.string(),
+  method: z.string().default('GET'),
+  category: z.string().default(''),
+  status: z.number().default(0),
+  supported: z.boolean().default(false),
+  responseShape: z.string().default(''),
+  sanitizedSample: z.string().default(''),
+  error: z.string().default(''),
+  createdAt: IsoDate,
+});
+export type DokployApiDiagnostic = z.infer<typeof DokployApiDiagnosticSchema>;
 
 export const DeploymentSnapshotSchema = z.object({
   snapshotId: z.string(),

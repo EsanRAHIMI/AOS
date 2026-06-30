@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { LiveEvents } from '@/components/LiveEvents';
 import { OperationCommand } from '@/components/OperationCommand';
 import { OperationConsole } from '@/components/OperationConsole';
+import { DokployCalibration } from '@/components/DokployCalibration';
 import { NextBestAction } from '@/components/NextBestAction';
 import { PageHeader, MetricCard, EmptyState, StatusPill } from '@/components/ui';
 import { timeAgo } from '@/lib/format';
@@ -44,6 +45,10 @@ export default async function OverviewPage() {
 
       <div style={{ marginBottom: 16 }}>
         <OperationConsole role={session?.role ?? 'viewer'} safeMode={Boolean(safe?.enabled)} />
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <DokployCalibration />
       </div>
 
       <div style={{ marginBottom: 16 }}>

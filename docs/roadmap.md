@@ -181,12 +181,31 @@ Phase 10 candidates:
 5. /overview = Mission Control: command panel, active operation console, timeline, target/risk/approval/manual/verify/evidence/next-action — DONE.
 6. All services typecheck + dashboard build; 16/16 ops-engine smoke; security + governed AI intact — DONE.
 
-Phase 16 candidates:
-7. Wire a real Dokploy API client (deploy/restart/env) behind the existing approval+snapshot+verify gates.
-8. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
-9. Real web-fetch for the research service; real timer-driven scheduler.
-10. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
-11. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette.
+## Phase 16 — Real Dokploy API Execution — DONE
+1. Dokploy API client (server-side, token redacted) + config + testConnection — DONE.
+2. Dokploy sync engine → real dokploy_targets; manual confirmation fallback kept — DONE.
+3. Execution-step model (executionMode/apiMethod/request/responseSummary/error/retryable) — DONE.
+4. API executor on approve for low/medium non-core; unsupported→manual_required (no fake) — DONE.
+5. Snapshot before existing-app mutation; owner-only snapshot-based rollback; retry — DONE.
+6. Overview console shows API status/sync/source/per-step api-or-manual/response/retry/rollback — DONE.
+7. Safe mode blocks API mutations; protected core never auto-modified; secrets never exposed — DONE.
+8. All typecheck + dashboard build; 12/12 Dokploy smoke (both scenarios); no Docker — DONE.
+
+## Phase 17 — Real Dokploy Calibration & Production Validation — DONE (calibration, no new features)
+1. Dokploy API diagnostics (read-only probes, key-only shapes, redacted samples) + dokploy_api_diagnostics — DONE.
+2. Calibrated multi-shape sync parser; missing fields = unknown, never invented — DONE.
+3. AOS service ↔ Dokploy mapping (matched vs not_found_in_dokploy_sync) — DONE.
+4. Overview calibration panel: connection/last-sync/targets/supported+unsupported endpoints/mapping — DONE.
+5. Health-check end-to-end (real /health + registry) is the verified low-risk flow — DONE.
+6. Protected core unchanged (critical/owner-only/non-auto/safe-mode-blocked); manual fallback kept — DONE.
+7. All typecheck + dashboard build; 10/10 calibration smoke; no fake data/success; no Docker — DONE.
+
+Phase 18 candidates:
+8. Point diagnostics at the live Dokploy and adjust any path/parser deltas surfaced by responseShape.
+9. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
+10. Real web-fetch for the research service; real timer-driven scheduler.
+11. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
+12. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

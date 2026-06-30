@@ -51,3 +51,5 @@ export * from './security/index.js';
 export * from './intelligence/index.js';
 // Phase 15 — Safe Real Operations
 export * from './operations/index.js';
+// Phase 16 — Real Dokploy API Execution
+export * from './dokploy/index.js';

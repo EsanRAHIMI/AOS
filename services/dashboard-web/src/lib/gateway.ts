@@ -168,4 +168,13 @@ export const gateway = {
   confirmOperationTarget: (id: string, target: Record<string, unknown>) => call<Record<string, unknown>>(`/v1/operations/${id}/target`, { method: 'POST', body: JSON.stringify(target) }),
   decideOperation: (id: string, action: string) => call<Record<string, unknown>>(`/v1/operations/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   markOperationExecuted: (id: string, baseUrl?: string) => call<Record<string, unknown>>(`/v1/operations/${id}/executed`, { method: 'POST', body: JSON.stringify({ baseUrl }) }),
+  // Phase 16 — Real Dokploy API Execution
+  dokployStatus: () => call<{ configured: boolean; connection: { ok: boolean; error?: string }; lastSyncedAt: string | null; apiTargetCount: number }>('/v1/dokploy/status'),
+  syncDokploy: () => call<{ synced: number; lastSyncedAt: string; note?: string }>('/v1/dokploy/sync', { method: 'POST' }),
+  retryOperation: (id: string) => call<Record<string, unknown>>(`/v1/operations/${id}/retry`, { method: 'POST' }),
+  rollbackOperation: (id: string) => call<Record<string, unknown>>(`/v1/operations/${id}/rollback`, { method: 'POST' }),
+  // Phase 17 — Dokploy calibration
+  runDokployDiagnostics: () => call<{ probed: number; supported: string[]; unsupported: string[]; diagnostics: Array<Record<string, unknown>> }>('/v1/dokploy/diagnostics', { method: 'POST' }),
+  dokployDiagnostics: () => call<Array<Record<string, unknown>>>('/v1/dokploy/diagnostics'),
+  dokployMapping: () => call<{ mapping: Array<{ serviceId: string; status: string; appName: string | null; domain: string | null; lastKnownStatus: string | null }>; syncedTargets: number; mappedCount: number }>('/v1/dokploy/mapping'),
 };

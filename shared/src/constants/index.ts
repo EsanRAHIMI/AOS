@@ -193,6 +193,8 @@ export const COLLECTIONS = {
   OPERATION_PLANS: 'operation_plans',
   DOKPLOY_TARGETS: 'dokploy_targets',
   DEPLOYMENT_SNAPSHOTS: 'deployment_snapshots',
+  // Phase 17 — Dokploy Calibration
+  DOKPLOY_API_DIAGNOSTICS: 'dokploy_api_diagnostics',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

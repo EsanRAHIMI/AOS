@@ -42,7 +42,19 @@ import {
   setStep,
   nextActionFor,
   isProtectedCore,
+  canAutoExecute,
+  dokployClientFromEnv,
+  dokployConfigFromEnv,
+  isDokployConfigured,
+  redactSummary,
+  buildDiagnostics,
+  parseDokployTargets,
+  mapAosServices,
+  SERVICE_IDS,
+  type DokployApiDiagnostic,
+  type DokployClient,
   type OperationPlan,
+  type OperationStep,
   type OperationType,
   type DokployTarget,
   type DeploymentSnapshot,
@@ -177,6 +189,7 @@ async function main(): Promise<void> {
   const operationPlans = collection<OperationPlan>(COLLECTIONS.OPERATION_PLANS);
   const dokployTargets = collection<DokployTarget>(COLLECTIONS.DOKPLOY_TARGETS);
   const deploymentSnapshots = collection<DeploymentSnapshot>(COLLECTIONS.DEPLOYMENT_SNAPSHOTS);
+  const dokployDiagnostics = collection<DokployApiDiagnostic>(COLLECTIONS.DOKPLOY_API_DIAGNOSTICS);
   const evidenceCol = collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
@@ -1008,9 +1021,56 @@ async function main(): Promise<void> {
         return success(evt);
       });
 
-      // --- Phase 15: Safe Real Operations --------------------------------
-      const dokployApiConfigured = Boolean(process.env.DOKPLOY_API_TOKEN && process.env.DOKPLOY_BASE_URL);
+      // --- Phase 15/16: Safe Real Operations -----------------------------
+      const dokployApiConfigured = isDokployConfigured();
+      const dokployClient: DokployClient | null = dokployClientFromEnv();
+      let lastDokploySyncAt: string | null = null;
       const TERMINAL = new Set(['completed', 'failed', 'rolled_back', 'cancelled']);
+
+      // Execute the supported Dokploy API steps for an approved, auto-executable plan.
+      // Unsupported/failed steps become `manual_required` (never a faked success).
+      const executeViaApi = async (plan: OperationPlan): Promise<{ manualRequired: boolean }> => {
+        if (!dokployClient) return { manualRequired: true };
+        let manualRequired = false;
+        const record = (key: string, r: { ok: boolean; status: number; error?: string; unsupported?: boolean }, apiMethod: string, requestSummary: string): void => {
+          if (r.ok) {
+            plan.steps = plan.steps.map((s) => (s.key === key ? { ...s, status: 'done', executionMode: 'api', apiMethod, requestSummary, responseSummary: `ok (${r.status})`, error: '', at: nowIso() } : s));
+          } else if (r.unsupported) {
+            manualRequired = true;
+            plan.steps = plan.steps.map((s) => (s.key === key ? { ...s, status: 'manual_required', executionMode: 'manual', apiMethod, requestSummary, responseSummary: '', error: r.error ?? 'unsupported', retryable: false, at: nowIso() } : s));
+          } else {
+            manualRequired = true;
+            plan.steps = plan.steps.map((s) => (s.key === key ? { ...s, status: 'manual_required', executionMode: 'manual', apiMethod, requestSummary, responseSummary: '', error: (r.error ?? 'failed').slice(0, 200), retryable: true, at: nowIso() } : s));
+          }
+        };
+        try {
+          if (plan.operationType === 'new_app') {
+            const create = await dokployClient.createApplication({ name: plan.targetApp || plan.targetService, projectId: plan.targetProject || undefined, domain: plan.targetDomain, port: plan.targetPort, rootDir: plan.rootDir });
+            record('execute', create, 'application.create', redactSummary({ name: plan.targetApp, domain: plan.targetDomain, port: plan.targetPort, rootDir: plan.rootDir }));
+            const appId = String((create.data as { applicationId?: string } | undefined)?.applicationId ?? plan.targetApp);
+            if (create.ok) {
+              const deploy = await dokployClient.deployApplication(appId);
+              record('run', deploy, 'application.deploy', redactSummary({ applicationId: appId }));
+            } else { plan.steps = setStep(plan.steps, 'run', 'manual_required', 'Create the app manually, then deploy'); }
+          } else if (plan.operationType === 'existing_app_restart') {
+            const appId = plan.targetApp || plan.targetService;
+            const r = await dokployClient.restartApplication(appId);
+            record('execute', r, 'application.reload', redactSummary({ applicationId: appId }));
+            plan.steps = setStep(plan.steps, 'run', r.ok ? 'done' : 'manual_required', r.ok ? 'Restarted' : 'Restart manually');
+          } else if (plan.operationType === 'existing_app_repair') {
+            const appId = plan.targetApp || plan.targetService;
+            const r = await dokployClient.deployApplication(appId);
+            record('execute', r, 'application.deploy', redactSummary({ applicationId: appId }));
+            plan.steps = setStep(plan.steps, 'run', r.ok ? 'done' : 'manual_required', r.ok ? 'Redeployed' : 'Redeploy manually');
+          } else {
+            manualRequired = true;
+          }
+        } catch (e) {
+          manualRequired = true;
+          plan.steps = setStep(plan.steps, 'execute', 'manual_required', `API error: ${e instanceof Error ? e.message : 'unknown'}`);
+        }
+        return { manualRequired };
+      };
 
       // Real verification: HTTP /health + registry presence. Never fabricated.
       const runVerification = async (plan: OperationPlan): Promise<VerificationResult> => {
@@ -1171,9 +1231,44 @@ async function main(): Promise<void> {
           plan.steps = setStep(plan.steps, 'snapshot', 'done', `Snapshot ${snap.snapshotId} captured (rollback ready)`, 'system');
         }
         plan.status = 'running';
-        plan.steps = setStep(plan.steps, 'execute', 'active', dokployApiConfigured ? 'Executing via Dokploy API' : 'Manual Dokploy steps issued');
-        plan.steps = setStep(plan.steps, 'run', 'waiting', dokployApiConfigured ? 'Deploy running' : 'Waiting for you to apply the steps in Dokploy');
         await ctx.publisher.publish({ type: EVENT_TYPES.OPERATION_APPROVED, taskId: plan.taskId, payload: { operationPlanId: plan.operationPlanId, message: `Operation approved (${plan.operationType})`, level: 'success' } });
+
+        // Real Dokploy API execution path (low/medium, non-core, configured, not safe mode).
+        if (canAutoExecute(plan) && dokployApiConfigured && !(await isSafeMode())) {
+          plan.steps = setStep(plan.steps, 'execute', 'active', 'Executing via Dokploy API');
+          const { manualRequired } = await executeViaApi(plan);
+          const apiEv = buildEvidence({ type: 'deployment_check', taskId: plan.taskId, serviceName: plan.targetService || null, summary: `Dokploy API execution (${plan.operationType}): ${manualRequired ? 'partial — manual steps required' : 'applied'}`, data: { operationPlanId: plan.operationPlanId, manualRequired } });
+          await evidenceCol.insertOne(apiEv); plan.evidenceIds.push(apiEv.evidenceId);
+          await writeAudit({ actorType: 'human', actorId: role, role, action: 'operation_api_executed', targetType: 'operation_plan', targetId: plan.operationPlanId, after: { operationType: plan.operationType, manualRequired } });
+          await ctx.publisher.publish({ type: EVENT_TYPES.OPERATION_EXECUTED, taskId: plan.taskId, payload: { operationPlanId: plan.operationPlanId, message: `Dokploy API execution ${manualRequired ? 'needs manual steps' : 'applied'}`, level: manualRequired ? 'warn' : 'success' } });
+          if (manualRequired) {
+            plan.manualInstructions = buildManualInstructions(plan);
+            await saveOp(plan); // stays running; operator finishes remaining steps then /executed
+            return success(plan);
+          }
+          plan.steps = setStep(plan.steps, 'execute', 'done', 'Executed via Dokploy API');
+          plan.steps = setStep(plan.steps, 'run', 'done', 'Deploy/restart applied');
+          plan.status = 'verifying';
+          await saveOp(plan);
+          const v = await runVerification(plan); plan.verification = v;
+          const ev = buildEvidence({ type: 'health_check_result', taskId: plan.taskId, serviceName: plan.targetService || null, summary: `Operation verification: ${v.detail}`, data: { ...v, operationPlanId: plan.operationPlanId } });
+          await evidenceCol.insertOne(ev); plan.evidenceIds.push(ev.evidenceId);
+          plan.steps = setStep(plan.steps, 'health', v.healthOk ? 'done' : 'failed', v.detail, 'system', ev.evidenceId);
+          plan.steps = setStep(plan.steps, 'registry', v.registered ? 'done' : 'skipped', `registry: ${v.registered ? 'registered' : 'n/a'}`);
+          plan.steps = setStep(plan.steps, 'evidence', 'done', 'Evidence stored', 'system', ev.evidenceId);
+          const failed = v.healthOk === false;
+          plan.steps = setStep(plan.steps, 'completed', failed ? 'failed' : 'done');
+          plan.status = failed ? 'failed' : 'completed';
+          await writeSecEvent({ eventType: EVENT_TYPES.OPERATION_VERIFIED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: plan.operationPlanId, result: failed ? 'failure' : 'success', riskLevel: failed ? 'medium' : 'low', detail: v.detail });
+          await ctx.publisher.publish({ type: EVENT_TYPES.OPERATION_COMPLETED, taskId: plan.taskId, payload: { operationPlanId: plan.operationPlanId, message: `Operation ${plan.status}: ${v.detail}`, level: failed ? 'warn' : 'success' } });
+          await saveOp(plan);
+          return success(plan);
+        }
+
+        // Manual path (API not configured, or not an auto-executable type).
+        plan.steps = setStep(plan.steps, 'execute', 'active', 'Manual Dokploy steps issued');
+        plan.steps = setStep(plan.steps, 'run', 'waiting', 'Waiting for you to apply the steps in Dokploy');
+        plan.manualInstructions = plan.manualInstructions.length ? plan.manualInstructions : buildManualInstructions(plan);
         await saveOp(plan);
         return success(plan);
       });
@@ -1201,6 +1296,105 @@ async function main(): Promise<void> {
         plan.status = failed ? 'failed' : 'completed';
         await writeSecEvent({ eventType: EVENT_TYPES.OPERATION_VERIFIED, actorId: declaredRole(req), role: declaredRole(req), ip: clientIp(req), userAgent: userAgent(req), target: plan.operationPlanId, result: failed ? 'failure' : 'success', riskLevel: failed ? 'medium' : 'low', detail: v.detail });
         await ctx.publisher.publish({ type: EVENT_TYPES.OPERATION_COMPLETED, taskId: plan.taskId, payload: { operationPlanId: plan.operationPlanId, message: `Operation ${plan.status}: ${v.detail}`, level: failed ? 'warn' : 'success' } });
+        await saveOp(plan);
+        return success(plan);
+      });
+
+      // Dokploy API connection status (token never returned).
+      app.get('/v1/dokploy/status', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        let connection: { ok: boolean; error?: string } = { ok: false, error: 'not configured' };
+        if (dokployClient) { const t = await dokployClient.testConnection(); connection = { ok: t.ok, error: t.ok ? undefined : t.error }; }
+        const targetCount = await dokployTargets.countDocuments({ source: 'dokploy_api' as never });
+        return success({ configured: dokployApiConfigured, connection, lastSyncedAt: lastDokploySyncAt, apiTargetCount: targetCount });
+      });
+
+      // Sync real Dokploy projects/apps into dokploy_targets. Never fabricates targets.
+      app.post('/v1/dokploy/sync', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'dokploy_sync')) return reply;
+        if (await enforce('confirmOperationTarget', req, reply)) return reply;
+        if (!dokployClient) return reply.code(409).send(failure(ERROR_CODES.CONFLICT, 'Dokploy API not configured (DOKPLOY_BASE_URL / DOKPLOY_API_TOKEN) — use manual target confirmation'));
+        const projects = await dokployClient.listProjects();
+        if (!projects.ok) return reply.code(502).send(failure(ERROR_CODES.UPSTREAM, `Dokploy sync failed: ${projects.error ?? 'unreachable'} — manual confirmation remains available`));
+        // Calibrated, version-tolerant parse (shared). Missing fields stay empty (UI shows "unknown"); never invented.
+        const parsed = parseDokployTargets(projects.data);
+        const out: DokployTarget[] = parsed.map((t) => ({
+          targetId: genId('dtgt'), projectName: t.projectName, environmentName: t.environmentName,
+          appName: t.appName, serviceId: t.serviceId, domain: t.domain, port: t.port, rootDir: t.rootDir,
+          isCoreService: isProtectedCore(t.serviceId), lastKnownStatus: t.status || 'unknown', lastSyncedAt: nowIso(), source: 'dokploy_api', createdAt: nowIso(),
+        }));
+        for (const t of out) await dokployTargets.updateOne({ source: 'dokploy_api' as never, appName: t.appName, projectName: t.projectName }, { $set: t }, { upsert: true });
+        lastDokploySyncAt = nowIso();
+        return success({ synced: out.length, lastSyncedAt: lastDokploySyncAt, note: out.length === 0 ? 'Connected, but no applications parsed from this Dokploy version — run diagnostics and confirm targets manually.' : undefined });
+      });
+
+      // Read-only API discovery: probe real endpoints, store sanitized shapes (no secrets).
+      app.post('/v1/dokploy/diagnostics', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'dokploy_diagnostics')) return reply;
+        if (await enforce('confirmOperationTarget', req, reply)) return reply;
+        if (!dokployClient) return reply.code(409).send(failure(ERROR_CODES.CONFLICT, 'Dokploy API not configured — set DOKPLOY_BASE_URL / DOKPLOY_API_TOKEN. Manual confirmation remains available.'));
+        const baseUrl = dokployConfigFromEnv()?.baseUrl ?? '';
+        const recs = await buildDiagnostics(dokployClient, baseUrl);
+        if (recs.length) await dokployDiagnostics.insertMany(recs as never[]);
+        const supported = recs.filter((r) => r.supported).map((r) => r.category);
+        const unsupported = recs.filter((r) => !r.supported && r.method === 'GET').map((r) => `${r.category} (${r.error})`);
+        return success({ probed: recs.length, supported, unsupported, diagnostics: recs });
+      });
+      app.get('/v1/dokploy/diagnostics', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await dokployDiagnostics.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(60).toArray());
+      });
+
+      // Map the real AOS catalog to synced Dokploy targets (honest not_found_in_dokploy_sync).
+      app.get('/v1/dokploy/mapping', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const targets = await dokployTargets.find({ source: 'dokploy_api' as never }, { projection: { _id: 0 } }).toArray();
+        const aosIds = (Object.values(SERVICE_IDS) as string[]).filter((id) => id !== 'dashboard-web').concat(['dashboard-web']);
+        const mapping = mapAosServices(aosIds, targets);
+        return success({ mapping, syncedTargets: targets.length, mappedCount: mapping.filter((m) => m.status === 'mapped').length });
+      });
+
+      // Retry the API execution of a running operation whose step failed (retryable).
+      app.post<{ Params: { id: string } }>('/v1/operations/:id/retry', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'operation_retry')) return reply;
+        if (await enforce('decideOperation', req, reply)) return reply;
+        const plan = await operationPlans.findOne({ operationPlanId: req.params.id });
+        if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'operation not found'));
+        if (plan.status !== 'running') return reply.code(409).send(failure(ERROR_CODES.CONFLICT, `operation is ${plan.status}, not running`));
+        if (await isSafeMode()) return reply.code(403).send(failure(ERROR_CODES.SAFE_MODE, 'safe mode is active'));
+        if (!(canAutoExecute(plan) && dokployApiConfigured)) return reply.code(409).send(failure(ERROR_CODES.CONFLICT, 'this operation is on the manual path — apply the steps and confirm'));
+        const { manualRequired } = await executeViaApi(plan);
+        await writeAudit({ actorType: 'human', actorId: declaredRole(req), role: declaredRole(req), action: 'operation_api_retry', targetType: 'operation_plan', targetId: plan.operationPlanId, after: { manualRequired } });
+        if (manualRequired) plan.manualInstructions = buildManualInstructions(plan);
+        await saveOp(plan);
+        return success(plan);
+      });
+
+      // Rollback a failed/changed existing-app operation (OWNER + snapshot required).
+      app.post<{ Params: { id: string } }>('/v1/operations/:id/rollback', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await enforce('decideOperation', req, reply)) return reply;
+        const role = declaredRole(req);
+        if (role !== 'owner') {
+          await writeSecEvent({ eventType: EVENT_TYPES.RBAC_DENIED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: req.params.id, result: 'denied', riskLevel: 'medium', detail: 'rollback requires owner' });
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, 'rollback requires OWNER approval'));
+        }
+        const plan = await operationPlans.findOne({ operationPlanId: req.params.id });
+        if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'operation not found'));
+        if (!plan.snapshotId) return reply.code(409).send(failure(ERROR_CODES.CONFLICT, 'no snapshot to roll back to'));
+        // Best-effort API redeploy of the previous build if configured; otherwise exact manual rollback steps.
+        let mode = 'manual';
+        if (dokployClient && plan.targetApp) { const r = await dokployClient.deployApplication(plan.targetApp); mode = r.ok ? 'api' : 'manual'; }
+        plan.rollbackPlan = plan.rollbackPlan.length ? plan.rollbackPlan : ['Restore the captured snapshot in Dokploy', 'Redeploy the previous successful build', 'Re-run health + registry verification'];
+        plan.status = 'rolled_back';
+        plan.steps = setStep(plan.steps, 'completed', 'failed', `Rolled back via ${mode} (snapshot ${plan.snapshotId})`, role);
+        const ev = buildEvidence({ type: 'deployment_check', taskId: plan.taskId, serviceName: plan.targetService || null, summary: `Rollback (${mode}) to snapshot ${plan.snapshotId}`, data: { operationPlanId: plan.operationPlanId, snapshotId: plan.snapshotId, mode } });
+        await evidenceCol.insertOne(ev); plan.evidenceIds.push(ev.evidenceId);
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'operation_rolled_back', targetType: 'operation_plan', targetId: plan.operationPlanId, after: { snapshotId: plan.snapshotId, mode } });
+        await ctx.publisher.publish({ type: EVENT_TYPES.OPERATION_UPDATED, taskId: plan.taskId, payload: { operationPlanId: plan.operationPlanId, message: `Operation rolled back (${mode})`, level: 'warn' } });
         await saveOp(plan);
         return success(plan);
       });

@@ -234,3 +234,27 @@ export async function markOperationExecutedAction(formData: FormData): Promise<v
   await gateway.markOperationExecuted(id, baseUrl);
   revalidatePath('/');
 }
+
+export async function syncDokployAction(): Promise<void> {
+  await requirePermission('confirmOperationTarget');
+  await gateway.syncDokploy();
+  revalidatePath('/');
+}
+
+export async function runDokployDiagnosticsAction(): Promise<void> {
+  await requirePermission('confirmOperationTarget');
+  await gateway.runDokployDiagnostics();
+  revalidatePath('/');
+}
+
+export async function retryOperationAction(formData: FormData): Promise<void> {
+  await requirePermission('decideOperation');
+  await gateway.retryOperation(String(formData.get('operationPlanId')));
+  revalidatePath('/');
+}
+
+export async function rollbackOperationAction(formData: FormData): Promise<void> {
+  await requirePermission('decideOperation');
+  await gateway.rollbackOperation(String(formData.get('operationPlanId')));
+  revalidatePath('/');
+}

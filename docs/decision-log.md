@@ -2,6 +2,38 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-27 — Phase 17 real Dokploy calibration & validation
+
+### D-074 Diagnostics are READ-ONLY; mutation endpoints recorded as not-probed
+`buildDiagnostics` only calls GET discovery endpoints (project.all → project.one → application.one). It
+never calls deploy/restart/saveEnvironment (those have side effects); they're listed as "not probed —
+confirmed at execution time". Diagnostic records store key-only `responseShape` and a redacted sample.
+
+### D-073 Calibrated parser leaves missing fields empty (unknown), never invented
+`parseDokployTargets` tolerates the common Dokploy shapes and fills what's present; absent domain/port/
+rootDir stay empty and the UI shows "unknown". No target is fabricated; empty data → zero targets.
+
+### D-072 AOS↔Dokploy mapping is honest: not_found_in_dokploy_sync
+`mapAosServices` matches catalog ids to real synced `dokploy_api` targets; anything unmatched is explicitly
+`not_found_in_dokploy_sync` rather than invented. Calibration lives on `/overview` — no separate page.
+
+## 2026-06-27 — Phase 16 real Dokploy API execution
+
+### D-071 Auto-execute only low/medium NON-core ops; everything else stays gated/manual
+`canAutoExecute` allows API execution for health_check_only/new_app/existing_app_repair/existing_app_restart
+on non-protected-core targets only. Protected-core mutations escalate to `protected_core_update` (critical,
+owner-only) and are never auto-executed. env updates / core updates / anything destructive stay manual or
+owner-critical. No delete is implemented.
+
+### D-070 Unsupported/failed API steps become manual_required — never fake success
+The Dokploy client returns structured results (404 → `unsupported`); the executor marks the step
+`manual_required` with exact manual instructions and a retry option instead of pretending it worked.
+Verification is always a real `/health` + registry check afterward.
+
+### D-069 Token server-side only; summaries redacted
+The Dokploy token lives in gateway env and is never returned by `/v1/dokploy/status` or sent to the browser.
+`redactSummary` strips token/secret/password/key fields from any request/response summary stored on a step.
+
 ## 2026-06-27 — Phase 15 safe real operations inside overview
 
 ### D-068 Overview IS Mission Control — no separate page

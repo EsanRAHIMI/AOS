@@ -55,7 +55,7 @@ export function classifyOperation(operationType: OperationType, targetServiceId?
 /** Canonical operation timeline (13 steps). Non-applicable steps are marked skipped. */
 export function buildSteps(opType: OperationType): OperationStep[] {
   const now = nowIso();
-  const mk = (key: string, label: string, status: OperationStep['status'] = 'pending', at: string | null = null): OperationStep => ({ key, label, status, actor: 'system', message: '', evidenceId: null, at });
+  const mk = (key: string, label: string, status: OperationStep['status'] = 'pending', at: string | null = null): OperationStep => ({ key, label, status, actor: 'system', message: '', evidenceId: null, at, executionMode: 'pending', apiMethod: '', requestSummary: '', responseSummary: '', error: '', retryable: false });
   const isMutation = opType !== 'health_check_only';
   const existing = ['existing_app_update', 'existing_app_repair', 'existing_app_restart', 'existing_app_env_update', 'protected_core_update'].includes(opType);
   return [
@@ -194,6 +194,22 @@ function hashList(items: string[]): string {
 /** Convenience: mark a step done/active by key, stamping time + message. */
 export function setStep(steps: OperationStep[], key: string, status: OperationStep['status'], message = '', actor = 'system', evidenceId: string | null = null): OperationStep[] {
   return steps.map((s) => (s.key === key ? { ...s, status, message: message || s.message, actor, evidenceId: evidenceId ?? s.evidenceId, at: nowIso() } : s));
+}
+
+/**
+ * Operation types eligible for automatic Dokploy API execution in Phase 16.
+ * Protected-core mutations escalate to `protected_core_update` (not in this set),
+ * so they are never auto-executed — they stay owner-approved + manual/critical.
+ */
+export const AUTO_EXECUTABLE_TYPES = new Set<OperationType>([
+  'health_check_only', 'new_app', 'existing_app_repair', 'existing_app_restart',
+]);
+
+/** True when an approved operation may be executed via the Dokploy API (vs manual). */
+export function canAutoExecute(plan: Pick<OperationPlan, 'operationType' | 'protectedCore' | 'targetService'>): boolean {
+  if (plan.protectedCore) return false;
+  if (isProtectedCore(plan.targetService)) return false;
+  return AUTO_EXECUTABLE_TYPES.has(plan.operationType);
 }
 
 export function nextActionFor(plan: Pick<OperationPlan, 'status' | 'operationType' | 'protectedCore' | 'riskLevel' | 'manualInstructions'>): string {
