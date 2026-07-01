@@ -2,6 +2,26 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-06-27 — Phase 18 realtime voice operator
+
+### D-077 Voice never mutates directly — deterministic tool-mediation router
+Every utterance goes through `routeUtterance` → ONE `ToolProposal`. The gateway then enforces RBAC, safe
+mode and approvals before any action. The router is deterministic (same input → same proposal) so the
+guardrails are guaranteed regardless of the LLM. Read tools run immediately; everything else needs
+confirm/approval.
+
+### D-076 Anti-mistake guardrails encoded in the router (not just the prompt)
+The 10 guardrails (analyze→learning, security→security, research→intelligence never Dokploy; only infra ops
+use operation plans; protected-core never voice-executed; no destructive ops; overview is the surface) are
+hard-coded routing rules, so a misheard request can't be funnelled into a Dokploy target selection or a core
+mutation.
+
+### D-075 Browser-native voice + text fallback; provider optional; key stays server-side
+The dock works fully with text plus the browser's SpeechRecognition/speechSynthesis — no provider required.
+When a realtime provider is configured, the voice-operator-agent mints a short-lived ephemeral client secret
+server-side; the raw API key never reaches the browser. Critical/protected approvals require the visible
+Overview UI, never voice-only.
+
 ## 2026-06-27 — Phase 17 real Dokploy calibration & validation
 
 ### D-074 Diagnostics are READ-ONLY; mutation endpoints recorded as not-probed

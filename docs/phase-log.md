@@ -706,3 +706,53 @@ Verification:
 > `POST /v1/dokploy/diagnostics` against your live instance; if a `responseShape` differs, the calibrated
 > parser already tolerates the common variants, and any remaining field simply shows "unknown" until the
 > path/parser is adjusted — it never blocks or fakes.
+
+## Phase 18 — Realtime Voice Operator Agent — COMPLETE (2026-06-27)
+A persistent, floating voice + text operator copilot across the whole dashboard, deeply integrated with
+the kernel: it explains state, asks before any change, executes only through existing safe gates, verifies,
+remembers preferences, and learns from mistakes. **Raw voice/LLM output never mutates state** — every
+action is routed through a deterministic tool-mediation layer under RBAC / safe mode / approvals.
+
+Delivered (shared):
+- **Voice schemas + collections** — voice_sessions/messages/tool_calls/permissions/memories/learning_events
+  (no secrets stored). New `voice-operator-agent` service id/port(4121)/subdomain(voice.simorx.com).
+- **Deterministic tool-mediation router** (`routeUtterance`) — maps an utterance → ONE safe `ToolProposal`
+  (toolName/category/risk/requiresApproval/ownerOnly/blocked/confirm/explanation). Encodes the **10
+  anti-mistake guardrails**: analyze-history→learning, security→security, research→intelligence (never
+  Dokploy); only infra ops use operation plans; protected-core mutations are blocked from voice (owner +
+  visible UI); delete/destructive blocked; governance stays approval-gated. `deriveVoiceLearning` extracts
+  session summary + mistake-avoidance memories.
+
+Delivered (new service voice-operator-agent, 4121):
+- Independently deployable; standard factory endpoints. Tasks: `realtime_token` (mints a SHORT-LIVED OpenAI
+  realtime ephemeral client secret server-side — the API key never reaches the browser; "not configured"
+  when absent), `derive_learning` (stores learning event + memories), default status + guardrails.
+
+Delivered (gateway voice endpoints — RBAC + safe mode enforced, audited):
+- `GET /v1/voice/context` (compact, secret-free packet: role, safe mode, active operation, approvals,
+  incidents, latest events/report, guardrails), `POST /v1/voice/session`, `POST /v1/voice/message` (routes
+  → tool proposal; **read tools execute immediately, low-risk → light confirm, medium/high → permission,
+  protected/destructive → blocked+audited**), `POST /v1/voice/tool/:id/confirm` (executes low-risk through
+  existing safe paths: health-check operation, learning/security/research tasks, Dokploy sync/diagnostics —
+  with evidence + audit), `POST /v1/voice/permission/:id/decision` (gated → creates an operation plan to
+  approve on Overview; **never voice-only critical execution; owner-only enforced**), reads + realtime-token
+  proxy.
+
+Delivered (dashboard):
+- **VoiceOperatorDock** — floating on every authenticated page; **text + the browser's native STT/TTS** (no
+  provider needed), modes (collapsed/listening/thinking/waiting_for_permission/executing/reporting/error),
+  transcript, action proposal with risk + Confirm/Approve/Cancel, mute/interrupt/push-to-talk, compact +
+  expanded, mobile-safe. Realtime WebRTC activates when a provider is configured. `/voice`, `/voice/settings`
+  (provider status + learned preferences), `/voice/sessions`. Overview stays the main control surface.
+
+Verification:
+- **All 18 services + shared typecheck**; dashboard `next build` ✓ (incl. `/voice*`).
+- **Voice-router smoke PASS (15/15):** A explain→read; B "check gateway health"→low/light-confirm, target
+  resolved; C "restart the gateway"→blocked/owner-only/critical + offers health check, while non-core
+  restart→operation-plan/approval (not blocked); D analyze→learning, security→security, research→intelligence
+  (never Dokploy); safe mode blocks mutations; delete/scoring blocked; 10 guardrails; learning extraction
+  derives a mistake-avoidance memory.
+- No secrets exposed (token server-side; realtime returns only an ephemeral client secret); no raw output
+  mutates state; protected core not voice-executable; safe mode blocks mutations; voice approvals/tool calls
+  audited + evidenced. Text fallback always works. No Docker; Dokploy independence intact. Scope: `shared/`,
+  `services/gateway-api/`, `services/voice-operator-agent/` (new), `services/dashboard-web/`, `deployment/`, `docs/`.

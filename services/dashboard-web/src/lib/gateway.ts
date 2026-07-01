@@ -177,4 +177,15 @@ export const gateway = {
   runDokployDiagnostics: () => call<{ probed: number; supported: string[]; unsupported: string[]; diagnostics: Array<Record<string, unknown>> }>('/v1/dokploy/diagnostics', { method: 'POST' }),
   dokployDiagnostics: () => call<Array<Record<string, unknown>>>('/v1/dokploy/diagnostics'),
   dokployMapping: () => call<{ mapping: Array<{ serviceId: string; status: string; appName: string | null; domain: string | null; lastKnownStatus: string | null }>; syncedTargets: number; mappedCount: number }>('/v1/dokploy/mapping'),
+  // Phase 18 — Realtime Voice Operator
+  voiceContext: (page: string) => call<Record<string, unknown>>(`/v1/voice/context?page=${encodeURIComponent(page)}`),
+  startVoiceSession: (currentPage: string) => call<{ voiceSessionId: string }>('/v1/voice/session', { method: 'POST', body: JSON.stringify({ currentPage }) }),
+  voiceMessage: (sessionId: string, text: string, currentPage: string) => call<{ proposal: Record<string, unknown>; toolCall: Record<string, unknown>; permissionId: string | null; reply: string; readData: unknown; safeMode: boolean }>('/v1/voice/message', { method: 'POST', body: JSON.stringify({ sessionId, text, currentPage }) }),
+  confirmVoiceTool: (id: string) => call<{ executed: boolean; resultSummary: string; linkedTaskId: string | null; linkedOperationPlanId: string | null }>(`/v1/voice/tool/${id}/confirm`, { method: 'POST' }),
+  decideVoicePermission: (id: string, action: string) => call<{ status: string; operationPlanId: string | null; message?: string }>(`/v1/voice/permission/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  voiceSessions: () => call<unknown[]>('/v1/voice/sessions'),
+  voiceSession: (id: string) => call<{ session: Record<string, unknown>; messages: unknown[]; toolCalls: unknown[]; permissions: unknown[] }>(`/v1/voice/sessions/${id}`),
+  voiceMemories: () => call<unknown[]>('/v1/voice/memories'),
+  voiceToolCalls: () => call<unknown[]>('/v1/voice/tool-calls'),
+  voiceRealtimeToken: () => call<{ ok: boolean; model?: string; clientSecret?: string; error?: string }>('/v1/voice/realtime-token', { method: 'POST' }),
 };

@@ -50,9 +50,17 @@ import {
   buildDiagnostics,
   parseDokployTargets,
   mapAosServices,
+  routeUtterance,
+  VOICE_GUARDRAILS,
   SERVICE_IDS,
   type DokployApiDiagnostic,
   type DokployClient,
+  type VoiceSession,
+  type VoiceMessage,
+  type VoiceToolCall,
+  type VoicePermission,
+  type VoiceMemory,
+  type ToolProposal,
   type OperationPlan,
   type OperationStep,
   type OperationType,
@@ -190,6 +198,12 @@ async function main(): Promise<void> {
   const dokployTargets = collection<DokployTarget>(COLLECTIONS.DOKPLOY_TARGETS);
   const deploymentSnapshots = collection<DeploymentSnapshot>(COLLECTIONS.DEPLOYMENT_SNAPSHOTS);
   const dokployDiagnostics = collection<DokployApiDiagnostic>(COLLECTIONS.DOKPLOY_API_DIAGNOSTICS);
+  // Phase 18 — voice operator
+  const voiceSessions = collection<VoiceSession>(COLLECTIONS.VOICE_SESSIONS);
+  const voiceMessages = collection<VoiceMessage>(COLLECTIONS.VOICE_MESSAGES);
+  const voiceToolCalls = collection<VoiceToolCall>(COLLECTIONS.VOICE_TOOL_CALLS);
+  const voicePermissions = collection<VoicePermission>(COLLECTIONS.VOICE_PERMISSIONS);
+  const voiceMemories = collection<VoiceMemory>(COLLECTIONS.VOICE_MEMORIES);
   const evidenceCol = collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
@@ -1462,6 +1476,201 @@ async function main(): Promise<void> {
         if (!guard(req)) return deny(reply);
         const f = req.query.taskId ? { taskId: req.query.taskId } : {};
         return success(await intelligenceReports.find(f, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
+      });
+
+      // --- Phase 18: Voice Operator --------------------------------------
+      const voiceServiceUrl = (): string => env.SERVICE_REGISTRY_URL ? peerUrl('voice-operator-agent') : peerUrl('voice-operator-agent');
+      // Create a real kernel task (learning/security/research) and forward to the orchestrator.
+      const createKernelTask = async (goal: string, tags: string[]): Promise<string> => {
+        const now = nowIso();
+        const task: Task = { taskId: genId('task'), goal, status: 'queued', priority: 'normal', createdBy: 'voice-operator-agent', assignedServiceId: null, parentTaskId: null, requiresApproval: false, tags, error: null, createdAt: now, updatedAt: now };
+        await tasks.insertOne(task);
+        await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: task.taskId, payload: { goal } });
+        const orch = await ctx.registry.resolve('orchestrator-agent');
+        try {
+          await fetch(`${(orch?.domain ?? peerUrl('orchestrator-agent'))}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: task.taskId, goal, input: {} }) });
+          await tasks.updateOne({ taskId: task.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
+        } catch { /* task persists regardless */ }
+        return task.taskId;
+      };
+
+      // Compact, secret-free context packet for the voice operator.
+      app.get<{ Querystring: { page?: string } }>('/v1/voice/context', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const [op, appr, inc, recentEvents, safe, latestReport] = await Promise.all([
+          operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(1).toArray(),
+          approvals.countDocuments({ status: 'pending' }),
+          incidents.find({}, { projection: { _id: 0 } }).limit(50).toArray(),
+          events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(6).toArray(),
+          isSafeMode(),
+          intelligenceReports.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),
+        ]);
+        const activeOp = op[0] && !['completed', 'failed', 'rolled_back', 'cancelled'].includes(op[0].status) ? op[0] : null;
+        const openIncidents = inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed').length;
+        return success({
+          role: declaredRole(req), safeMode: safe, currentPage: req.query.page ?? '/',
+          activeOperation: activeOp ? { operationPlanId: activeOp.operationPlanId, goal: activeOp.goal, status: activeOp.status, riskLevel: activeOp.riskLevel, protectedCore: activeOp.protectedCore, nextAction: activeOp.nextAction } : null,
+          pendingApprovals: appr, openIncidents,
+          latestEvents: recentEvents.map((e) => ({ type: e.type, message: (e.payload as { message?: string })?.message ?? e.type, at: e.createdAt })),
+          latestReport: latestReport[0] ? { reportId: latestReport[0].reportId, title: latestReport[0].title } : null,
+          guardrails: VOICE_GUARDRAILS,
+        });
+      });
+
+      app.post<{ Body: { currentPage?: string } }>('/v1/voice/session', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const role = declaredRole(req);
+        const sess: VoiceSession = { voiceSessionId: genId('vsess'), userId: role, role, startedAt: nowIso(), endedAt: null, status: 'active', currentPage: req.body?.currentPage ?? '/', activeTaskId: null, activeOperationPlanId: null, mode: 'collapsed', provider: 'text', model: '', costUsd: 0, transcriptSummary: '' };
+        await voiceSessions.insertOne(sess);
+        await ctx.publisher.publish({ type: EVENT_TYPES.VOICE_SESSION_STARTED, taskId: null, payload: { voiceSessionId: sess.voiceSessionId, message: 'Voice session started' } });
+        return success(sess);
+      });
+      app.get('/v1/voice/sessions', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await voiceSessions.find({}, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(30).toArray()); });
+      app.get<{ Params: { id: string } }>('/v1/voice/sessions/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const [s, msgs, calls, perms] = await Promise.all([
+          voiceSessions.findOne({ voiceSessionId: req.params.id }, { projection: { _id: 0 } }),
+          voiceMessages.find({ sessionId: req.params.id }, { projection: { _id: 0 } }).sort({ timestamp: 1 }).toArray(),
+          voiceToolCalls.find({ sessionId: req.params.id }, { projection: { _id: 0 } }).sort({ createdAt: 1 }).toArray(),
+          voicePermissions.find({ sessionId: req.params.id }, { projection: { _id: 0 } }).sort({ createdAt: 1 }).toArray(),
+        ]);
+        return success({ session: s, messages: msgs, toolCalls: calls, permissions: perms });
+      });
+      app.get('/v1/voice/memories', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await voiceMemories.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray()); });
+      app.get('/v1/voice/tool-calls', async (req, reply) => { if (!guard(req)) return deny(reply); return success(await voiceToolCalls.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray()); });
+
+      // Realtime ephemeral token (proxied to the voice-operator-agent; key never reaches the browser raw).
+      app.post('/v1/voice/realtime-token', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'voice_realtime')) return reply;
+        try {
+          const r = await fetch(`${voiceServiceUrl()}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ goal: 'realtime token', input: { action: 'realtime_token' } }) });
+          const body = (await r.json()) as { data?: { realtime?: unknown } };
+          return success(body.data?.realtime ?? { ok: false, error: 'voice service unreachable' });
+        } catch {
+          return success({ ok: false, error: 'voice provider not configured' });
+        }
+      });
+
+      // The core: route an utterance → a single safe tool proposal (never auto-mutates).
+      app.post<{ Body: { sessionId?: string; text?: string; currentPage?: string } }>('/v1/voice/message', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'voice_message')) return reply;
+        const role = declaredRole(req);
+        const sessionId = String(req.body?.sessionId ?? '');
+        const text = String(req.body?.text ?? '').trim();
+        if (!sessionId || !text) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'sessionId and text are required'));
+        const safe = await isSafeMode();
+        await voiceMessages.insertOne({ messageId: genId('vmsg'), sessionId, direction: 'user', modality: 'text', text, timestamp: nowIso(), linkedTaskId: null, linkedOperationPlanId: null });
+
+        const proposal: ToolProposal = routeUtterance(text, { role, safeMode: safe, currentPage: req.body?.currentPage ?? '/' });
+        const toolCall: VoiceToolCall = {
+          toolCallId: genId('vtool'), sessionId, toolName: proposal.toolName, category: proposal.category, proposedArgs: proposal.args,
+          riskLevel: proposal.riskLevel, requiresApproval: proposal.requiresApproval, ownerOnly: proposal.ownerOnly,
+          status: proposal.blocked ? 'blocked' : proposal.category === 'read' ? 'executed' : proposal.confirm === 'approval' ? 'awaiting_approval' : 'awaiting_confirmation',
+          blockedReason: proposal.blockedReason, resultSummary: '', evidenceIds: [], createdAt: nowIso(),
+        };
+        let reply_text = proposal.explanation;
+        let readData: unknown = null;
+        let permissionId: string | null = null;
+
+        // Read tools execute immediately (no mutation).
+        if (proposal.category === 'read' && !proposal.blocked) {
+          if (proposal.toolName === 'list_pending_approvals') readData = await approvals.find({ status: 'pending' }, { projection: { _id: 0 } }).limit(10).toArray();
+          else if (proposal.toolName === 'show_evidence') readData = await evidence.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(8).toArray();
+          else if (proposal.toolName === 'open_report') readData = await intelligenceReports.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray();
+          toolCall.resultSummary = `read ${proposal.toolName}`;
+        } else if (proposal.blocked) {
+          await writeAudit({ actorType: 'human', actorId: role, role, action: `voice_blocked_${proposal.toolName}`, targetType: 'voice_tool_call', targetId: toolCall.toolCallId, reason: proposal.blockedReason });
+          await writeSecEvent({ eventType: EVENT_TYPES.RBAC_DENIED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: proposal.toolName, result: 'denied', riskLevel: proposal.riskLevel === 'critical' ? 'high' : 'medium', detail: `voice blocked: ${proposal.blockedReason}` });
+        } else if (proposal.confirm === 'approval') {
+          const perm: VoicePermission = { permissionId: genId('vperm'), sessionId, toolCallId: toolCall.toolCallId, prompt: proposal.explanation, riskLevel: proposal.riskLevel, ownerOnly: proposal.ownerOnly, approvedBy: null, status: 'pending', createdAt: nowIso(), decidedAt: null };
+          await voicePermissions.insertOne(perm);
+          permissionId = perm.permissionId;
+          await ctx.publisher.publish({ type: EVENT_TYPES.VOICE_PERMISSION_REQUESTED, taskId: null, payload: { permissionId: perm.permissionId, message: `Voice approval requested (${proposal.riskLevel})`, level: 'warn' } });
+        }
+
+        await voiceToolCalls.insertOne(toolCall);
+        await ctx.publisher.publish({ type: EVENT_TYPES.VOICE_TOOL_PROPOSED, taskId: null, payload: { toolName: proposal.toolName, status: toolCall.status, message: `Voice proposed ${proposal.toolName}` } });
+        await voiceMessages.insertOne({ messageId: genId('vmsg'), sessionId, direction: 'agent', modality: 'text', text: reply_text, timestamp: nowIso(), linkedTaskId: null, linkedOperationPlanId: null });
+        return success({ proposal, toolCall, permissionId, reply: reply_text, readData, safeMode: safe });
+      });
+
+      // Confirm + execute a low-risk tool through the existing safe paths (RBAC + safe mode enforced).
+      app.post<{ Params: { id: string } }>('/v1/voice/tool/:id/confirm', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'voice_tool')) return reply;
+        const tc = await voiceToolCalls.findOne({ toolCallId: req.params.id });
+        if (!tc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'tool call not found'));
+        if (tc.status !== 'awaiting_confirmation') return reply.code(409).send(failure(ERROR_CODES.CONFLICT, `tool is ${tc.status}`));
+        const role = declaredRole(req);
+        const args = tc.proposedArgs as { targetService?: string; goal?: string };
+
+        // RBAC + safe-mode for mutations.
+        const actionFor: Record<string, string> = { run_health_check: 'createOperation', run_learning_analysis: 'createTask', run_security_check: 'createTask', run_research_plan: 'createTask', sync_dokploy_targets: 'confirmOperationTarget', run_dokploy_diagnostics: 'confirmOperationTarget' };
+        const enfAction = actionFor[tc.toolName] ?? 'createOperation';
+        if (await enforce(enfAction, req, reply)) return reply;
+
+        let resultSummary = ''; const evidenceIds: string[] = []; let linkedTaskId: string | null = null; let linkedOperationPlanId: string | null = null;
+        try {
+          if (tc.toolName === 'run_health_check') {
+            const plan = buildOperationPlan({ goal: `Health check ${args.targetService ?? ''}`.trim(), operationType: 'health_check_only', target: { targetService: args.targetService ?? '', targetDomain: args.targetService ? `${args.targetService}.simorx.com` : '' } });
+            plan.status = 'verifying'; await saveOp(plan);
+            const v = await runVerification(plan); plan.verification = v;
+            const ev = buildEvidence({ type: 'health_check_result', taskId: null, serviceName: args.targetService ?? null, summary: `Voice health check: ${v.detail}`, data: { ...v, operationPlanId: plan.operationPlanId } });
+            await evidenceCol.insertOne(ev); plan.evidenceIds.push(ev.evidenceId); evidenceIds.push(ev.evidenceId);
+            plan.steps = setStep(plan.steps, 'health', v.healthOk ? 'done' : 'failed', v.detail, 'voice-operator-agent', ev.evidenceId);
+            plan.steps = setStep(plan.steps, 'completed', v.healthOk === false ? 'failed' : 'done');
+            plan.status = v.healthOk === false ? 'failed' : 'completed'; await saveOp(plan);
+            linkedOperationPlanId = plan.operationPlanId; resultSummary = `Health check ${plan.status}: ${v.detail}`;
+          } else if (tc.toolName === 'run_learning_analysis') { linkedTaskId = await createKernelTask('Analyze system history and recommend improvements', ['learning', 'voice']); resultSummary = `Learning analysis task ${linkedTaskId} started`; }
+          else if (tc.toolName === 'run_security_check') { linkedTaskId = await createKernelTask('Run production security hardening check.', ['security', 'voice']); resultSummary = `Security check task ${linkedTaskId} started`; }
+          else if (tc.toolName === 'run_research_plan') { linkedTaskId = await createKernelTask(args.goal ?? 'Research current best practices and create an improvement plan.', ['research', 'voice']); resultSummary = `Research task ${linkedTaskId} started`; }
+          else if (tc.toolName === 'sync_dokploy_targets') {
+            if (!dokployClient) resultSummary = 'Dokploy API not configured — manual confirmation remains available.';
+            else { const pr = await dokployClient.listProjects(); resultSummary = pr.ok ? `Synced (${parseDokployTargets(pr.data).length} targets)` : `Dokploy sync failed: ${pr.error}`; if (pr.ok) lastDokploySyncAt = nowIso(); }
+          } else if (tc.toolName === 'run_dokploy_diagnostics') {
+            resultSummary = dokployClient ? `Diagnostics run (${(await buildDiagnostics(dokployClient, '')).length} probes)` : 'Dokploy API not configured.';
+          } else resultSummary = 'No-op';
+          await voiceToolCalls.updateOne({ toolCallId: tc.toolCallId }, { $set: { status: 'executed', resultSummary, evidenceIds } });
+          await writeAudit({ actorType: 'human', actorId: role, role, action: `voice_exec_${tc.toolName}`, targetType: 'voice_tool_call', targetId: tc.toolCallId, after: { resultSummary } });
+          await ctx.publisher.publish({ type: EVENT_TYPES.VOICE_TOOL_EXECUTED, taskId: linkedTaskId, payload: { toolName: tc.toolName, message: resultSummary, level: 'success' } });
+          return success({ executed: true, resultSummary, evidenceIds, linkedTaskId, linkedOperationPlanId });
+        } catch (e) {
+          await voiceToolCalls.updateOne({ toolCallId: tc.toolCallId }, { $set: { status: 'failed', resultSummary: e instanceof Error ? e.message : 'failed' } });
+          return reply.code(500).send(failure(ERROR_CODES.INTERNAL, 'voice tool execution failed'));
+        }
+      });
+
+      // Decide a voice permission. Gated actions create an operation plan to approve on Overview (visible UI) — never voice-only critical execution.
+      app.post<{ Params: { id: string }; Body: { action: string } }>('/v1/voice/permission/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await enforce('decideOperation', req, reply)) return reply;
+        const perm = await voicePermissions.findOne({ permissionId: req.params.id });
+        if (!perm) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'permission not found'));
+        const role = declaredRole(req);
+        const action = req.body?.action ?? '';
+        if (perm.ownerOnly && action === 'approve' && role !== 'owner') {
+          await writeSecEvent({ eventType: EVENT_TYPES.RBAC_DENIED, actorId: role, role, ip: clientIp(req), userAgent: userAgent(req), target: perm.permissionId, result: 'denied', riskLevel: 'high', detail: 'voice permission requires owner' });
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, 'this action requires OWNER approval on the Overview UI'));
+        }
+        const tc = await voiceToolCalls.findOne({ toolCallId: perm.toolCallId });
+        if (action !== 'approve') {
+          await voicePermissions.updateOne({ permissionId: perm.permissionId }, { $set: { status: 'rejected', approvedBy: role, decidedAt: nowIso() } });
+          if (tc) await voiceToolCalls.updateOne({ toolCallId: tc.toolCallId }, { $set: { status: 'rejected' } });
+          return success({ status: 'rejected' });
+        }
+        // Approve → create the operation plan and hand off to the Overview UI (no direct critical execution by voice).
+        let operationPlanId: string | null = null;
+        if (tc && tc.toolName === 'create_operation_plan') {
+          const a = tc.proposedArgs as { operationType?: string; targetService?: string };
+          const plan = buildOperationPlan({ goal: tc.proposedArgs.goal as string ?? `Operation on ${a.targetService}`, operationType: (a.operationType as 'existing_app_restart') ?? 'existing_app_restart', target: { targetService: a.targetService ?? '' } });
+          await saveOp(plan); operationPlanId = plan.operationPlanId;
+        }
+        await voicePermissions.updateOne({ permissionId: perm.permissionId }, { $set: { status: 'approved', approvedBy: role, decidedAt: nowIso() } });
+        await writeAudit({ actorType: 'human', actorId: role, role, action: 'voice_permission_approved', targetType: 'voice_permission', targetId: perm.permissionId, after: { operationPlanId } });
+        await ctx.publisher.publish({ type: EVENT_TYPES.VOICE_PERMISSION_DECIDED, taskId: null, payload: { permissionId: perm.permissionId, status: 'approved', operationPlanId, message: 'Voice approval → review and execute on Overview' } });
+        return success({ status: 'approved', operationPlanId, message: 'An operation plan was created — review the risk and approve it on the Overview to execute.' });
       });
 
       // --- System status --------------------------------------------------

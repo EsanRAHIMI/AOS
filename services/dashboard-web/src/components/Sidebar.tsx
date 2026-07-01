@@ -5,7 +5,7 @@ import { logoutAction } from '@/app/login/actions';
 
 /** Grouped navigation for the glass control-room sidebar. */
 const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
-  { title: 'Get started', items: [['/', 'Overview'], ['/start', 'Start guide'], ['/system-map', 'System map'], ['/readiness', 'Readiness']] },
+  { title: 'Get started', items: [['/', 'Overview'], ['/start', 'Start guide'], ['/voice', 'Voice Operator'], ['/system-map', 'System map'], ['/readiness', 'Readiness']] },
   { title: 'Operate', items: [['/tasks', 'Tasks'], ['/start/actions', 'Action templates'], ['/agents', 'Agents'], ['/services', 'Services'], ['/approvals', 'Approvals'], ['/infrastructure', 'Infrastructure']] },
   { title: 'Build', items: [['/capabilities', 'Capabilities'], ['/gaps', 'Missing Capabilities'], ['/expansion-proposals', 'Expansions'], ['/evaluations', 'Evaluations'], ['/skills', 'Skills']] },
   { title: 'Reality', items: [['/validations', 'Validations'], ['/github', 'GitHub'], ['/evidence/explorer', 'Proof & Evidence'], ['/deployment/checklists', 'Checklists'], ['/activations', 'Live Activation']] },

@@ -29,6 +29,7 @@ export const SERVICE_IDS = {
   FILE_ASSET_SERVICE: 'file-asset-service',
   INTERNET_RESEARCH_SERVICE: 'internet-research-service',
   BROWSER_TESTING_AGENT: 'browser-testing-agent',
+  VOICE_OPERATOR_AGENT: 'voice-operator-agent',
 } as const;
 
 export type ServiceId = (typeof SERVICE_IDS)[keyof typeof SERVICE_IDS];
@@ -56,6 +57,7 @@ export const SERVICE_PORTS: Record<ServiceId, number> = {
   'report-agent': 4114,
   'internet-research-service': 4115,
   'browser-testing-agent': 4116,
+  'voice-operator-agent': 4121,
 };
 
 /** Production subdomain per service. Derived from ROOT_DOMAIN. */
@@ -77,6 +79,7 @@ export const SERVICE_SUBDOMAINS: Record<ServiceId, string> = {
   'file-asset-service': `assets.${ROOT_DOMAIN}`,
   'internet-research-service': `research.${ROOT_DOMAIN}`,
   'browser-testing-agent': `browser-testing.${ROOT_DOMAIN}`,
+  'voice-operator-agent': `voice.${ROOT_DOMAIN}`,
 };
 
 /** Classifies a service for the registry and dashboard. */
@@ -195,6 +198,13 @@ export const COLLECTIONS = {
   DEPLOYMENT_SNAPSHOTS: 'deployment_snapshots',
   // Phase 17 — Dokploy Calibration
   DOKPLOY_API_DIAGNOSTICS: 'dokploy_api_diagnostics',
+  // Phase 18 — Realtime Voice Operator
+  VOICE_SESSIONS: 'voice_sessions',
+  VOICE_MESSAGES: 'voice_messages',
+  VOICE_TOOL_CALLS: 'voice_tool_calls',
+  VOICE_PERMISSIONS: 'voice_permissions',
+  VOICE_MEMORIES: 'voice_memories',
+  VOICE_LEARNING_EVENTS: 'voice_learning_events',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -304,6 +314,13 @@ export const EVENT_TYPES = {
   OPERATION_EXECUTED: 'ops.operation.executed',
   OPERATION_VERIFIED: 'ops.operation.verified',
   OPERATION_COMPLETED: 'ops.operation.completed',
+  // Phase 18 — Realtime Voice Operator
+  VOICE_SESSION_STARTED: 'voice.session.started',
+  VOICE_TOOL_PROPOSED: 'voice.tool.proposed',
+  VOICE_TOOL_EXECUTED: 'voice.tool.executed',
+  VOICE_PERMISSION_REQUESTED: 'voice.permission.requested',
+  VOICE_PERMISSION_DECIDED: 'voice.permission.decided',
+  VOICE_LEARNED: 'voice.learned',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

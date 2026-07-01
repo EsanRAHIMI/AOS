@@ -200,10 +200,19 @@ Phase 10 candidates:
 6. Protected core unchanged (critical/owner-only/non-auto/safe-mode-blocked); manual fallback kept — DONE.
 7. All typecheck + dashboard build; 10/10 calibration smoke; no fake data/success; no Docker — DONE.
 
-Phase 18 candidates:
-8. Point diagnostics at the live Dokploy and adjust any path/parser deltas surfaced by responseShape.
+## Phase 18 — Realtime Voice Operator Agent — DONE
+1. voice-operator-agent service (4121) — realtime ephemeral token, explanation, memory/learning — DONE.
+2. Voice schemas/collections + deterministic tool-mediation router + 10 anti-mistake guardrails — DONE.
+3. Gateway voice endpoints (context/session/message/tool-confirm/permission) under RBAC + safe mode — DONE.
+4. Floating VoiceOperatorDock on every page; text + browser STT/TTS; provider optional; overview stays surface — DONE.
+5. /voice, /voice/settings, /voice/sessions; voice approvals + tool calls audited/evidenced — DONE.
+6. All 18 services typecheck + dashboard build; 15/15 voice-router smoke (A–D + guardrails + learning) — DONE.
+
+Phase 19 candidates:
+7. Wire the realtime WebRTC client UI end-to-end once a voice provider is configured.
+8. Point Dokploy diagnostics at the live instance and adjust any path/parser deltas.
 9. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
-10. Real web-fetch for the research service; real timer-driven scheduler.
+10. Real web-fetch for research; real timer-driven scheduler.
 11. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
 12. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette.
 

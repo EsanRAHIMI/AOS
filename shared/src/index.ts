@@ -53,3 +53,5 @@ export * from './intelligence/index.js';
 export * from './operations/index.js';
 // Phase 16 — Real Dokploy API Execution
 export * from './dokploy/index.js';
+// Phase 18 — Realtime Voice Operator
+export * from './voice/index.js';

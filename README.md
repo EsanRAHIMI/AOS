@@ -56,6 +56,7 @@ No local Docker required. Containers are created later via Dokploy.
 4. `docs/service-communication-protocol.md` — how services talk
 5. `docs/decision-log.md` — why things are the way they are
 6. `docs/roadmap.md` + `docs/phase-log.md` — what's done and what's next
+pnpm dev:all 
 
 ## Status
 **Phase 1 foundation complete** — see `docs/phase-log.md`.
