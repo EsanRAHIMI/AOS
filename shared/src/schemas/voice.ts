@@ -29,6 +29,14 @@ export const VoiceSessionSchema = z.object({
   model: z.string().default(''),
   costUsd: z.number().default(0),
   transcriptSummary: z.string().default(''),
+  // Phase 19 — realtime WebRTC session tracking (all optional-with-defaults for
+  // backward compatibility; never contains secrets or raw SDP).
+  connectionMode: z.enum(['text', 'browser_speech', 'realtime']).default('text'),
+  durationSec: z.number().default(0),
+  fallbackReason: z.string().default(''),
+  errorSummary: z.string().default(''),
+  toolCallCount: z.number().default(0),
+  interactionMode: z.enum(['push_to_talk', 'always_listening']).default('push_to_talk'),
 });
 export type VoiceSession = z.infer<typeof VoiceSessionSchema>;
 

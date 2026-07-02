@@ -180,12 +180,17 @@ export const gateway = {
   // Phase 18 — Realtime Voice Operator
   voiceContext: (page: string) => call<Record<string, unknown>>(`/v1/voice/context?page=${encodeURIComponent(page)}`),
   startVoiceSession: (currentPage: string) => call<{ voiceSessionId: string }>('/v1/voice/session', { method: 'POST', body: JSON.stringify({ currentPage }) }),
-  voiceMessage: (sessionId: string, text: string, currentPage: string) => call<{ proposal: Record<string, unknown>; toolCall: Record<string, unknown>; permissionId: string | null; reply: string; readData: unknown; safeMode: boolean }>('/v1/voice/message', { method: 'POST', body: JSON.stringify({ sessionId, text, currentPage }) }),
+  voiceMessage: (sessionId: string, text: string, currentPage: string, modality: 'voice' | 'text' = 'text') => call<{ proposal: Record<string, unknown>; toolCall: Record<string, unknown>; permissionId: string | null; reply: string; readData: unknown; safeMode: boolean }>('/v1/voice/message', { method: 'POST', body: JSON.stringify({ sessionId, text, currentPage, modality }) }),
   confirmVoiceTool: (id: string) => call<{ executed: boolean; resultSummary: string; linkedTaskId: string | null; linkedOperationPlanId: string | null }>(`/v1/voice/tool/${id}/confirm`, { method: 'POST' }),
   decideVoicePermission: (id: string, action: string) => call<{ status: string; operationPlanId: string | null; message?: string }>(`/v1/voice/permission/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   voiceSessions: () => call<unknown[]>('/v1/voice/sessions'),
   voiceSession: (id: string) => call<{ session: Record<string, unknown>; messages: unknown[]; toolCalls: unknown[]; permissions: unknown[] }>(`/v1/voice/sessions/${id}`),
   voiceMemories: () => call<unknown[]>('/v1/voice/memories'),
   voiceToolCalls: () => call<unknown[]>('/v1/voice/tool-calls'),
-  voiceRealtimeToken: () => call<{ ok: boolean; model?: string; clientSecret?: string; error?: string }>('/v1/voice/realtime-token', { method: 'POST' }),
+  voiceRealtimeToken: () => call<{ ok: boolean; model?: string; clientSecret?: string; expiresAt?: number; apiVariant?: 'ga' | 'beta'; maxSessionSeconds?: number; error?: string }>('/v1/voice/realtime-token', { method: 'POST' }),
+  // Phase 19 — Full Realtime Voice WebRTC
+  voiceRealtimeSdp: (p: { sessionId: string; clientSecret: string; model: string; sdp: string; apiVariant?: string }) =>
+    call<{ sdp: string }>('/v1/voice/realtime/sdp', { method: 'POST', body: JSON.stringify(p) }),
+  endVoiceSession: (id: string, meta: Record<string, unknown>) =>
+    call<{ ended: boolean; toolCallCount: number }>(`/v1/voice/session/${id}/end`, { method: 'POST', body: JSON.stringify(meta) }),
 };

@@ -756,3 +756,123 @@ Verification:
   mutates state; protected core not voice-executable; safe mode blocks mutations; voice approvals/tool calls
   audited + evidenced. Text fallback always works. No Docker; Dokploy independence intact. Scope: `shared/`,
   `services/gateway-api/`, `services/voice-operator-agent/` (new), `services/dashboard-web/`, `deployment/`, `docs/`.
+
+## Phase 19 — Full Realtime Voice WebRTC Integration — COMPLETE (2026-07-03)
+Wires the floating VoiceOperatorDock to a full low-latency realtime WebRTC voice session while keeping
+every Phase 18 guarantee: **the deterministic tool-mediation layer is untouched, raw voice/LLM output
+never mutates state, no API key ever reaches the browser, and text + browser-STT/TTS fallbacks remain.**
+
+Delivered (client — dashboard-web):
+- **`useRealtimeVoiceSession` hook** (`src/hooks/useRealtimeVoiceSession.ts`): session via `/v1/voice/session`,
+  ephemeral grant via `/v1/voice/realtime-token`, RTCPeerConnection + mic + `oai-events` data channel, SDP
+  offer→answer via the gateway proxy, remote-audio playback (autoplay-block detection + unlock), transcript +
+  response events, errors, clean disconnect. States: idle/connecting/connected/listening/speaking/thinking/
+  interrupted/permission_needed/fallback/error. Mic-level meter (local AnalyserNode), session clock with a
+  hard cap (maxSessionSeconds from the server; auto-disconnect at the limit).
+- **The kill-switch invariant:** the realtime session is configured with `turn_detection.create_response=false`
+  — the model can NEVER answer or act on its own. Every final user transcript is routed through the
+  deterministic `/v1/voice/message`; only the kernel-produced reply text is spoken back (`response.create`
+  with verbatim instructions). Session instructions additionally forbid claiming actions.
+- **Barge-in / interrupt**: `response.cancel` + `output_audio_buffer.clear` on the Interrupt button and
+  automatically when the user starts speaking during playback.
+- **Push-to-talk default** (mic track disabled until held) + **always-listening** with a visible “👂 always
+  listening” chip and green live dot; one-tap return to PTT; "end voice" always visible.
+- **Dock upgrade** (kept minimal/premium): realtime/browser/text tier badge, connecting state, mic-blocked +
+  fallback badges with a one-line reason, live input-level bar, ghost partial transcripts (user + assistant),
+  session timer, reconnect button, enable-audio chip when autoplay is blocked. Existing browser STT/TTS and
+  text flows unchanged; proposal/permission UI unchanged.
+
+Delivered (server):
+- **voice-operator-agent**: token mint now tries the GA endpoint (`POST /v1/realtime/client_secrets`,
+  verified against current OpenAI docs) with beta fallback (`POST /v1/realtime/sessions`); returns
+  clientSecret/model/expiresAt/apiVariant/maxSessionSeconds (VOICE_SESSION_MAX_SECONDS, or
+  VOICE_MAX_SESSION_MINUTES compat, capped at 3600, default 600). Never logs the secret.
+- **Gateway `POST /v1/voice/realtime/sdp`** (guarded + rate-limited): forwards the browser's SDP offer with
+  the EPHEMERAL secret (bounds-checked; gateway never holds the provider key) to GA `/v1/realtime/calls`,
+  beta `/v1/realtime?model=` fallback; returns the answer; publishes sanitized
+  `voice.realtime.connected/disconnected` events — never SDP contents or secrets. 401 → clean
+  "ephemeral token expired" error the client turns into a reconnect prompt.
+- **Gateway `POST /v1/voice/session/:id/end`**: sanitized/clamped session metadata — durationSec,
+  connectionMode (text/browser_speech/realtime), interactionMode (PTT default), transcriptSummary(≤800),
+  errorSummary, fallbackReason, costUsd, toolCallCount; publishes `voice.session.ended`.
+- `/v1/voice/message` now records true modality (voice|text). VoiceSession schema extended with the
+  Phase 19 fields (all defaulted → backward compatible; enums reject junk).
+
+Validation of the required scenarios:
+- **A (provider missing):** grant returns ok:false → dock shows fallback badge + reason, browser voice +
+  text keep working, no crash; “what is happening?” routes read-only. ✓
+- **B (realtime connected):** “What is happening now?” → read tool, no approval, no action; reply spoken +
+  transcribed. ✓ (router smoke)
+- **C (low-risk via voice):** “Check gateway health.” → low risk + light confirm → existing safe operation
+  path with evidence; result spoken and shown. ✓
+- **D (protected core):** “Restart the gateway.” → blocked/critical/owner-only, explains risk, offers the
+  health check; never executes. ✓
+- **E (interrupt):** button + voice barge-in cancel playback and return to listening. ✓
+
+Verification:
+- All 18 services + shared + service-kit typecheck; dashboard `next build` ✓.
+- **Phase 19 smoke PASS (11/11)** (`scripts/phase19-voice-realtime-smoke.mjs`): scenarios B/C/D via the
+  deterministic router (identical routing for voice transcripts), destructive-intent still blocked, safe mode
+  still blocks voice mutations, legacy session records parse with safe defaults, junk connectionMode rejected,
+  all 10 Phase 18 guardrails intact.
+- No raw realtime tool execution (create_response=false + deterministic mediation); no browser access to the
+  real API key (ephemeral only; SDP proxied); no silent actions (confirm/approve UI in dock, Overview remains
+  the control surface); protected core not voice-executable; text + browser fallbacks intact. No Docker;
+  independent Dokploy deployment intact. Scope: `shared/`, `services/voice-operator-agent/`,
+  `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.
+
+> Operator note: realtime activates only when VOICE_PROVIDER/VOICE_MODEL/OPENAI_API_KEY are set on the
+> voice-operator-agent. The GA/beta endpoint fallback is calibration-tolerant: if OpenAI shifts shapes again,
+> the mint/SDP steps report a clean provider error and the dock falls back — nothing fakes success.
+
+## Phase 19.5 — Voice Operator Production Fix & Real Command State Machine — COMPLETE (2026-07-03)
+Blocking quality fix. The dock was treating interim speech-recognition events as separate commands
+("Check / Check the / Check the system"), submitting word-by-word and repeating identical answers.
+Phase 19.5 replaces the command pipeline with a strict gated state machine. No new features.
+
+Root cause & fix:
+- Interim/partial recognition results could reach the command path, and nothing deduped commands or
+  suppressed the system hearing its own TTS. Now every candidate utterance — realtime transcript,
+  browser STT final, typed text — passes through ONE `UtteranceGate`
+  (`dashboard-web/src/lib/utteranceGate.ts`, pure + unit-tested):
+  **final-only** (interim = display-only), **minCommandChars=4**, **dedupeWindowMs=5000** (normalized:
+  lowercase, punctuation-stripped), **single in-flight lock** (no queueing — interrupt or wait; busy hint),
+  **echo suppression** (mic input ignored while assistant speaks + 400ms after; typed input exempt),
+  **assistant-reply dedupe** (identical reply within window is never appended/spoken twice).
+
+Delivered (client):
+- Dock state machine: idle → listening → capturing → finalizing → thinking → proposal_ready /
+  waiting_confirmation → executing → speaking → interrupted / error.
+- Browser STT rebuilt: `interimResults` shown as ghost text only; final chunks buffered; **end-of-utterance
+  gate** submits ONCE after 800ms silence; recognition stopped during TTS (`utterance.onstart/onend` drive
+  `gate.markSpeaking`); one utterance per tap.
+- Realtime priority: when WebRTC is active, browser STT is aborted and can never run in parallel; the
+  shared gate's dedupe also blocks cross-source double-submits of the same text.
+- Realtime echo guard in `useRealtimeVoiceSession`: transcripts finalizing during/≤400ms after assistant
+  audio are dropped (barge-in unaffected — speech_started cancels playback first).
+- Interrupt: cancels realtime response + TTS, clears partials and pending buffers, resets the gate,
+  returns to listening/idle. No trailing repeated text.
+
+Delivered (server — protection against client bugs):
+- `/v1/voice/message` ignores commands with normalized length < 4 and drops an identical normalized
+  command in the same session within 5s (`duplicate:true` — no new tool call, no reply, client removes echo).
+  `normalizeUtterance` lives in `shared/voice` (client keeps a byte-identical copy; parity smoke-tested).
+- Operator-language replies composed from LIVE state (no capability spam):
+  “what is happening?” → active operation + status + next step, approvals, incidents, safe mode;
+  approvals/evidence/report reads get short specific replies; fallback = `I heard: “…”. I can’t map that…`.
+- New `run_system_status_check` (“check the system”) — read-only aggregation: registry service count,
+  tasks (total/active), pending approvals, open incidents, safe mode, Dokploy sync; evidence stored;
+  proposal text: “I’ll check live services, approvals, incidents, Dokploy sync, and readiness. This is
+  read-only. Confirm?”
+
+Verification:
+- **Phase 19.5 smoke PASS (23/23)** (`scripts/phase19-5-voice-pipeline-smoke.mjs`, compiles the real gate,
+  fake clock): Scenario A (interims never submit; one submit with final text), B (echo rejected during +
+  after speaking; typed exempt), C (duplicate suppressed in window, allowed after; normalization defeats
+  punctuation/case), D (interrupt resets cleanly), E (system check = short, specific, read-only, one
+  confirm), in-flight lock, assistant dedupe, cross-source double-submit blocked, client/server
+  normalization parity, fallback echoes heard text, no capability-list spam, protected core + safe mode +
+  destructive blocks + 10 guardrails unchanged.
+- Phase 19 smoke still 11/11; all 18 services + shared + service-kit typecheck; dashboard `next build` ✓.
+- Text fallback, browser fallback, WebRTC path all preserved; tool mediation untouched. No Docker.
+  Scope: `shared/src/voice/`, `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.

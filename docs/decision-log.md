@@ -2,6 +2,31 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-03 — Phase 19.5 voice command pipeline fix
+
+### D-080 One gate for every utterance source, mirrored server-side
+All voice/text input funnels through a single client `UtteranceGate` (final-only, min length, normalized
+5s dedupe, single in-flight lock, echo suppression) — and the gateway independently enforces min length +
+dedupe on `/v1/voice/message`. Client and server share one normalization function (parity smoke-tested),
+so a buggy or malicious client still cannot produce word-by-word or duplicate command execution. Echo
+suppression applies to voice only; typing while the assistant speaks is a legitimate command and cuts audio.
+
+## 2026-07-03 — Phase 19 full realtime voice WebRTC
+
+### D-079 Realtime model muted by design: `create_response=false` + kernel-grounded speech
+The WebRTC session is configured so the provider model can never respond on its own. Every final user
+transcript goes through the deterministic `/v1/voice/message` router; the model only vocalizes the exact
+kernel-produced reply (`response.create` with verbatim instructions). This makes the safety property
+structural — even a hallucinating realtime model can neither act nor claim it acted, because it is never
+given autonomy, tools, or unmediated turns.
+
+### D-078 SDP exchange proxied through the gateway with the ephemeral secret only
+OpenAI supports direct browser SDP with the ephemeral token, but we route the offer through
+`POST /v1/voice/realtime/sdp` anyway: one audited path, sanitized `voice.realtime.*` events (never SDP
+bodies or secrets), bounds checks preventing a long-lived key from transiting disguised as an ephemeral
+secret, and GA (`/v1/realtime/calls`) → beta (`/v1/realtime?model=`) endpoint tolerance in one place.
+The gateway never holds the provider API key — minting stays in the voice-operator-agent.
+
 ## 2026-06-27 — Phase 18 realtime voice operator
 
 ### D-077 Voice never mutates directly — deterministic tool-mediation router

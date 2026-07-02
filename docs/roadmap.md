@@ -208,13 +208,31 @@ Phase 10 candidates:
 5. /voice, /voice/settings, /voice/sessions; voice approvals + tool calls audited/evidenced — DONE.
 6. All 18 services typecheck + dashboard build; 15/15 voice-router smoke (A–D + guardrails + learning) — DONE.
 
-Phase 19 candidates:
-7. Wire the realtime WebRTC client UI end-to-end once a voice provider is configured.
+## Phase 19 — Full Realtime Voice WebRTC Integration — DONE
+1. `useRealtimeVoiceSession` hook: token → RTCPeerConnection → mic → data channel → SDP → remote audio — DONE.
+2. GA token mint (`/v1/realtime/client_secrets`) + beta fallback; gateway SDP proxy `/v1/voice/realtime/sdp` — DONE.
+3. `create_response=false` + deterministic `/v1/voice/message` mediation — raw model output never acts — DONE.
+4. Barge-in/interrupt, push-to-talk default, visible always-listening, mic level, timer, reconnect — DONE.
+5. All fallbacks intact (provider missing → browser voice → text); mic/autoplay/expired-token handling — DONE.
+6. Session-end tracking (duration/mode/errors/fallback/toolCalls) + sanitized realtime events — DONE.
+7. All services typecheck + dashboard build; 11/11 Phase 19 smoke; no Docker; Dokploy independence — DONE.
+
+## Phase 19.5 — Voice Operator Production Fix & Real Command State Machine — DONE
+1. UtteranceGate: final-only, min 4 chars, 5s dedupe, in-flight lock, echo suppression, reply dedupe — DONE.
+2. Dock state machine (11 states) + end-of-utterance silence gate (800ms) for browser STT — DONE.
+3. Realtime priority (browser STT never parallel) + realtime transcript echo guard — DONE.
+4. Gateway dedupe/min-length on /v1/voice/message (protects against client bugs) — DONE.
+5. Operator-language replies from live state; `run_system_status_check`; no capability spam — DONE.
+6. Interrupt cancels audio/TTS/pending output and resets the gate cleanly — DONE.
+7. 23/23 pipeline smoke + 11/11 Phase 19 smoke; all typechecks; dashboard build — DONE.
+
+Phase 20 candidates:
 8. Point Dokploy diagnostics at the live instance and adjust any path/parser deltas.
 9. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
 10. Real web-fetch for research; real timer-driven scheduler.
 11. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
 12. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette.
+13. Realtime voice cost records from provider usage events into cost_records.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

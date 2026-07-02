@@ -321,6 +321,10 @@ export const EVENT_TYPES = {
   VOICE_PERMISSION_REQUESTED: 'voice.permission.requested',
   VOICE_PERMISSION_DECIDED: 'voice.permission.decided',
   VOICE_LEARNED: 'voice.learned',
+  // Phase 19 — Full Realtime Voice WebRTC
+  VOICE_REALTIME_CONNECTED: 'voice.realtime.connected',
+  VOICE_REALTIME_DISCONNECTED: 'voice.realtime.disconnected',
+  VOICE_SESSION_ENDED: 'voice.session.ended',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

@@ -11,7 +11,7 @@ export default async function VoiceSettingsPage() {
     <>
       <PageHeader title="Voice Settings" subtitle="Realtime voice provider status and the operator's learned preferences. No API keys are ever exposed here." />
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <MetricCard label="Realtime voice" value={realtime ? 'connected' : 'text + browser'} tone={realtime ? 'ok' : 'warn'} hint={realtime ? token?.model ?? 'provider configured' : token?.error ?? 'provider not configured'} />
+        <MetricCard label="Realtime voice" value={realtime ? 'ready (WebRTC)' : 'text + browser'} tone={realtime ? 'ok' : 'warn'} hint={realtime ? `${token?.model ?? 'provider configured'} · ${token?.apiVariant ?? 'ga'} API · max ${token?.maxSessionSeconds ?? 600}s/session` : token?.error ?? 'provider not configured'} />
         <MetricCard label="Text fallback" value="always on" tone="ok" />
         <MetricCard label="Browser voice" value="STT + TTS" hint="native, no key" />
         <MetricCard label="Learned memories" value={mems.length} />
