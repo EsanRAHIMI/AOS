@@ -193,4 +193,13 @@ export const gateway = {
     call<{ sdp: string }>('/v1/voice/realtime/sdp', { method: 'POST', body: JSON.stringify(p) }),
   endVoiceSession: (id: string, meta: Record<string, unknown>) =>
     call<{ ended: boolean; toolCallCount: number }>(`/v1/voice/session/${id}/end`, { method: 'POST', body: JSON.stringify(meta) }),
+  // Phase X — Autonomous Operator Runtime
+  operatorTools: () => call<Array<Record<string, unknown>>>('/v1/operator/tools'),
+  operatorCapabilities: () => call<{ spoken: string; groups: Array<Record<string, unknown>> }>('/v1/operator/capabilities'),
+  operatorCommand: (text: string) => call<Record<string, unknown>>('/v1/operator/command', { method: 'POST', body: JSON.stringify({ text }) }),
+  operatorSessions: () => call<Array<Record<string, unknown>>>('/v1/operator/sessions'),
+  operatorActiveSession: () => call<Record<string, unknown> | null>('/v1/operator/sessions/active'),
+  operatorSession: (id: string) => call<{ session: Record<string, unknown>; steps: unknown[]; toolRuns: unknown[]; permissions: Array<Record<string, unknown>> }>(`/v1/operator/sessions/${id}`),
+  decideOperatorPermission: (id: string, action: string) => call<{ decided: string; session: Record<string, unknown> }>(`/v1/operator/permissions/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  operatorMemories: () => call<Array<Record<string, unknown>>>('/v1/operator/memories'),
 };

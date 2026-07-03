@@ -30,6 +30,7 @@ export const SERVICE_IDS = {
   INTERNET_RESEARCH_SERVICE: 'internet-research-service',
   BROWSER_TESTING_AGENT: 'browser-testing-agent',
   VOICE_OPERATOR_AGENT: 'voice-operator-agent',
+  CODE_OPERATOR_AGENT: 'code-operator-agent',
 } as const;
 
 export type ServiceId = (typeof SERVICE_IDS)[keyof typeof SERVICE_IDS];
@@ -58,6 +59,7 @@ export const SERVICE_PORTS: Record<ServiceId, number> = {
   'internet-research-service': 4115,
   'browser-testing-agent': 4116,
   'voice-operator-agent': 4121,
+  'code-operator-agent': 4122,
 };
 
 /** Production subdomain per service. Derived from ROOT_DOMAIN. */
@@ -80,6 +82,7 @@ export const SERVICE_SUBDOMAINS: Record<ServiceId, string> = {
   'internet-research-service': `research.${ROOT_DOMAIN}`,
   'browser-testing-agent': `browser-testing.${ROOT_DOMAIN}`,
   'voice-operator-agent': `voice.${ROOT_DOMAIN}`,
+  'code-operator-agent': `code.${ROOT_DOMAIN}`,
 };
 
 /** Classifies a service for the registry and dashboard. */
@@ -205,6 +208,14 @@ export const COLLECTIONS = {
   VOICE_PERMISSIONS: 'voice_permissions',
   VOICE_MEMORIES: 'voice_memories',
   VOICE_LEARNING_EVENTS: 'voice_learning_events',
+  // Phase X — Autonomous Operator Runtime
+  OPERATOR_TOOLS: 'operator_tools',
+  OPERATOR_TOOL_RUNS: 'operator_tool_runs',
+  OPERATOR_TOOL_PERMISSIONS: 'operator_tool_permissions',
+  OPERATOR_RUNTIME_SESSIONS: 'operator_runtime_sessions',
+  OPERATOR_RUNTIME_STEPS: 'operator_runtime_steps',
+  OPERATOR_RUNTIME_MEMORIES: 'operator_runtime_memories',
+  OPERATOR_CAPABILITY_INDEX: 'operator_capability_index',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -325,6 +336,14 @@ export const EVENT_TYPES = {
   VOICE_REALTIME_CONNECTED: 'voice.realtime.connected',
   VOICE_REALTIME_DISCONNECTED: 'voice.realtime.disconnected',
   VOICE_SESSION_ENDED: 'voice.session.ended',
+  // Phase X — Autonomous Operator Runtime
+  OPERATOR_SESSION_STARTED: 'operator.session.started',
+  OPERATOR_STEP_COMPLETED: 'operator.step.completed',
+  OPERATOR_TOOL_EXECUTED: 'operator.tool.executed',
+  OPERATOR_TOOL_FAILED: 'operator.tool.failed',
+  OPERATOR_APPROVAL_REQUESTED: 'operator.approval.requested',
+  OPERATOR_SESSION_COMPLETED: 'operator.session.completed',
+  OPERATOR_MEMORY_WRITTEN: 'operator.memory.written',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

@@ -12,7 +12,7 @@ import { timeAgo } from '@/lib/format';
 export const dynamic = 'force-dynamic';
 
 export default async function OverviewPage() {
-  const [session, status, services, approvals, tasks, reliability, safe] = await Promise.all([
+  const [session, status, services, approvals, tasks, reliability, safe, operatorSession] = await Promise.all([
     getSession(),
     gateway.systemStatus(),
     gateway.services() as Promise<Array<Record<string, unknown>> | null>,
@@ -20,6 +20,7 @@ export default async function OverviewPage() {
     gateway.tasks() as Promise<Array<Record<string, unknown>> | null>,
     gateway.reliability() as Promise<Array<Record<string, unknown>> | null>,
     gateway.safeMode(),
+    gateway.operatorActiveSession(),
   ]);
   const svc = services ?? [];
   const appr = approvals ?? [];
@@ -34,6 +35,20 @@ export default async function OverviewPage() {
         subtitle="Start, monitor, approve, verify and understand real operations — all from here. Other pages are archives; the main journey stays on this page."
         actions={<Link href="/start" className="btn btn-ghost">New here? Start guide</Link>}
       />
+
+      {operatorSession ? (
+        <div className="card" style={{ marginBottom: 16, border: '1px solid var(--border-2)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <div className="label">Operator runtime — active session</div>
+            <StatusPill status={String(operatorSession.status ?? '')} />
+          </div>
+          <div style={{ fontSize: 13, marginBottom: 6 }}><span className="m">GOAL&nbsp;&nbsp;</span>{String(operatorSession.goal ?? '')}</div>
+          <div className="m" style={{ fontSize: 12 }}>
+            Step {Number(operatorSession.currentStep ?? 0) + 1} of {((operatorSession.plan as unknown[]) ?? []).length}
+            {operatorSession.nextAction ? <> — next: {String(operatorSession.nextAction)}</> : null}. Open the Operator Console (bottom right) to follow or approve.
+          </div>
+        </div>
+      ) : null}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="label" style={{ marginBottom: 10 }}>Command — start a real operation</div>

@@ -13,7 +13,7 @@ MONITOR_AGENT_URL=http://localhost:4113
 BROWSER_TESTING_AGENT_URL=http://localhost:4116
 FILE_ASSET_SERVICE_URL=http://localhost:4112`;
 
-/** Deploy / dev:start order (matches README-SETUP.md sections 1–13). */
+/** Deploy / dev:start order (matches README-SETUP.md sections 1–14). */
 export const LOCAL_SERVICES = [
   {
     num: 1,
@@ -149,6 +149,17 @@ export const LOCAL_SERVICES = [
   },
   {
     num: 13,
+    dir: 'code-operator-agent',
+    id: 'code-operator-agent',
+    name: 'Code Operator Agent',
+    port: 4122,
+    pkg: '@factory/code-operator-agent',
+    alias: 'code',
+    color: 'yellowBright',
+    extra: '',
+  },
+  {
+    num: 14,
     dir: 'dashboard-web',
     id: 'dashboard-web',
     name: 'Dashboard Web',

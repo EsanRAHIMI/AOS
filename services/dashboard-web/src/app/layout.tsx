@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/Sidebar';
 import { MobileTopBar, MobileTabBar } from '@/components/MobileChrome';
 import { SafeModeBanner } from '@/components/SafeModeBanner';
-import { VoiceOperatorDock } from '@/components/VoiceOperatorDock';
+import { OperatorConsole } from '@/components/OperatorConsole';
 import { getSession } from '@/lib/auth';
 import { gateway } from '@/lib/gateway';
 
@@ -57,7 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </main>
         </div>
         <MobileTabBar />
-        <VoiceOperatorDock role={session.role} />
+        <OperatorConsole role={session.role} />
       </body>
     </html>
   );

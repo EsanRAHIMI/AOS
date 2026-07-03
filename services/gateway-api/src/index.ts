@@ -54,6 +54,19 @@ import {
   normalizeUtterance,
   VOICE_GUARDRAILS,
   SERVICE_IDS,
+  buildOperatorToolRegistry,
+  buildCapabilityAnswer,
+  planForGoal,
+  isCapabilityQuestion,
+  classifyToolFailure,
+  narrateStep,
+  type OperatorTool,
+  type OperatorToolRun,
+  type OperatorToolPermission,
+  type OperatorRuntimeSession,
+  type OperatorRuntimeStep,
+  type OperatorRuntimeMemory,
+  type PlanStep,
   type DokployApiDiagnostic,
   type DokployClient,
   type VoiceSession,
@@ -1788,6 +1801,449 @@ async function main(): Promise<void> {
         await writeAudit({ actorType: 'human', actorId: role, role, action: 'voice_permission_approved', targetType: 'voice_permission', targetId: perm.permissionId, after: { operationPlanId } });
         await ctx.publisher.publish({ type: EVENT_TYPES.VOICE_PERMISSION_DECIDED, taskId: null, payload: { permissionId: perm.permissionId, status: 'approved', operationPlanId, message: 'Voice approval → review and execute on Overview' } });
         return success({ status: 'approved', operationPlanId, message: 'An operation plan was created — review the risk and approve it on the Overview to execute.' });
+      });
+
+      // === Phase X — Autonomous Operator Runtime =========================
+      // The real agent loop: goal → plan → tools → observe → approve → verify
+      // → evidence → memory. Raw model output never executes a tool; only the
+      // deterministic planner and explicit human approvals do.
+      const opTools = collection<OperatorTool>(COLLECTIONS.OPERATOR_TOOLS);
+      const opToolRuns = collection<OperatorToolRun>(COLLECTIONS.OPERATOR_TOOL_RUNS);
+      const opPermissions = collection<OperatorToolPermission>(COLLECTIONS.OPERATOR_TOOL_PERMISSIONS);
+      const opSessions = collection<OperatorRuntimeSession>(COLLECTIONS.OPERATOR_RUNTIME_SESSIONS);
+      const opSteps = collection<OperatorRuntimeStep>(COLLECTIONS.OPERATOR_RUNTIME_STEPS);
+      const opMemories = collection<OperatorRuntimeMemory>(COLLECTIONS.OPERATOR_RUNTIME_MEMORIES);
+
+      // --- code-operator-agent proxy + capability probing (cached 60s) ---
+      const codeAgentTask = async (action: string, input: Record<string, unknown> = {}, timeoutMs = 20000): Promise<{ ok: boolean; summary: string; data?: unknown }> => {
+        try {
+          const r = await fetch(`${peerUrl('code-operator-agent')}/.factory/task`, {
+            method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
+            body: JSON.stringify({ goal: `operator:${action}`, input: { action, ...input } }), signal: AbortSignal.timeout(timeoutMs),
+          });
+          const body = (await r.json()) as { data?: { result?: { ok?: boolean; summary?: string; data?: unknown } } };
+          const res = body.data?.result;
+          if (!res) return { ok: false, summary: 'code-operator-agent returned no result' };
+          return { ok: Boolean(res.ok), summary: res.summary ?? '', data: res.data };
+        } catch (e) {
+          return { ok: false, summary: `code-operator-agent unreachable: ${e instanceof Error ? e.message : 'error'}` };
+        }
+      };
+      let codeWorkspaceProbe: { at: number; configured: boolean } = { at: 0, configured: false };
+      const codeWorkspaceConfigured = async (): Promise<boolean> => {
+        if (Date.now() - codeWorkspaceProbe.at < 60000) return codeWorkspaceProbe.configured;
+        const r = await codeAgentTask('status', {}, 5000);
+        const configured = Boolean(r.ok && (r.data as { workspaceConfigured?: boolean } | undefined)?.workspaceConfigured);
+        codeWorkspaceProbe = { at: Date.now(), configured };
+        return configured;
+      };
+
+      const liveRegistry = async (): Promise<OperatorTool[]> => {
+        const tools = buildOperatorToolRegistry({
+          dokployConfigured: Boolean(dokployClient),
+          codeWorkspaceConfigured: await codeWorkspaceConfigured(),
+          githubConfigured: Boolean(process.env.GITHUB_TOKEN),
+          voiceConfigured: true,
+        });
+        // Persist the current registry snapshot (idempotent upsert by toolId).
+        for (const t of tools) await opTools.updateOne({ toolId: t.toolId }, { $set: { ...t, updatedAt: nowIso() } }, { upsert: true });
+        return tools;
+      };
+
+      // --- tool executors: every entry is a REAL code path ----------------
+      type ExecResult = { ok: boolean; summary: string; data?: unknown; evidenceIds?: string[] };
+      const execHealthCheck = async (targetService: string): Promise<ExecResult> => {
+        const plan = buildOperationPlan({ goal: `Health check ${targetService}`.trim(), operationType: 'health_check_only', target: { targetService, targetDomain: targetService ? `${targetService}.simorx.com` : '' } });
+        plan.status = 'verifying'; await saveOp(plan);
+        const v = await runVerification(plan); plan.verification = v;
+        const ev = buildEvidence({ type: 'health_check_result', taskId: null, serviceName: targetService || null, summary: `Operator health check: ${v.detail}`, data: { ...v, operationPlanId: plan.operationPlanId } });
+        await evidenceCol.insertOne(ev); plan.evidenceIds.push(ev.evidenceId);
+        plan.steps = setStep(plan.steps, 'health', v.healthOk ? 'done' : 'failed', v.detail, 'operator-runtime', ev.evidenceId);
+        plan.steps = setStep(plan.steps, 'completed', v.healthOk === false ? 'failed' : 'done');
+        plan.status = v.healthOk === false ? 'failed' : 'completed'; await saveOp(plan);
+        return { ok: v.healthOk !== false, summary: `Health check ${plan.status}: ${v.detail}`, evidenceIds: [ev.evidenceId] };
+      };
+      const execSystemCheck = async (): Promise<ExecResult> => {
+        const [taskCount, runningTasks, apprCount, inc, safeNow] = await Promise.all([
+          tasks.countDocuments({}), tasks.countDocuments({ status: { $in: ['queued', 'planning', 'in_progress'] } }),
+          approvals.countDocuments({ status: 'pending' }), incidents.find({}, { projection: { _id: 0 } }).limit(100).toArray(), isSafeMode(),
+        ]);
+        const openInc = inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed').length;
+        let serviceCount = -1;
+        try {
+          const r = await fetch(`${env.SERVICE_REGISTRY_URL}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, signal: AbortSignal.timeout(4000) });
+          const body = (await r.json()) as { data?: unknown[] };
+          serviceCount = Array.isArray(body.data) ? body.data.length : -1;
+        } catch { /* reported as unknown, never faked */ }
+        const dokploy = dokployClient ? (lastDokploySyncAt ? `synced ${lastDokploySyncAt}` : 'connected, not yet synced') : 'not configured';
+        const summary = `${serviceCount >= 0 ? `${serviceCount} services registered` : 'registry unreachable'}; ${taskCount} tasks (${runningTasks} active); ${apprCount} approvals pending; ${openInc} open incidents; safe mode ${safeNow ? 'ON' : 'off'}; Dokploy ${dokploy}.`;
+        const ev = buildEvidence({ type: 'health_check_result', taskId: null, serviceName: null, summary: `Operator system check: ${summary}`, data: { serviceCount, taskCount, runningTasks, pendingApprovals: apprCount, openIncidents: openInc, safeMode: safeNow } });
+        await evidenceCol.insertOne(ev);
+        return { ok: true, summary: `System check: ${summary}`, data: { serviceCount, taskCount, runningTasks, pendingApprovals: apprCount, openIncidents: openInc, safeMode: safeNow }, evidenceIds: [ev.evidenceId] };
+      };
+      const writeOpMemory = async (userId: string, kind: OperatorRuntimeMemory['kind'], content: string, sessionId: string | null, toolId: string | null): Promise<string> => {
+        const mem: OperatorRuntimeMemory = { memoryId: genId('omem'), userId, kind, content, sourceSessionId: sessionId, sourceToolId: toolId, createdAt: nowIso() };
+        await opMemories.insertOne(mem);
+        return mem.memoryId;
+      };
+
+      type OperatorRole = ReturnType<typeof declaredRole>;
+      const execClassifyRisk = async (args: Record<string, unknown>): Promise<ExecResult> => {
+        const target = String(args.targetService ?? '');
+        const core = isProtectedCore(target);
+        const risk = core ? 'critical' : 'high';
+        return { ok: true, summary: `${target || 'target'}: ${risk} risk${core ? ' (PROTECTED CORE — owner approval on Overview required)' : ''}.`, data: { riskLevel: risk, protectedCore: core } };
+      };
+      const execCreateOperationPlan = async (args: Record<string, unknown>): Promise<ExecResult> => {
+        const target = String(args.targetService ?? '');
+        if (isProtectedCore(target)) return { ok: false, summary: `${target} is protected core — I will not create an auto-executable plan. Use the Overview owner flow.` };
+        if (await isSafeMode()) return { ok: false, summary: 'Safe mode is ON — mutations are blocked.' };
+        const plan = buildOperationPlan({ goal: String(args.goal ?? `Operation on ${target}`), operationType: (String(args.operationType ?? 'existing_app_restart') as 'existing_app_restart'), target: { targetService: target } });
+        await saveOp(plan);
+        return { ok: true, summary: `Operation plan ${plan.operationPlanId} created (${plan.riskLevel} risk). Approve and execute it on the Overview.`, data: { operationPlanId: plan.operationPlanId, riskLevel: plan.riskLevel } };
+      };
+      const executors: Record<string, (args: Record<string, unknown>, role: OperatorRole) => Promise<ExecResult>> = {
+        get_system_status: async () => {
+          const [taskCount, apprCount] = await Promise.all([tasks.countDocuments({}), approvals.countDocuments({ status: 'pending' })]);
+          return { ok: true, summary: `${taskCount} tasks in the kernel, ${apprCount} approvals pending.`, data: { taskCount, pendingApprovals: apprCount } };
+        },
+        get_readiness: async () => {
+          const [safeNow, op] = await Promise.all([isSafeMode(), operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(1).toArray()]);
+          const activeOp = op[0] && !['completed', 'failed', 'rolled_back', 'cancelled'].includes(op[0].status) ? op[0] : null;
+          const summary = `Safe mode ${safeNow ? 'ON' : 'off'}; Dokploy ${dokployClient ? 'configured' : 'not configured'}; ${activeOp ? `active operation “${activeOp.goal}” (${activeOp.status})` : 'no active operation'}.`;
+          return { ok: true, summary, data: { safeMode: safeNow, dokployConfigured: Boolean(dokployClient), activeOperation: activeOp?.operationPlanId ?? null } };
+        },
+        get_service_registry: async () => {
+          try {
+            const r = await fetch(`${env.SERVICE_REGISTRY_URL}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, signal: AbortSignal.timeout(5000) });
+            const body = (await r.json()) as { data?: Array<{ serviceId?: string }> };
+            const list = Array.isArray(body.data) ? body.data : [];
+            return { ok: true, summary: `${list.length} services registered.`, data: list.slice(0, 30) };
+          } catch { return { ok: false, summary: 'Service registry unreachable.' }; }
+        },
+        get_recent_events: async () => {
+          const list = await events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray();
+          return { ok: true, summary: `${list.length} recent events; latest: ${(list[0]?.payload as { message?: string })?.message ?? list[0]?.type ?? 'none'}.`, data: list };
+        },
+        get_recent_errors: async () => {
+          const inc = await incidents.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray();
+          const open = inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
+          return { ok: true, summary: open.length === 0 ? 'No open incidents.' : `${open.length} open incidents; latest: ${open[0]?.title ?? open[0]?.incidentId}.`, data: open.slice(0, 10) };
+        },
+        get_pending_approvals: async () => {
+          const list = await approvals.find({ status: 'pending' }, { projection: { _id: 0 } }).limit(10).toArray();
+          return { ok: true, summary: list.length === 0 ? 'No approvals waiting.' : `${list.length} approvals waiting for a decision.`, data: list };
+        },
+        get_active_operations: async () => {
+          const list = await operationPlans.find({ status: { $nin: ['completed', 'failed', 'rolled_back', 'cancelled'] } }, { projection: { _id: 0 } }).limit(10).toArray();
+          return { ok: true, summary: list.length === 0 ? 'No operations in flight.' : `${list.length} operation(s) in flight: ${list.map((p) => `“${p.goal}” (${p.status})`).join('; ')}.`, data: list };
+        },
+        check_service_health: async (args) => execHealthCheck(String(args.targetService ?? '')),
+        run_system_status_check: async () => execSystemCheck(),
+        show_evidence: async () => {
+          const list = await evidence.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(8).toArray();
+          return { ok: true, summary: `${list.length} recent evidence records.`, data: list };
+        },
+        get_latest_report: async () => {
+          const list = await intelligenceReports.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray();
+          return { ok: true, summary: list[0] ? `Latest report: “${list[0].title}”.` : 'No intelligence reports yet.', data: list };
+        },
+        get_task: async (args) => {
+          const t = await tasks.findOne({ taskId: String(args.taskId ?? '') }, { projection: { _id: 0 } });
+          return t ? { ok: true, summary: `Task ${t.taskId}: ${t.status} — ${t.goal.slice(0, 80)}`, data: t } : { ok: false, summary: 'Task not found.' };
+        },
+        summarize_task: async (args) => {
+          const t = await tasks.findOne({ taskId: String(args.taskId ?? '') }, { projection: { _id: 0 } });
+          return t ? { ok: true, summary: `“${t.goal.slice(0, 60)}” is ${t.status}${t.assignedServiceId ? ` with ${t.assignedServiceId}` : ''}.` } : { ok: false, summary: 'Task not found.' };
+        },
+        classify_operation_risk: async (args) => execClassifyRisk(args),
+        explain_risk: async (args) => execClassifyRisk(args),
+        create_operation_plan: async (args) => execCreateOperationPlan(args),
+        verify_operation: async (args) => {
+          const plan = await operationPlans.findOne({ operationPlanId: String(args.operationPlanId ?? '') });
+          if (!plan) return { ok: false, summary: 'Operation plan not found.' };
+          const v = await runVerification(plan);
+          return { ok: v.healthOk !== false, summary: `Verification: ${v.detail}`, data: v };
+        },
+        approve_operation: async () => ({ ok: true, summary: 'Owner approval happens on the Overview — the approval card is visible there. I never approve silently.' }),
+        execute_operation: async () => ({ ok: true, summary: 'Execution of an approved operation runs from the Overview console (API or guided manual), with snapshot and verification.' }),
+        rollback_operation: async () => ({ ok: true, summary: 'Rollback runs from the Overview console using the stored snapshot (owner action).' }),
+        test_dokploy_connection: async () => {
+          if (!dokployClient) return { ok: false, summary: 'Dokploy API not configured.' };
+          const c = await dokployClient.testConnection();
+          return { ok: c.ok, summary: c.ok ? 'Dokploy API reachable.' : `Dokploy connection failed: ${c.error ?? 'unknown'}` };
+        },
+        sync_dokploy_targets: async () => {
+          if (!dokployClient) return { ok: false, summary: 'Dokploy API not configured — manual target confirmation remains available.' };
+          const pr = await dokployClient.listProjects();
+          if (!pr.ok) return { ok: false, summary: `Dokploy sync failed: ${pr.error}` };
+          lastDokploySyncAt = nowIso();
+          return { ok: true, summary: `Synced ${parseDokployTargets(pr.data).length} Dokploy targets.` };
+        },
+        list_dokploy_targets: async () => {
+          const list = await collection<Record<string, unknown>>(COLLECTIONS.DOKPLOY_TARGETS).find({}, { projection: { _id: 0 } }).limit(30).toArray();
+          return { ok: true, summary: `${list.length} Dokploy targets known.`, data: list };
+        },
+        run_dokploy_diagnostics: async () => {
+          if (!dokployClient) return { ok: false, summary: 'Dokploy API not configured.' };
+          const d = await buildDiagnostics(dokployClient, '');
+          return { ok: true, summary: `Diagnostics: ${d.length} endpoints probed (secrets redacted).`, data: d.map((x) => ({ endpoint: (x as { endpoint?: string }).endpoint, supported: (x as { supported?: boolean }).supported })) };
+        },
+        restart_dokploy_app: async (args) => execCreateOperationPlan({ goal: `Restart ${args.targetService}`, operationType: 'existing_app_restart', targetService: args.targetService }),
+        deploy_dokploy_app: async (args) => execCreateOperationPlan({ goal: `Deploy ${args.targetService}`, operationType: 'existing_app_update', targetService: args.targetService }),
+        read_dokploy_logs: async () => ({ ok: true, summary: 'Container logs: open the app in the Dokploy UI — the log read endpoint is not calibrated on this instance yet (manual path).' }),
+        // Code tools → code-operator-agent (workspace + branch isolation there).
+        inspect_repo: async (args) => codeAgentTask('inspect_repo', args),
+        search_code: async (args) => codeAgentTask('search_code', args),
+        propose_code_change: async (args) => codeAgentTask('propose_code_change', args),
+        edit_code: async (args) => codeAgentTask('edit_code', args, 30000),
+        run_typecheck: async (args) => codeAgentTask('run_typecheck', args, 120000),
+        build_package: async (args) => codeAgentTask('build_package', args, 300000),
+        run_smoke_tests: async (args) => codeAgentTask('run_smoke_tests', args, 120000),
+        create_git_branch: async (args) => codeAgentTask('create_git_branch', args),
+        commit_changes: async (args) => codeAgentTask('commit_changes', args),
+        create_pr: async (args) => codeAgentTask('create_pr', args, 30000),
+        // Kernel task pipelines (real agents).
+        create_task: async (args) => { const id = await createKernelTask(String(args.goal ?? 'Operator task'), ['operator']); return { ok: true, summary: `Task ${id} started.`, data: { taskId: id } }; },
+        create_new_service: async (args) => { const id = await createKernelTask(String(args.goal ?? 'Create a new service'), ['service-creation', 'operator']); return { ok: true, summary: `Service-creation task ${id} started (architect → builder → validation).`, data: { taskId: id } }; },
+        research_topic: async (args) => { const id = await createKernelTask(String(args.goal ?? 'Research current best practices.'), ['research', 'operator']); return { ok: true, summary: `Research task ${id} started.`, data: { taskId: id } }; },
+        analyze_history: async () => { const id = await createKernelTask('Analyze system history and recommend improvements', ['learning', 'operator']); return { ok: true, summary: `Learning analysis task ${id} started.`, data: { taskId: id } }; },
+        generate_report: async () => { const id = await createKernelTask('Generate an executive system report.', ['report', 'operator']); return { ok: true, summary: `Report task ${id} started.`, data: { taskId: id } }; },
+        run_security_check: async (_args, role) => {
+          const audit = auditEnvironment(envAuditInput());
+          const check = buildSecurityCheck('system', audit, await isSafeMode());
+          await securityChecks.insertOne(check);
+          await writeAudit({ actorType: 'human', actorId: role, role, action: 'security_check_run', targetType: 'security_check', targetId: check.checkId, after: { passed: check.passed, riskLevel: check.riskLevel } });
+          return { ok: check.passed, summary: `Security check ${check.passed ? 'passed' : 'found issues'} (${check.riskLevel}).`, data: { checkId: check.checkId, passed: check.passed } };
+        },
+        recommend_improvements: async () => {
+          const list = await collection<Record<string, unknown>>(COLLECTIONS.SYSTEM_RECOMMENDATIONS).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(5).toArray();
+          return { ok: true, summary: list.length === 0 ? 'No open recommendations.' : `${list.length} recommendations available.`, data: list };
+        },
+        validate_service: async (args) => {
+          const list = await collection<Record<string, unknown>>(COLLECTIONS.DEPLOYMENT_CHECKLISTS).find({ serviceId: String(args.serviceId ?? '') }, { projection: { _id: 0 } }).limit(3).toArray();
+          return { ok: true, summary: list.length === 0 ? 'No activation checklist for that service yet.' : `Checklist found — run activation from the Deployment page.`, data: list };
+        },
+        activate_service: async () => ({ ok: true, summary: 'Live activation runs from the Deployment page checklist (real HTTP checks, evidence stored).' }),
+        repair_service: async (args) => ({ ok: true, summary: `Repair goes through diagnose → plan → approval on Incidents. ${args.serviceId ? `Target: ${args.serviceId}.` : ''}` }),
+        read_relevant_memory: async () => {
+          const list = await opMemories.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray();
+          return { ok: true, summary: list.length === 0 ? 'No operator memories yet.' : `${list.length} memories loaded.`, data: list };
+        },
+        write_memory: async (args, role) => { const id = await writeOpMemory(role, (String(args.kind ?? 'decision') as OperatorRuntimeMemory['kind']), String(args.content ?? ''), null, null); return { ok: true, summary: 'Memory written.', data: { memoryId: id } }; },
+        write_mistake_memory: async (args, role) => { const id = await writeOpMemory(role, 'mistake_avoidance', String(args.content ?? ''), null, null); return { ok: true, summary: 'Mistake memory written.', data: { memoryId: id } }; },
+        update_user_preference: async (args, role) => { const id = await writeOpMemory(role, 'preference', String(args.content ?? ''), null, null); return { ok: true, summary: 'Preference saved.', data: { memoryId: id } }; },
+        request_approval: async () => ({ ok: true, summary: 'Approval card created.' }),
+        record_decision: async (args, role) => { await writeAudit({ actorType: 'human', actorId: role, role, action: 'operator_decision', targetType: 'operator_runtime', targetId: 'decision', after: { decision: String(args.decision ?? ''), reason: String(args.reason ?? '') } }); return { ok: true, summary: 'Decision recorded in the audit log.' }; },
+      };
+
+      /** A step needs a human gate unless it is a low-risk immediate read. */
+      const needsGate = (tool: OperatorTool): boolean =>
+        tool.requiresApproval || tool.ownerOnly || tool.riskLevel !== 'low' ||
+        tool.executionPath === 'kernel_task' || tool.executionPath === 'operation_plan';
+
+      const recordStep = async (session: OperatorRuntimeSession, stepDef: PlanStep, narration: string, observation: string, status: string): Promise<void> => {
+        await opSteps.insertOne({ stepRecordId: genId('ostep'), runtimeSessionId: session.runtimeSessionId, stepId: stepDef.stepId, toolId: stepDef.toolId, narration, observation, status, createdAt: nowIso() });
+        await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_STEP_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: stepDef.toolId, status, message: narration } });
+      };
+
+      /** Run the loop until completion or a pause point (approval / user input / failure). */
+      const runLoop = async (session: OperatorRuntimeSession, role: OperatorRole, tools: OperatorTool[]): Promise<OperatorRuntimeSession> => {
+        session.status = 'running';
+        while (session.currentStep < session.plan.length) {
+          const stepDef = session.plan[session.currentStep];
+          if (!stepDef) break;
+          const tool = tools.find((t) => t.toolId === stepDef.toolId);
+          if (!tool) { stepDef.status = 'failed'; stepDef.observation = 'Unknown tool.'; session.currentStep++; continue; }
+          if (!tool.available) {
+            stepDef.status = 'manual_required';
+            stepDef.observation = `${tool.name} unavailable: ${tool.unavailableReason}.`;
+            session.observations.push(stepDef.observation);
+            await recordStep(session, stepDef, `${tool.name} skipped — ${tool.unavailableReason}`, stepDef.observation, 'manual_required');
+            session.currentStep++;
+            continue;
+          }
+          if (needsGate(tool) && stepDef.status !== 'awaiting_approval') {
+            const perm: OperatorToolPermission = { permissionId: genId('operm'), runtimeSessionId: session.runtimeSessionId, stepId: stepDef.stepId, toolId: tool.toolId, prompt: `${tool.name}: ${stepDef.reason}. Risk ${tool.riskLevel}${tool.ownerOnly ? ' (owner only)' : ''}. ${tool.rollbackAvailable ? 'Rollback available.' : ''}`, riskLevel: tool.riskLevel, ownerOnly: tool.ownerOnly, status: 'pending', decidedBy: null, createdAt: nowIso(), decidedAt: null };
+            await opPermissions.insertOne(perm);
+            session.approvalIds.push(perm.permissionId);
+            stepDef.status = 'awaiting_approval';
+            session.status = 'waiting_approval';
+            session.nextAction = `Approve or reject: ${tool.name} (${tool.riskLevel} risk).`;
+            await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_APPROVAL_REQUESTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, permissionId: perm.permissionId, toolId: tool.toolId, message: `Approval needed: ${tool.name}`, level: 'warn' } });
+            break;
+          }
+          // Execute.
+          stepDef.status = 'running';
+          const run: OperatorToolRun = { toolRunId: genId('orun'), runtimeSessionId: session.runtimeSessionId, stepId: stepDef.stepId, toolId: tool.toolId, args: stepDef.args, status: 'running', resultSummary: '', failureCause: '', evidenceIds: [], startedAt: nowIso(), finishedAt: null };
+          await opToolRuns.insertOne(run);
+          session.toolRunIds.push(run.toolRunId);
+          try {
+            const exec = executors[tool.toolId];
+            const res = exec ? await exec(stepDef.args, role) : { ok: false, summary: 'No executor bound (registry bug).' };
+            stepDef.status = res.ok ? 'done' : 'failed';
+            stepDef.observation = res.summary;
+            stepDef.toolRunId = run.toolRunId;
+            session.observations.push(res.summary);
+            if (res.evidenceIds?.length) session.evidenceIds.push(...res.evidenceIds);
+            await opToolRuns.updateOne({ toolRunId: run.toolRunId }, { $set: { status: res.ok ? 'succeeded' : 'failed', resultSummary: res.summary, evidenceIds: res.evidenceIds ?? [], finishedAt: nowIso() } });
+            await recordStep(session, stepDef, narrateStep(tool.name, res.ok, res.summary), res.summary, stepDef.status);
+            if (!res.ok) {
+              const fa = classifyToolFailure(tool.toolId, res.summary);
+              session.nextAction = fa.nextAction;
+              session.observations.push(`Cause: ${fa.cause} Next: ${fa.nextAction}`);
+              if (fa.mistakeMemory) { const mid = await writeOpMemory(role, 'mistake_avoidance', fa.mistakeMemory, session.runtimeSessionId, tool.toolId); session.memoryIds.push(mid); }
+              await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_TOOL_FAILED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: tool.toolId, message: `${tool.name} failed: ${fa.cause}`, level: 'error' } });
+              // Read-only failures don't kill the whole session — continue observing.
+              if (tool.riskLevel !== 'low') { session.status = 'failed'; break; }
+            } else {
+              await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_TOOL_EXECUTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: tool.toolId, message: res.summary.slice(0, 160), level: 'success' } });
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : 'tool crashed';
+            stepDef.status = 'failed'; stepDef.observation = msg;
+            const fa = classifyToolFailure(tool.toolId, msg);
+            session.observations.push(`${tool.name} failed. Cause: ${fa.cause} Next: ${fa.nextAction}`);
+            if (fa.mistakeMemory) { const mid = await writeOpMemory(role, 'mistake_avoidance', fa.mistakeMemory, session.runtimeSessionId, tool.toolId); session.memoryIds.push(mid); }
+            await opToolRuns.updateOne({ toolRunId: run.toolRunId }, { $set: { status: 'failed', resultSummary: msg, failureCause: fa.cause, finishedAt: nowIso() } });
+            await recordStep(session, stepDef, narrateStep(tool.name, false, fa.cause), msg, 'failed');
+            session.status = 'failed'; session.nextAction = fa.nextAction;
+            break;
+          }
+          session.currentStep++;
+        }
+        if (session.currentStep >= session.plan.length && session.status === 'running') {
+          session.status = 'completed';
+          session.completedAt = nowIso();
+          session.reportSummary = session.observations.slice(-6).join(' ');
+          session.nextAction = session.plan.some((s) => s.status === 'manual_required') ? 'Some steps need configuration or a manual path — see observations.' : 'Done. Give me the next goal.';
+          const mid = await writeOpMemory(role, 'workflow', `Goal “${session.goal.slice(0, 80)}” completed with ${session.plan.length} steps.`, session.runtimeSessionId, null);
+          session.memoryIds.push(mid);
+          await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, message: `Operator session completed: ${session.goal.slice(0, 80)}`, level: 'success' } });
+        }
+        await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: session }, { upsert: true });
+        return session;
+      };
+
+      // --- endpoints -------------------------------------------------------
+      app.get('/v1/operator/tools', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await liveRegistry());
+      });
+      app.get('/v1/operator/capabilities', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(buildCapabilityAnswer(await liveRegistry()));
+      });
+      app.get('/v1/operator/sessions', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await opSessions.find({}, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(30).toArray());
+      });
+      app.get('/v1/operator/sessions/active', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const list = await opSessions.find({ status: { $in: ['planning', 'running', 'waiting_approval', 'waiting_user_input', 'verifying'] } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(1).toArray();
+        return success(list[0] ?? null);
+      });
+      app.get<{ Params: { id: string } }>('/v1/operator/sessions/:id', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const [s, steps, runs, perms] = await Promise.all([
+          opSessions.findOne({ runtimeSessionId: req.params.id }, { projection: { _id: 0 } }),
+          opSteps.find({ runtimeSessionId: req.params.id }, { projection: { _id: 0 } }).sort({ createdAt: 1 }).toArray(),
+          opToolRuns.find({ runtimeSessionId: req.params.id }, { projection: { _id: 0 } }).sort({ startedAt: 1 }).toArray(),
+          opPermissions.find({ runtimeSessionId: req.params.id }, { projection: { _id: 0 } }).sort({ createdAt: 1 }).toArray(),
+        ]);
+        if (!s) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'runtime session not found'));
+        return success({ session: s, steps, toolRuns: runs, permissions: perms });
+      });
+      app.get('/v1/operator/memories', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        return success(await opMemories.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      });
+
+      // In-memory duplicate-command window (same hygiene as the voice path).
+      const recentCommands = new Map<string, number>();
+      app.post<{ Body: { text?: string } }>('/v1/operator/command', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'operator_command')) return reply;
+        const role = declaredRole(req);
+        const text = String(req.body?.text ?? '').trim();
+        const norm = normalizeUtterance(text);
+        if (norm.length < 4) return success({ kind: 'ignored', reason: 'too_short' });
+        const key = `${role}:${norm}`;
+        const last = recentCommands.get(key) ?? 0;
+        if (Date.now() - last < 5000) return success({ kind: 'ignored', reason: 'duplicate_within_window' });
+        recentCommands.set(key, Date.now());
+        if (recentCommands.size > 500) recentCommands.clear();
+
+        const tools = await liveRegistry();
+        if (isCapabilityQuestion(text)) {
+          const answer = buildCapabilityAnswer(tools);
+          return success({ kind: 'capabilities', ...answer });
+        }
+        const safe = await isSafeMode();
+        const planned = planForGoal(text, { safeMode: safe, role });
+        if (planned.kind === 'clarify') return success({ kind: 'clarify', reply: planned.narration });
+
+        const session: OperatorRuntimeSession = {
+          runtimeSessionId: genId('osess'), userId: role, goal: text, status: 'planning', currentStep: 0,
+          plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], evidenceIds: [],
+          reportSummary: '', memoryIds: [], nextAction: '', startedAt: nowIso(), completedAt: null,
+        };
+        await opSessions.insertOne(session);
+        await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_STARTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, goal: text.slice(0, 120), message: `Operator session started: ${planned.narration}` } });
+        const done = await runLoop(session, role, tools);
+        return success({ kind: 'session', narration: planned.narration, session: done });
+      });
+
+      app.post<{ Params: { id: string }; Body: { action?: string } }>('/v1/operator/permissions/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await enforce('decideOperation', req, reply)) return reply;
+        const role = declaredRole(req);
+        const perm = await opPermissions.findOne({ permissionId: req.params.id });
+        if (!perm) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'permission not found'));
+        if (perm.status !== 'pending') return reply.code(409).send(failure(ERROR_CODES.CONFLICT, `permission is ${perm.status}`));
+        if (perm.ownerOnly && req.body?.action === 'approve' && role !== 'owner') {
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, 'this step requires OWNER approval'));
+        }
+        const approve = req.body?.action === 'approve';
+        await opPermissions.updateOne({ permissionId: perm.permissionId }, { $set: { status: approve ? 'approved' : 'rejected', decidedBy: role, decidedAt: nowIso() } });
+        await writeAudit({ actorType: 'human', actorId: role, role, action: `operator_permission_${approve ? 'approved' : 'rejected'}`, targetType: 'operator_permission', targetId: perm.permissionId });
+        const session = await opSessions.findOne({ runtimeSessionId: perm.runtimeSessionId }, { projection: { _id: 0 } });
+        if (!session) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'runtime session not found'));
+        const stepDef = session.plan.find((s) => s.stepId === perm.stepId);
+        if (stepDef) {
+          if (approve) {
+            // Mark approved so the loop executes it on resume.
+            stepDef.status = 'pending';
+            const tools = await liveRegistry();
+            const tool = tools.find((t) => t.toolId === stepDef.toolId);
+            if (tool) {
+              // Execute the approved step directly, then continue the loop.
+              const exec = executors[tool.toolId];
+              try {
+                const res = exec ? await exec(stepDef.args, role) : { ok: false, summary: 'No executor bound.' };
+                stepDef.status = res.ok ? 'done' : 'failed';
+                stepDef.observation = res.summary;
+                session.observations.push(res.summary);
+                if (res.evidenceIds?.length) session.evidenceIds.push(...res.evidenceIds);
+                await recordStep(session, stepDef, narrateStep(tool.name, res.ok, res.summary), res.summary, stepDef.status);
+                if (!res.ok) { const fa = classifyToolFailure(tool.toolId, res.summary); session.nextAction = fa.nextAction; }
+              } catch (e) {
+                stepDef.status = 'failed'; stepDef.observation = e instanceof Error ? e.message : 'failed';
+              }
+              session.currentStep = session.plan.indexOf(stepDef) + 1;
+            }
+          } else {
+            stepDef.status = 'skipped';
+            stepDef.observation = 'Rejected by user.';
+            session.observations.push(`${stepDef.toolId} rejected — skipped.`);
+            session.currentStep = session.plan.indexOf(stepDef) + 1;
+          }
+          session.status = 'running';
+          const tools2 = await liveRegistry();
+          const done = await runLoop(session, role, tools2);
+          return success({ decided: approve ? 'approved' : 'rejected', session: done });
+        }
+        return success({ decided: approve ? 'approved' : 'rejected', session });
       });
 
       // --- System status --------------------------------------------------

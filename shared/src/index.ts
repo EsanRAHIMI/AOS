@@ -55,3 +55,4 @@ export * from './operations/index.js';
 export * from './dokploy/index.js';
 // Phase 18 — Realtime Voice Operator
 export * from './voice/index.js';
+export * from './operator/index.js';

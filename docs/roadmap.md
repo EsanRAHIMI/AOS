@@ -226,13 +226,24 @@ Phase 10 candidates:
 6. Interrupt cancels audio/TTS/pending output and resets the gate cleanly — DONE.
 7. 23/23 pipeline smoke + 11/11 Phase 19 smoke; all typechecks; dashboard build — DONE.
 
-Phase 20 candidates:
-8. Point Dokploy diagnostics at the live instance and adjust any path/parser deltas.
-9. Wire LLM reasoning into builder/devops/memory/monitor/documentation agents (currently deterministic).
-10. Real web-fetch for research; real timer-driven scheduler.
-11. OIDC/JWT login + per-user RBAC store; session revocation; Redis rate limiter + distributed safe-mode.
-12. Rename `middleware.ts` → `proxy.ts` (Next 16); global command palette.
-13. Realtime voice cost records from provider usage events into cost_records.
+## Phase X — Autonomous Operator Runtime (Jarvis-Class Control Layer) — DONE
+1. Live tool registry: 45 real tools, 15 categories, schemas/risk/approval/execution paths — DONE.
+2. Real agent loop: plan → tool → observe → approve → continue → evidence → report → memory — DONE.
+3. Dynamic “what can you do?” from the live registry (grouped, risk-labeled, config-sensitive) — DONE.
+4. code-operator-agent (4122): inspect/search/dry-run patch/edit/typecheck/build/smoke/git/PR, workspace +
+   branch isolation, protected-core refusal — DONE.
+5. OperatorConsole replaces the voice dock (serious UI, runtime panel, inline approvals); Overview shows
+   the active runtime session — DONE.
+6. Failure → cause + next action + mistake memory; narration via operator.* events — DONE.
+7. 28/28 Phase X smoke + 23/23 + 11/11 regressions; all typechecks; dashboard build — DONE.
+
+Next-phase candidates:
+8. LLM-planned (not just pattern-planned) goals through the LLM router, still tool/approval-bounded.
+9. Multi-file patch synthesis in code-operator-agent; PR review loop with reviewer-agent.
+10. Point Dokploy diagnostics at the live instance and adjust any path/parser deltas.
+11. Real web-fetch for research; real timer-driven scheduler.
+12. OIDC/JWT login + per-user RBAC store; Redis rate limiter + distributed safe-mode.
+13. Rename `middleware.ts` → `proxy.ts` (Next 16); realtime voice cost records into cost_records.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

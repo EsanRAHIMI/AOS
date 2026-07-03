@@ -876,3 +876,76 @@ Verification:
 - Phase 19 smoke still 11/11; all 18 services + shared + service-kit typecheck; dashboard `next build` ✓.
 - Text fallback, browser fallback, WebRTC path all preserved; tool mediation untouched. No Docker.
   Scope: `shared/src/voice/`, `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.
+
+## Phase X — Autonomous Operator Runtime (Jarvis-Class Control Layer) — COMPLETE (2026-07-03)
+Major architecture correction: the operator is no longer a chat widget. The **runtime is the product**;
+voice/text is only its human interface. The system now has a live tool registry, a real agent loop
+(plan → tool → observe → approve → continue → evidence → memory), a coding agent, and a serious
+Operator Console — with every Phase 18/19/19.5 safety layer intact.
+
+Delivered (shared `operator/` module — deterministic core):
+- **7 operator collections** (tools/tool_runs/tool_permissions/runtime_sessions/runtime_steps/
+  runtime_memories/capability_index) with full zod schemas.
+- **Live tool registry: 45 tools, 15 categories**, each with input/output schema, risk, approval/owner
+  flags, serviceOwner, endpoint, timeout, rollback/evidence flags — and a REAL execution path
+  (gateway_internal / kernel_task / operation_plan / code_operator_agent / manual_required). Tools whose
+  integration is missing register `available:false` + reason — no fake tools, availability is computed
+  from real context (Dokploy token, code workspace, GitHub token).
+- **Deterministic goal planner**: whole-system check (read-only 6-step plan), service mutations
+  (risk-classify → safe-operation engine; protected core named in narration), code improvements
+  (inspect → search → dry-run propose → approval-gated edit → typecheck), service creation
+  (pipeline task → gated deploy → health verify), intelligence pipelines, clarify fallback that echoes
+  the heard goal (no capability spam).
+- **Dynamic capability answer** built from the live registry — grouped by category, risk + approval
+  labels, examples, owner-approval note; changes with configuration (proven in smoke).
+- **Failure classifier** → cause + next action + optional mistake-avoidance memory (not_configured /
+  unreachable / RBAC / safe mode / protected core).
+
+Delivered (gateway — the agent loop, `/v1/operator/*`):
+- `GET tools`, `GET capabilities`, `POST command` (hygiene: min-length + 5s dedupe; capability questions
+  answered from the registry; goals → runtime session), `GET sessions|sessions/active|sessions/:id`
+  (steps + tool runs + permissions), `POST permissions/:id/decision`, `GET memories`.
+- **Runtime loop**: executes read/low tools immediately through 45 bound executors (all real code paths:
+  health/system checks with evidence, registry/events/incidents/approvals/operations reads, Dokploy
+  status/sync/diagnostics, kernel-task pipelines, operation-plan creation blocked for protected core +
+  safe mode, code tools proxied to code-operator-agent); pauses at `waiting_approval` with an
+  OperatorToolPermission for every gated tool (approval/owner/medium+/kernel_task/operation_plan);
+  approval executes the step and resumes the loop; rejection skips and continues; failures are
+  classified, narrated (cause + next action), and write mistake memories; completion writes a workflow
+  memory + report summary. Steps stream as `operator.*` events (live narration in events feed).
+- Unavailable tools become `manual_required` observations with the reason — sessions never fake success.
+
+Delivered (new service `code-operator-agent`, 4122, code.simorx.com):
+- Workspace-scoped code tools: inspect_repo, search_code, propose_code_change (dry-run preview),
+  edit_code, run_typecheck, build_package, run_smoke_tests (scripts/*.mjs only), create_git_branch,
+  commit_changes, create_pr (GitHub REST). Safety: confined to CODE_WORKSPACE_ROOT (traversal rejected;
+  not_configured without it), edits refused on the default branch (isolated work branch mandatory),
+  protected-core paths (gateway/dashboard/shared) flagged on preview and refused on edit without the
+  gateway's owner-approval flag, no blind writes (target text must match). Every run = agent_run + event.
+
+Delivered (dashboard):
+- **OperatorConsole** replaces the voice dock (old component deleted): serious command surface — no
+  emojis, text controls (Talk/Stop/Audio/Min), live runtime session panel (GOAL, plan with per-step
+  status glyphs + observations, NEXT action, evidence count), inline approval card with risk/owner
+  badges, live tool-registry browser for “what can you do?”, ghost transcripts, mic level, session
+  timer, realtime/browser/text tier badges. Voice and text are equal inputs into the SAME runtime
+  (`/v1/operator/command`); the Phase 19.5 UtteranceGate + realtime WebRTC hook are reused unchanged.
+  Narration policy: speaks session start, approval requests, completion/failure — not every event.
+- **Overview shows the active runtime session** (goal, status, step progress, next action).
+
+Verification:
+- **Phase X smoke PASS (28/28)** (`scripts/phasex-operator-runtime-smoke.mjs`): registry integrity (45
+  real tools, schema-valid, no fake availability, mutating tools gated, owner-critical present),
+  Scenario A (dynamic grouped capability answer from live registry, config-sensitive), B (read-only
+  6-step system plan ending in evidence), C (code plan with dry-run/approval split), D (service creation
+  → gated deploy → verify), E (protected core: named, owner-gated, never direct-executed; Phase 18 voice
+  block intact), failure classification incl. mistake memories, clarify path without capability spam.
+- Regressions still green: Phase 19.5 pipeline 23/23, Phase 19 realtime 11/11.
+- All 19 services + shared + service-kit typecheck; dashboard `next build` ✓. No Docker; independent
+  Dokploy deployment intact (new app doc `deployment/dokploy/code-operator-agent.md`).
+  Scope: `shared/src/{constants,operator}/`, `services/gateway-api/`, `services/code-operator-agent/`
+  (new), `services/dashboard-web/`, `deployment/`, `scripts/`, `docs/`.
+
+> Operator note: point `CODE_WORKSPACE_ROOT` at a dedicated git checkout (volume) to activate the code
+> tools; without it they report not_configured and the runtime plans around them. The registry answer to
+> “what can you do?” will reflect that automatically.

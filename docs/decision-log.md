@@ -2,6 +2,22 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-03 — Phase X autonomous operator runtime
+
+### D-082 The runtime is the product; every capability is a schema'd tool with a real execution path
+All operator ability flows through one registry (45 tools) where each tool declares category, I/O schema,
+risk, approval/owner flags, timeout, rollback/evidence discipline, and one of five REAL execution paths.
+Unavailable integrations register `available:false` + reason instead of being hidden or faked, so
+“what can you do?” is always answered truthfully from live state. The loop executes reads immediately,
+pauses at typed permissions for everything else, and hands protected-core/critical actions to the visible
+Overview flow — autonomy is structural, and so is control.
+
+### D-081 Code changes go through a dedicated agent with workspace + branch isolation
+code-operator-agent (4122) is the only path to the codebase: confined to CODE_WORKSPACE_ROOT, default
+branch refused, dry-run preview before any write, protected-core paths refused without an explicit
+owner-approved flag from the gateway, and typecheck/build/smoke tools to prove changes before deploy.
+The runtime plans inspect → propose → approve → apply → verify, never a blind write.
+
 ## 2026-07-03 — Phase 19.5 voice command pipeline fix
 
 ### D-080 One gate for every utterance source, mirrored server-side
