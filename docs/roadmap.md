@@ -237,9 +237,21 @@ Phase 10 candidates:
 6. Failure → cause + next action + mistake memory; narration via operator.* events — DONE.
 7. 28/28 Phase X smoke + 23/23 + 11/11 regressions; all typechecks; dashboard build — DONE.
 
+## Phase Y — Autonomous Staging Workspace & Service Evolution Runtime — DONE
+1. 8 workspace collections + 7 modes + 15 statuses; disposable `.workspaces/` (gitignored) — DONE.
+2. Isolated service copy (source untouched, commit recorded) + complete new-service generator — DONE.
+3. Deep multi-file edit batches, no per-step approval inside the workspace; limits as guardrails — DONE.
+4. Temp-port boot + real factory probes (health/manifest/status/token guard) with captured logs — DONE.
+5. 15-check verification matrix + check-fix iteration loop (never fabricates green) — DONE.
+6. Migration plans (core ⇒ critical/owner/open_pr_only) + staged Dokploy app spec + rollback that
+   preserves the old version; promote = snapshot branch, default branch untouched — DONE.
+7. 15 operator tools + planner scenarios (evolve console / new service / repair / core upgrade) with
+   cross-step context; 31/31 Phase Y smoke incl. REAL generated-service typecheck; all regressions — DONE.
+
 Next-phase candidates:
-8. LLM-planned (not just pattern-planned) goals through the LLM router, still tool/approval-bounded.
-9. Multi-file patch synthesis in code-operator-agent; PR review loop with reviewer-agent.
+8. LLM-planned goals + LLM-synthesized workspace edit batches through the LLM router, still bounded
+   by workspace limits and migration approvals.
+9. PR review loop with reviewer-agent on `ws/*-promote` branches; auto-open PRs when GitHub configured.
 10. Point Dokploy diagnostics at the live instance and adjust any path/parser deltas.
 11. Real web-fetch for research; real timer-driven scheduler.
 12. OIDC/JWT login + per-user RBAC store; Redis rate limiter + distributed safe-mode.

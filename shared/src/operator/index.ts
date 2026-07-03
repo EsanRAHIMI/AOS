@@ -124,6 +124,8 @@ export const OperatorRuntimeSessionSchema = z.object({
   toolRunIds: z.array(z.string()).default([]),
   approvalIds: z.array(z.string()).default([]),
   observations: z.array(z.string()).default([]),
+  /** Cross-step context (workspaceId, migrationId, …) written by tool results. */
+  context: z.record(z.string(), z.unknown()).default({}),
   evidenceIds: z.array(z.string()).default([]),
   reportSummary: z.string().default(''),
   memoryIds: z.array(z.string()).default([]),
@@ -262,6 +264,26 @@ const specs: ToolSpec[] = [
   { toolId: 'write_mistake_memory', name: 'Write mistake memory', description: 'Persist a mistake-avoidance memory after a failure.', category: 'memory', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', input: { content: 'string' } },
   { toolId: 'update_user_preference', name: 'Update user preference', description: 'Remember an operator preference.', category: 'memory', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', input: { content: 'string' } },
 
+  /* ---------- Phase Y — staging workspace & service evolution ----------- */
+  // Inside the isolated workspace: low risk, NO approval per step — isolation
+  // is the safety boundary; limits are the guardrail.
+  { toolId: 'create_workspace', name: 'Create workspace', description: 'Create an isolated staging workspace under .workspaces/ (disposable, repeatable).', category: 'code', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { goal: 'string', mode: 'string', sourceServiceId: 'string?' }, output: { workspaceId: 'string' }, examples: ['improve the operator console UI'], availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'copy_service_to_workspace', name: 'Copy service to workspace', description: 'Copy an existing service into the workspace (source untouched, commit recorded).', category: 'code', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { goal: 'string', sourceServiceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'create_new_service_workspace', name: 'Generate new service in workspace', description: 'Generate a complete real factory service (endpoints/manifest/env/README/Dokploy spec) with allocated id/port/subdomain.', category: 'service', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { goal: 'string', newServiceName: 'string', description: 'string' }, output: { workspaceId: 'string', newService: 'object' }, examples: ['create a status-inspector service'], availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'inspect_workspace', name: 'Inspect workspace', description: 'List workspace structure and status.', category: 'code', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { workspaceId: 'string', path: 'string?' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'edit_workspace', name: 'Edit workspace (multi-file)', description: 'Apply a batch of deep multi-file edits inside the isolated workspace (bounded by WORKSPACE_MAX_FILES_CHANGED).', category: 'code', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { workspaceId: 'string', edits: 'array<{file,content|find+replace}>' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'run_workspace_typecheck', name: 'Workspace typecheck', description: 'tsc --noEmit for the workspace service.', category: 'test', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', timeoutMs: 180000, input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'run_workspace_build', name: 'Workspace build', description: 'Build the workspace service (tsc → dist, or next build for web).', category: 'test', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', timeoutMs: 420000, input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'run_workspace_tests', name: 'Workspace check-fix loop', description: 'Iterate the verification matrix with deterministic autofixes until green or the configured limits pause it.', category: 'test', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', timeoutMs: 600000, input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'start_workspace_service', name: 'Run workspace service', description: 'Boot the workspace service on a free temporary port and probe /health + .factory endpoints; logs captured; process stopped after.', category: 'test', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', timeoutMs: 120000, input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'verify_workspace_service', name: 'Verify workspace (matrix)', description: 'Run the full verification matrix: structure, deps, typecheck, build, boot, health/manifest/status/token-guard, env, docs, Dokploy spec.', category: 'test', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', timeoutMs: 600000, evidenceRequired: true, input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'create_migration_plan', name: 'Create migration plan', description: 'From a GREEN workspace: migration type, risk (protected core ⇒ critical/owner), changed files, staged Dokploy app, rollback plan. Approval always required before anything live.', category: 'service', risk: 'low', serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { workspaceId: 'string' }, output: { migrationId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  // Live-touching workspace tools: ALWAYS gated.
+  { toolId: 'approve_migration', name: 'Approve migration', description: 'Human decision on a workspace migration plan.', category: 'approval', risk: 'medium', requiresApproval: true, serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { migrationId: 'string', decision: 'string' } },
+  { toolId: 'deploy_staged_workspace', name: 'Deploy staged app', description: 'Create the gated operation plan that deploys the workspace result as a STAGED Dokploy app (temporary subdomain) — verified before promotion.', category: 'deploy', risk: 'high', requiresApproval: true, serviceOwner: 'gateway-api', executionPath: 'operation_plan', rollbackAvailable: true, evidenceRequired: true, input: { appName: 'string', rootDirectory: 'string' } },
+  { toolId: 'promote_workspace', name: 'Promote workspace', description: 'After approval: snapshot branch + copy the workspace service over services/<target> on that branch + commit. Default branch untouched; old version preserved. Protected core requires owner.', category: 'deploy', risk: 'high', requiresApproval: true, serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', rollbackAvailable: true, evidenceRequired: true, input: { workspaceId: 'string', migrationId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+  { toolId: 'rollback_workspace', name: 'Rollback workspace promotion', description: 'Restore the default branch; the promote branch is preserved for inspection.', category: 'repair', risk: 'high', requiresApproval: true, serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+
   /* ------------------------------ approval ------------------------------ */
   { toolId: 'request_approval', name: 'Request approval', description: 'Create an approval card (dock + Overview) for a gated step.', category: 'approval', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', input: { prompt: 'string', riskLevel: 'string' } },
   { toolId: 'explain_risk', name: 'Explain risk', description: 'Deterministic risk explanation for a proposed action.', category: 'reason', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', input: { targetService: 'string', operationType: 'string' } },
@@ -361,16 +383,38 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
     };
   }
 
-  // New service creation → real pipeline + gated deploy (checked BEFORE the
-  // generic deploy branch: "create X and deploy it" is a creation goal).
+  // New service creation → Phase Y staging workspace: generate the complete
+  // real service, verify it end-to-end (typecheck/build/boot/probes), then a
+  // migration plan with a staged Dokploy app. (Checked BEFORE the generic
+  // deploy branch: "create X and deploy it" is a creation goal.)
   if (/create .*(service|agent|app)/.test(t)) {
+    const nameMatch = t.match(/create (?:a |an |new )*([a-z0-9][a-z0-9 -]{2,50}?)(?: service| agent| app| that| which|,|\.|$)/);
+    const newServiceName = `${(nameMatch?.[1] ?? 'new').trim().split(/\s+/).slice(0, 3).join('-')}-service`.replace(/-service-service$/, '-service');
     return {
       kind: 'runtime_goal',
-      narration: 'Planning service creation through the real pipeline, then a gated non-core deployment.',
+      narration: `Planning a new service “${newServiceName}” in an isolated workspace: generate → verify matrix (typecheck, build, boot on temp port, factory probes) → migration plan with staged deployment. Approval gates anything live.`,
       steps: [
-        step('create_new_service', 'Architect → builder → validation pipeline (approval required)', { goal }),
-        step('create_operation_plan', 'Gated Dokploy deployment for the new non-core app', { goal: `Deploy new service: ${goal}`, operationType: 'new_app_deploy', targetService: '' }),
-        step('check_service_health', 'Verify the deployed service answers /health'),
+        step('create_new_service_workspace', 'Generate the complete real service in an isolated workspace', { goal, mode: 'create_new_service', newServiceName, description: goal }),
+        step('verify_workspace_service', 'Full verification matrix incl. temp-port boot and factory probes'),
+        step('create_migration_plan', 'Migration + staged Dokploy app + rollback plan (approval required to proceed)'),
+      ],
+    };
+  }
+
+  // Existing-service evolution / repair / refactor / UI upgrade → Phase Y
+  // isolated workspace copy. Deep edits happen freely INSIDE the workspace;
+  // only migration/promotion is gated (owner for protected core).
+  if (svc && /(improve|upgrade|evolve|redesign|refactor|repair|fix|modernize|rework)/.test(t)) {
+    const core = isProtectedCore(svc);
+    const mode = /repair|fix/.test(t) ? 'repair_service' : svc === 'dashboard-web' ? 'upgrade_ui' : 'evolve_existing_service';
+    return {
+      kind: 'runtime_goal',
+      narration: `${core ? `${svc} is PROTECTED CORE — workspace edits are free, but the migration will be critical risk and owner-approved. ` : ''}Planning ${mode.replace(/_/g, ' ')} for ${svc} in an isolated workspace copy: the live service stays untouched; verify must be green before a migration plan.`,
+      steps: [
+        step('create_workspace', `Isolated copy of ${svc} (source commit recorded)`, { goal, mode, sourceServiceId: svc }),
+        step('inspect_workspace', 'Map the copied structure'),
+        step('run_workspace_tests', 'Check-fix loop: typecheck/build/boot/probes until green or limits'),
+        step('create_migration_plan', `Migration + rollback plan${core ? ' (critical, owner approval)' : ''}`),
       ],
     };
   }
@@ -391,14 +435,30 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
     };
   }
 
-  // Self-improvement / code goals → inspect → propose → (approval) apply → verify.
-  if (/(fix|improve|refactor|implement|clean up|find .*(wrong|bug|issue)).*/.test(t) && /(code|ui|console|dock|page|component|service|operator|file)/.test(t)) {
+  // UI / console / self-improvement goals without an explicit service id →
+  // Phase Y workspace copy of dashboard-web (the console lives there).
+  if (/(fix|improve|upgrade|evolve|redesign|implement|clean up|find .*(wrong|bug|issue))/.test(t) && /(ui|console|dock|dashboard|interface|page|component)/.test(t)) {
     return {
       kind: 'runtime_goal',
-      narration: 'Planning a code improvement in an isolated branch: inspect → propose → approve → apply → typecheck.',
+      narration: 'Planning a UI evolution in an isolated workspace copy of dashboard-web: deep multi-file edits are free inside the workspace; typecheck + Next build must pass; replacing the live dashboard requires approval.',
       steps: [
-        step('inspect_repo', 'Understand the relevant area', { path: 'services/dashboard-web/src' }),
-        step('search_code', 'Locate the target', { pattern: goal.slice(0, 60), path: 'services/dashboard-web/src' }),
+        step('create_workspace', 'Isolated copy of dashboard-web (source untouched)', { goal, mode: 'upgrade_ui', sourceServiceId: 'dashboard-web' }),
+        step('inspect_workspace', 'Map the console components'),
+        step('run_workspace_typecheck', 'Baseline typecheck of the copy'),
+        step('run_workspace_build', 'Next production build of the copy'),
+        step('create_migration_plan', 'Changed files + risk + rollback; approval before replacing the live dashboard'),
+      ],
+    };
+  }
+
+  // Generic small code goals → dry-run inspect/propose path (Phase X tools).
+  if (/(fix|improve|refactor|implement).*/.test(t) && /(code|file|function|schema)/.test(t)) {
+    return {
+      kind: 'runtime_goal',
+      narration: 'Planning a targeted code change: inspect → propose (dry-run) → approve → apply on an isolated branch → typecheck.',
+      steps: [
+        step('inspect_repo', 'Understand the relevant area', { path: 'services' }),
+        step('search_code', 'Locate the target', { pattern: goal.slice(0, 60), path: 'services' }),
         step('propose_code_change', 'Dry-run patch preview — nothing written'),
         step('edit_code', 'Apply the reviewed patch on an isolated branch (approval required)'),
         step('run_typecheck', 'Prove the change compiles', { package: 'services/dashboard-web' }),

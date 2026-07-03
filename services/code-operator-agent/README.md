@@ -35,6 +35,22 @@ enables code tools; GITHUB_* enables push/PR.
 Independent Dokploy app like every other service. In production, mount/clone a
 dedicated working checkout for `CODE_WORKSPACE_ROOT` — never the running app dir.
 
+## Workspace evolution runtime (Phase Y — `ws_*` actions)
+The self-development engine. Disposable isolated workspaces under
+`<CODE_WORKSPACE_ROOT>/.workspaces/` (gitignored):
+`ws_create` (copy an existing service — source untouched, commit recorded — or
+generate a COMPLETE new service with allocated id/port/subdomain) · `ws_inspect`
+· `ws_edit` (deep multi-file batches, bounded by WORKSPACE_MAX_FILES_CHANGED,
+no per-step approval — isolation is the boundary) · `ws_typecheck` · `ws_build`
+(tsc or next build) · `ws_run` (free temp port, registry/event-bus disabled,
+real probes of /health + /.factory/manifest/status + token guard, logs stored)
+· `ws_verify` (15-check matrix) · `ws_iterate` (check-fix loop under
+WORKSPACE_MAX_ITERATIONS/MINUTES; pauses and asks at limits) ·
+`ws_migration_plan` (GREEN required; staged app + rollback; protected core ⇒
+critical/owner/open_pr_only) · `ws_approve_migration` · `ws_promote` (approved
+only: snapshot branch `ws/<id>-promote`, default branch untouched, old version
+preserved) · `ws_rollback` (restore default branch, promote branch kept).
+
 ## Current status
-Live: all listed actions implemented. Future: richer diff previews, multi-file
-patches, LLM-driven patch synthesis through the existing LLM router.
+Live: all listed actions implemented, including the Phase Y workspace runtime.
+Future: LLM-synthesized edit batches through the LLM router; auto-PR on promote.

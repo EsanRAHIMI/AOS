@@ -23,6 +23,7 @@ import {
 } from '@factory/shared';
 import { createFactoryService, type TaskHandler } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
+import { handleWorkspaceAction } from './workspace-runtime.js';
 
 const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema));
 const exec = promisify(execFile);
@@ -183,6 +184,9 @@ const handleTask: TaskHandler = async (req, ctx) => {
       result = { ok: true, summary: configured ? `workspace: ${WORKSPACE}` : 'workspace not configured', data: { workspaceConfigured: configured, defaultBranch: DEFAULT_BRANCH, protectedPathPrefixes: PROTECTED_PATH_PREFIXES, githubConfigured: Boolean(process.env.GITHUB_TOKEN && process.env.GITHUB_OWNER && process.env.GITHUB_REPO) } };
     } else if (!configured) {
       result = notConfigured;
+    } else if (action.startsWith('ws_')) {
+      // Phase Y — Autonomous Staging Workspace runtime (isolated deep work).
+      result = await handleWorkspaceAction(action, input);
     } else {
       switch (action) {
         case 'inspect_repo': result = await inspectRepo(String(input.path ?? '.')); break;

@@ -949,3 +949,77 @@ Verification:
 > Operator note: point `CODE_WORKSPACE_ROOT` at a dedicated git checkout (volume) to activate the code
 > tools; without it they report not_configured and the runtime plans around them. The registry answer to
 > “what can you do?” will reflect that automatically.
+
+## Phase Y — Autonomous Staging Workspace & Service Evolution Runtime — COMPLETE (2026-07-03)
+The self-development engine. The operator can now clone or create services in disposable isolated
+workspaces, make deep multi-file changes there WITHOUT per-step approval (isolation + limits are the
+boundary), build/run/probe/verify them for real, and only then propose migration — with the old version
+always preserved and every live-touching step approval-gated (owner for protected core).
+
+Delivered (shared `workspace/` module — deterministic core):
+- **8 workspace collections** with full zod schemas (workspaces/runs/services/changes/tests/artifacts/
+  migrations/rollbacks); 7 modes; 15 statuses.
+- **Verification matrix (15+ checks)**: structure, dependency resolution, typecheck, build/next-build,
+  optional unit/smoke, temp-port boot, /health, /.factory/manifest (+capabilities), /.factory/status,
+  token-guarded /.factory/task, env example, docs, Dokploy spec — per service kind (fastify vs web);
+  `matrixGreen` names exactly what is missing.
+- **New-service allocator + generator**: deterministic serviceId/package/port(next free)/subdomain, and
+  the COMPLETE file set for a real factory service (service-kit wiring, manifest, task handler, env,
+  README, Dokploy spec incl. staged domain). No fake services — proven by smoke (see below).
+- **Migration builder**: type (create_new_service / deploy_staged_service / non-negotiable
+  open_pr_only for protected core), risk (core ⇒ critical + ownerOnly), changed files, staged app spec
+  (`<svc>-staging.simorx.com`), rollback plan that PRESERVES the old version (snapshot branch + commit).
+- **Resource limits** (env-configurable): WORKSPACE_MAX_ITERATIONS=10, MAX_MINUTES=45,
+  MAX_FILES_CHANGED=80, REQUIRE_APPROVAL_BEFORE_MIGRATION, ALLOW_AUTOFIX/NEW_SERVICE/EVOLUTION flags.
+  On limit: pause + summarize + ask to continue. Never silently forever, never per-edit nagging.
+
+Delivered (code-operator-agent — execution layer, `ws_*` actions):
+- **Isolated copy**: rsync service → `.workspaces/<ws>/<svc>-evolved/` (source untouched, source commit
+  recorded), donor node_modules link, tsconfig depth fix (reversed on promote).
+- **Generator**: writes the complete allocated service into the workspace + records the proposal
+  (port/subdomain/capabilities) in workspace_services.
+- **Deep multi-file edit batches** (`ws_edit`): create/find-replace across many files in one call, no
+  blind writes, change accounting against MAX_FILES_CHANGED.
+- **Temp-run + probes** (`ws_run`): free ephemeral port, env-injected boot of `dist/index.js` with
+  registry/event-bus DISABLED (no live registration), readiness wait, real probes of /health,
+  /.factory/manifest(+capabilities), /.factory/status, and the internal-token guard on /.factory/task;
+  logs captured as artifacts; process always stopped.
+- **`ws_verify`** runs the whole matrix and stores every result; **`ws_iterate`** is the check-fix loop:
+  repeats verification, auto-fixes the deterministic classes (missing docs/env/dokploy-spec for copies),
+  stops with a precise cause when targeted edits are needed, respects iteration/time limits. Never
+  fabricates green.
+- **`ws_migration_plan`** (GREEN required), **`ws_promote`** (only after upstream approval: snapshot
+  branch `ws/<id>-promote`, rsync into `services/<target>`, commit — default branch untouched, old
+  version preserved; protected core additionally requires the owner flag), **`ws_rollback`** (restore
+  default branch; promote branch kept for inspection). `.workspaces/` is gitignored — disposable.
+
+Delivered (operator runtime integration):
+- **15 workspace tools** in the live registry. Inside-workspace tools (create/copy/generate/inspect/
+  edit/typecheck/build/tests/start/verify/migration-plan) are low-risk, NO per-step approval; live-
+  touching tools (approve_migration / deploy_staged_workspace / promote_workspace / rollback_workspace)
+  are always gated. All unavailable-with-reason without CODE_WORKSPACE_ROOT.
+- **Planner upgrades**: “improve the operator console UI” → workspace copy of dashboard-web → typecheck
+  → Next build → migration plan; “create a <name> service …” → generate → full verify → migration plan
+  (with a concrete allocated name); “repair <service> …” → repair-mode workspace + check-fix loop;
+  “upgrade gateway-api …” → workspace evolution with CRITICAL/owner migration named up front and no
+  direct execute/promote step in the plan.
+- **Cross-step context**: workspaceId/migrationId flow through the session automatically
+  (create → inspect → verify → migrate chains without re-typing ids). Console + Overview show progress
+  via the runtime session panel (steps, observations, matrix summary, approval cards).
+
+Verification:
+- **Phase Y smoke PASS (31/31)** (`scripts/phasey-workspace-smoke.mjs`) — including the flagship real
+  test: a service is GENERATED from the template into `.workspaces/` and **typechecked with real tsc**;
+  plus matrix logic, limits + env overrides, allocation collision rules, migration typing (core ⇒
+  critical/owner/open_pr_only), rollback preservation language, 15-tool gating, and all four planner
+  scenarios (A evolve console, B new service, C repair, D protected core).
+- Regressions green: Phase X 28/28 (two planner assertions updated to the superior Phase Y plans),
+  Phase 19.5 23/23, Phase 19 11/11. All 19 services + shared + service-kit typecheck; dashboard
+  `next build` ✓. No Docker; independent Dokploy deployment intact.
+  Scope: `shared/src/{constants,workspace,operator}/`, `services/code-operator-agent/`,
+  `services/gateway-api/`, `scripts/`, `.gitignore`, `docs/`.
+
+> Operator note: staged Dokploy deployment remains a REAL two-step: the migration plan carries the
+> staged app spec (`<svc>-staging` + subdomain), `deploy_staged_workspace` creates the gated operation
+> plan, and where the Dokploy API can't perform a step the operation console shows exact manual steps
+> and verifies /health after your confirmation — nothing fakes a deploy.

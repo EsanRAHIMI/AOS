@@ -216,6 +216,15 @@ export const COLLECTIONS = {
   OPERATOR_RUNTIME_STEPS: 'operator_runtime_steps',
   OPERATOR_RUNTIME_MEMORIES: 'operator_runtime_memories',
   OPERATOR_CAPABILITY_INDEX: 'operator_capability_index',
+  // Phase Y — Autonomous Staging Workspace & Service Evolution Runtime
+  WORKSPACES: 'workspaces',
+  WORKSPACE_RUNS: 'workspace_runs',
+  WORKSPACE_SERVICES: 'workspace_services',
+  WORKSPACE_CHANGES: 'workspace_changes',
+  WORKSPACE_TESTS: 'workspace_tests',
+  WORKSPACE_ARTIFACTS: 'workspace_artifacts',
+  WORKSPACE_MIGRATIONS: 'workspace_migrations',
+  WORKSPACE_ROLLBACKS: 'workspace_rollbacks',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -344,6 +353,16 @@ export const EVENT_TYPES = {
   OPERATOR_APPROVAL_REQUESTED: 'operator.approval.requested',
   OPERATOR_SESSION_COMPLETED: 'operator.session.completed',
   OPERATOR_MEMORY_WRITTEN: 'operator.memory.written',
+  // Phase Y — workspace evolution runtime
+  WORKSPACE_CREATED: 'workspace.created',
+  WORKSPACE_ITERATION: 'workspace.iteration',
+  WORKSPACE_CHECK_COMPLETED: 'workspace.check.completed',
+  WORKSPACE_SERVICE_STARTED: 'workspace.service.started',
+  WORKSPACE_VERIFIED: 'workspace.verified',
+  WORKSPACE_MIGRATION_PROPOSED: 'workspace.migration.proposed',
+  WORKSPACE_PROMOTED: 'workspace.promoted',
+  WORKSPACE_ROLLED_BACK: 'workspace.rolled_back',
+  WORKSPACE_FAILED: 'workspace.failed',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

@@ -65,3 +65,6 @@ Thumbs.db
 
 # --- pnpm store probe artifacts on network mounts ---
 _tmp_*
+
+# Phase Y — disposable staging workspaces (never committed; promotion goes via branch)
+.workspaces/

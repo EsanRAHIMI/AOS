@@ -53,7 +53,7 @@ check('Plan ends with the evidence-storing aggregate check', b.steps[b.steps.len
 
 console.log('— Scenario C: improve own code —');
 const c = planForGoal('Find one thing wrong with your own operator UI and fix it', { safeMode: false, role: 'owner' });
-check('Code plan: inspect → search → propose → edit → typecheck', c.kind === 'runtime_goal' && ['inspect_repo', 'search_code', 'propose_code_change', 'edit_code', 'run_typecheck'].every((id) => c.steps.some((s) => s.toolId === id)));
+check('Code plan (Phase Y): isolated workspace copy of dashboard-web → build → migration plan', c.kind === 'runtime_goal' && c.steps[0].toolId === 'create_workspace' && c.steps[0].args.sourceServiceId === 'dashboard-web' && c.steps[c.steps.length - 1].toolId === 'create_migration_plan');
 check('propose is dry-run (low, no approval); edit requires approval', (() => {
   const propose = tools.find((t) => t.toolId === 'propose_code_change');
   const edit = tools.find((t) => t.toolId === 'edit_code');
@@ -62,7 +62,7 @@ check('propose is dry-run (low, no approval); edit requires approval', (() => {
 
 console.log('— Scenario D: create a small service —');
 const d = planForGoal('Create a small status-check service and deploy it as a non-core app.', { safeMode: false, role: 'owner' });
-check('Service plan: pipeline task → gated deploy plan → health verify', d.kind === 'runtime_goal' && d.steps[0].toolId === 'create_new_service' && d.steps.some((s) => s.toolId === 'create_operation_plan') && d.steps[d.steps.length - 1].toolId === 'check_service_health');
+check('Service plan (Phase Y): generate in workspace → verify matrix → migration plan', d.kind === 'runtime_goal' && d.steps[0].toolId === 'create_new_service_workspace' && d.steps.some((s) => s.toolId === 'verify_workspace_service') && d.steps[d.steps.length - 1].toolId === 'create_migration_plan');
 check('create_new_service and create_operation_plan both require approval', ['create_new_service', 'create_operation_plan'].every((id) => tools.find((t) => t.toolId === id).requiresApproval));
 
 console.log('— Scenario E: protected core safety —');

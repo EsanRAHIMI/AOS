@@ -2,6 +2,23 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-03 — Phase Y staging workspace & service evolution
+
+### D-084 Isolation is the approval boundary, not the edit
+Inside a disposable `.workspaces/<id>/` copy, the operator edits as many files as it wants with no
+per-step approval — the live tree cannot be touched from there, and env-configurable limits
+(iterations / minutes / files changed) bound the loop with pause-and-ask instead of silent stops or
+infinite runs. Approval concentrates where it matters: migration plans, staged deploys, promotion,
+rollback, and anything protected-core (owner). This makes the system aggressive in development and
+conservative in release — both structurally.
+
+### D-083 Promotion is a snapshot branch, never an overwrite
+`ws_promote` requires an approved migration, then: record HEAD, create `ws/<id>-promote`, rsync the
+workspace service over `services/<target>` ON THAT BRANCH, commit. The default branch and the previous
+version are always intact; protected core additionally demands the owner flag and lands as
+`open_pr_only`. Staged Dokploy apps (`<svc>-staging.<domain>`) verify /health before final promotion,
+and the rollback record ships with every migration plan.
+
 ## 2026-07-03 — Phase X autonomous operator runtime
 
 ### D-082 The runtime is the product; every capability is a schema'd tool with a real execution path

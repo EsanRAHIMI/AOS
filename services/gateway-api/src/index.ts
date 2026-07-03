@@ -2033,6 +2033,22 @@ async function main(): Promise<void> {
         write_memory: async (args, role) => { const id = await writeOpMemory(role, (String(args.kind ?? 'decision') as OperatorRuntimeMemory['kind']), String(args.content ?? ''), null, null); return { ok: true, summary: 'Memory written.', data: { memoryId: id } }; },
         write_mistake_memory: async (args, role) => { const id = await writeOpMemory(role, 'mistake_avoidance', String(args.content ?? ''), null, null); return { ok: true, summary: 'Mistake memory written.', data: { memoryId: id } }; },
         update_user_preference: async (args, role) => { const id = await writeOpMemory(role, 'preference', String(args.content ?? ''), null, null); return { ok: true, summary: 'Preference saved.', data: { memoryId: id } }; },
+        // Phase Y — staging workspace & service evolution (code-operator-agent).
+        create_workspace: async (args) => codeAgentTask('ws_create', args, 90000),
+        copy_service_to_workspace: async (args) => codeAgentTask('ws_create', { ...args, mode: args.mode ?? 'evolve_existing_service' }, 90000),
+        create_new_service_workspace: async (args) => codeAgentTask('ws_create', { ...args, mode: 'create_new_service' }, 60000),
+        inspect_workspace: async (args) => codeAgentTask('ws_inspect', args, 20000),
+        edit_workspace: async (args) => codeAgentTask('ws_edit', args, 60000),
+        run_workspace_typecheck: async (args) => codeAgentTask('ws_typecheck', args, 200000),
+        run_workspace_build: async (args) => codeAgentTask('ws_build', args, 440000),
+        run_workspace_tests: async (args) => codeAgentTask('ws_iterate', args, 620000),
+        start_workspace_service: async (args) => codeAgentTask('ws_run', args, 130000),
+        verify_workspace_service: async (args) => codeAgentTask('ws_verify', args, 620000),
+        create_migration_plan: async (args) => codeAgentTask('ws_migration_plan', args, 30000),
+        approve_migration: async (args, role) => codeAgentTask('ws_approve_migration', { ...args, decision: args.decision ?? 'approve', decidedBy: role }, 20000),
+        deploy_staged_workspace: async (args) => execCreateOperationPlan({ goal: `Deploy STAGED app ${args.appName ?? ''} (workspace result; verify /health before promotion)`, operationType: 'new_app_deploy', targetService: String(args.appName ?? '') }),
+        promote_workspace: async (args, role) => codeAgentTask('ws_promote', { ...args, approvedForProtectedCore: role === 'owner' }, 120000),
+        rollback_workspace: async (args) => codeAgentTask('ws_rollback', args, 60000),
         request_approval: async () => ({ ok: true, summary: 'Approval card created.' }),
         record_decision: async (args, role) => { await writeAudit({ actorType: 'human', actorId: role, role, action: 'operator_decision', targetType: 'operator_runtime', targetId: 'decision', after: { decision: String(args.decision ?? ''), reason: String(args.reason ?? '') } }); return { ok: true, summary: 'Decision recorded in the audit log.' }; },
       };
@@ -2073,8 +2089,10 @@ async function main(): Promise<void> {
             await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_APPROVAL_REQUESTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, permissionId: perm.permissionId, toolId: tool.toolId, message: `Approval needed: ${tool.name}`, level: 'warn' } });
             break;
           }
-          // Execute.
+          // Execute. Cross-step context: workspace/migration ids flow forward.
           stepDef.status = 'running';
+          if (stepDef.args.workspaceId === undefined && session.context.workspaceId !== undefined && /workspace|migration/.test(tool.toolId)) stepDef.args.workspaceId = session.context.workspaceId;
+          if (stepDef.args.migrationId === undefined && session.context.migrationId !== undefined && /migration|promote|rollback/.test(tool.toolId)) stepDef.args.migrationId = session.context.migrationId;
           const run: OperatorToolRun = { toolRunId: genId('orun'), runtimeSessionId: session.runtimeSessionId, stepId: stepDef.stepId, toolId: tool.toolId, args: stepDef.args, status: 'running', resultSummary: '', failureCause: '', evidenceIds: [], startedAt: nowIso(), finishedAt: null };
           await opToolRuns.insertOne(run);
           session.toolRunIds.push(run.toolRunId);
@@ -2085,6 +2103,9 @@ async function main(): Promise<void> {
             stepDef.observation = res.summary;
             stepDef.toolRunId = run.toolRunId;
             session.observations.push(res.summary);
+            const rd = res.data as { workspaceId?: string; migration?: { migrationId?: string } } | undefined;
+            if (rd?.workspaceId) session.context.workspaceId = rd.workspaceId;
+            if (rd?.migration?.migrationId) session.context.migrationId = rd.migration.migrationId;
             if (res.evidenceIds?.length) session.evidenceIds.push(...res.evidenceIds);
             await opToolRuns.updateOne({ toolRunId: run.toolRunId }, { $set: { status: res.ok ? 'succeeded' : 'failed', resultSummary: res.summary, evidenceIds: res.evidenceIds ?? [], finishedAt: nowIso() } });
             await recordStep(session, stepDef, narrateStep(tool.name, res.ok, res.summary), res.summary, stepDef.status);
@@ -2185,7 +2206,7 @@ async function main(): Promise<void> {
 
         const session: OperatorRuntimeSession = {
           runtimeSessionId: genId('osess'), userId: role, goal: text, status: 'planning', currentStep: 0,
-          plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], evidenceIds: [],
+          plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], context: {}, evidenceIds: [],
           reportSummary: '', memoryIds: [], nextAction: '', startedAt: nowIso(), completedAt: null,
         };
         await opSessions.insertOne(session);
@@ -2218,12 +2239,17 @@ async function main(): Promise<void> {
             const tool = tools.find((t) => t.toolId === stepDef.toolId);
             if (tool) {
               // Execute the approved step directly, then continue the loop.
+              if (stepDef.args.workspaceId === undefined && session.context.workspaceId !== undefined && /workspace|migration/.test(tool.toolId)) stepDef.args.workspaceId = session.context.workspaceId;
+              if (stepDef.args.migrationId === undefined && session.context.migrationId !== undefined && /migration|promote|rollback/.test(tool.toolId)) stepDef.args.migrationId = session.context.migrationId;
               const exec = executors[tool.toolId];
               try {
                 const res = exec ? await exec(stepDef.args, role) : { ok: false, summary: 'No executor bound.' };
                 stepDef.status = res.ok ? 'done' : 'failed';
                 stepDef.observation = res.summary;
                 session.observations.push(res.summary);
+                const rd2 = res.data as { workspaceId?: string; migration?: { migrationId?: string } } | undefined;
+                if (rd2?.workspaceId) session.context.workspaceId = rd2.workspaceId;
+                if (rd2?.migration?.migrationId) session.context.migrationId = rd2.migration.migrationId;
                 if (res.evidenceIds?.length) session.evidenceIds.push(...res.evidenceIds);
                 await recordStep(session, stepDef, narrateStep(tool.name, res.ok, res.summary), res.summary, stepDef.status);
                 if (!res.ok) { const fa = classifyToolFailure(tool.toolId, res.summary); session.nextAction = fa.nextAction; }
