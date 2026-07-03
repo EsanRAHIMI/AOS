@@ -12,11 +12,17 @@ VALID_IDS=(
   architect-agent
   builder-agent
   devops-agent
+  reviewer-agent
+  qa-agent
   memory-agent
   documentation-service
   file-asset-service
   monitor-agent
+  report-agent
+  internet-research-service
   browser-testing-agent
+  voice-operator-agent
+  code-operator-agent
   dashboard-web
 )
 

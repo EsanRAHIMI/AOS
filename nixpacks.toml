@@ -27,7 +27,13 @@
 # 10. file-asset-service      4112  assets.simorx.com            @factory/file-asset-service
 # 11. monitor-agent           4113  monitor.simorx.com           @factory/monitor-agent
 # 12. browser-testing-agent   4116  browser-testing.simorx.com   @factory/browser-testing-agent
-# 13. dashboard-web           4100  factory.simorx.com           @factory/dashboard-web
+# 13. reviewer-agent           4106  reviewer.simorx.com          @factory/reviewer-agent
+# 14. qa-agent                 4107  qa.simorx.com                @factory/qa-agent
+# 15. report-agent             4114  reports.simorx.com           @factory/report-agent
+# 16. internet-research-service 4115 research.simorx.com          @factory/internet-research-service
+# 17. voice-operator-agent     4121  voice.simorx.com             @factory/voice-operator-agent
+# 18. code-operator-agent      4122  code.simorx.com              @factory/code-operator-agent
+# 19. dashboard-web            4100  factory.simorx.com           @factory/dashboard-web
 #
 # نمونه env در Dokploy (file-asset-service):
 #   NODE_ENV=production
