@@ -30,8 +30,9 @@ export const WorkspaceMode = z.enum([
 export type WorkspaceMode = z.infer<typeof WorkspaceMode>;
 
 export const WorkspaceStatus = z.enum([
-  'created', 'copying', 'planning', 'editing', 'installing', 'building', 'testing', 'running',
-  'verifying', 'ready_for_review', 'waiting_approval', 'migrating', 'completed', 'failed', 'cancelled',
+  'created', 'copying', 'planning', 'generating', 'editing', 'installing', 'building', 'testing',
+  'booting', 'probing', 'fixing', 'running', 'verifying', 'ready_for_review', 'ready_for_migration',
+  'waiting_approval', 'migrating', 'completed', 'failed', 'cancelled',
 ]);
 export type WorkspaceStatus = z.infer<typeof WorkspaceStatus>;
 
@@ -155,6 +156,10 @@ export interface WorkspaceLimits {
   maxIterations: number;
   maxMinutes: number;
   maxFilesChanged: number;
+  /** Cap on stored log/artifact bytes per artifact. */
+  maxLogBytes: number;
+  /** 0 = no cost tracking source configured (reported, never guessed). */
+  maxCostUsd: number;
   requireApprovalBeforeMigration: boolean;
   allowAutofix: boolean;
   allowNewService: boolean;
@@ -168,6 +173,8 @@ export function loadWorkspaceLimits(env: Record<string, string | undefined>): Wo
     maxIterations: num(env.WORKSPACE_MAX_ITERATIONS, 10),
     maxMinutes: num(env.WORKSPACE_MAX_MINUTES, 45),
     maxFilesChanged: num(env.WORKSPACE_MAX_FILES_CHANGED, 80),
+    maxLogBytes: num(env.WORKSPACE_MAX_LOG_BYTES, 8000),
+    maxCostUsd: num(env.WORKSPACE_MAX_COST_USD, 0),
     requireApprovalBeforeMigration: flag(env.WORKSPACE_REQUIRE_APPROVAL_BEFORE_MIGRATION, true),
     allowAutofix: flag(env.WORKSPACE_ALLOW_AUTOFIX, true),
     allowNewService: flag(env.WORKSPACE_ALLOW_NEW_SERVICE, true),
@@ -193,6 +200,8 @@ export const VERIFICATION_MATRIX: VerificationCheck[] = [
   { checkId: 'manifest', label: 'GET /.factory/manifest is valid + capabilities present', appliesTo: 'fastify_service', required: true },
   { checkId: 'status', label: 'GET /.factory/status answers', appliesTo: 'fastify_service', required: true },
   { checkId: 'task_endpoint', label: 'POST /.factory/task guarded by internal token', appliesTo: 'fastify_service', required: true },
+  { checkId: 'capabilities', label: 'GET /.factory/capabilities answers with the capability list', appliesTo: 'fastify_service', required: true },
+  { checkId: 'logs_endpoint', label: 'GET /.factory/logs guarded + answers with internal token', appliesTo: 'fastify_service', required: true },
   { checkId: 'next_build', label: 'Next.js production build compiles all routes', appliesTo: 'next_web', required: true },
   { checkId: 'env_example', label: '.env.example covers required env', appliesTo: 'both', required: true },
   { checkId: 'docs', label: 'README with purpose/endpoints/env/deployment', appliesTo: 'both', required: true },

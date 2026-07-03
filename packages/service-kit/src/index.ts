@@ -157,15 +157,17 @@ export async function createFactoryService(opts: CreateServiceOptions): Promise<
     serviceId: opts.manifest.serviceId,
   }));
 
-  app.get(FACTORY_ENDPOINTS.MANIFEST, { preHandler: requireInternal }, async () =>
-    success(opts.manifest),
-  );
+  // Manifest / status / capabilities are non-secret service metadata. They are
+  // PUBLIC by design (like /health): infrastructure validation, the workspace
+  // runtime's temp-port probes, and the registry all read them without a token.
+  // Anything that acts (/task) or exposes internals (/logs) stays token-guarded.
+  app.get(FACTORY_ENDPOINTS.MANIFEST, async () => success(opts.manifest));
 
-  app.get(FACTORY_ENDPOINTS.STATUS, { preHandler: requireInternal }, async () =>
+  app.get(FACTORY_ENDPOINTS.STATUS, async () =>
     success(buildStatus({ serviceId: opts.manifest.serviceId, version: opts.manifest.version })),
   );
 
-  app.get(FACTORY_ENDPOINTS.CAPABILITIES, { preHandler: requireInternal }, async () =>
+  app.get(FACTORY_ENDPOINTS.CAPABILITIES, async () =>
     success({ capabilities: opts.manifest.capabilities }),
   );
 

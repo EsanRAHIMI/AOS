@@ -1023,3 +1023,58 @@ Verification:
 > staged app spec (`<svc>-staging` + subdomain), `deploy_staged_workspace` creates the gated operation
 > plan, and where the Dokploy API can't perform a step the operation console shows exact manual steps
 > and verifies /health after your confirmation — nothing fakes a deploy.
+
+## Phase Z — Live Runtime Fix Loop & Operator Command Center — COMPLETE (2026-07-03)
+Root-caused and fixed the failed scenario (“status-inspector” workspace booted but failed
+manifest/status verification, then the session ended as completed), and upgraded the whole runtime +
+console into a live, honest, self-repairing system.
+
+Root causes fixed:
+- **service-kit guarded metadata behind the internal token** → unauthenticated temp-port probes got 401
+  on /.factory/manifest, /status, /capabilities. Fix (system-wide, benefits all 19 services + every
+  generated service): manifest/status/capabilities are PUBLIC metadata like /health; /.factory/task and
+  /.factory/logs stay token-guarded. Probes now cover ALL SIX endpoints, token-aware: logs must answer
+  WITH the internal token AND reject without; task must reject without.
+- **Sessions could finish “completed” with failed critical steps.** New shared semantics
+  (`stopSessionOnFailure`): failures in code/test/service/deploy/repair/git/dokploy categories STOP the
+  session as FAILED with cause + next action; only observational categories (read/report/memory/…)
+  continue. Reaching the end of a plan with failed steps now reports failure — never “Done”.
+
+Delivered (runtime):
+- **Live execution state machine** on workspaces: planning → generating → editing → building → booting →
+  probing → fixing → verifying → ready_for_migration → waiting_approval → completed/failed. Every phase
+  transition, check result and fix iteration is STREAMED as workspace.* events (publisher wired through
+  the code-operator-agent entrypoint) — no silent background work.
+- **Real auto-fix loop** (`ws_iterate`, now the default step in all workspace plans): verify → diagnose
+  failing checks → deterministic repairs (regenerate missing docs/env/dokploy spec; rebuild + reboot to
+  re-probe endpoint failures) → re-verify; repeats until GREEN or limits; stops with the precise failing
+  checks when targeted edits are needed; identical-failure detection prevents useless spinning. Failed
+  verification can never produce a migration plan (GREEN gate unchanged).
+- **Verification matrix extended** (+capabilities, +logs_endpoint — both required for services);
+  limits extended (WORKSPACE_MAX_LOG_BYTES=8000, WORKSPACE_MAX_COST_USD reported when a source exists).
+- Session detail endpoint now returns **live workspace telemetry** (phase, iteration counter, files
+  changed, temp port, per-check matrix, log tail) pulled from the code-operator-agent.
+
+Delivered (Operator Console — command center):
+- **Live phase strip** with pulsing active state across the 12-phase machine; **fix-loop counter**
+  (iteration x/max), changed-files x/max, temp port, READY FOR MIGRATION badge, last error line.
+- **Verification matrix grid** (per-check ✓/✕ chips with detail tooltips), **live logs preview**
+  (monospace tail), animated active plan step (pulse + sweep), RESULT line on finish, faster polling
+  (2.5s) while active. Clean/dense/premium — no emoji, no chatbot filler.
+
+Verification:
+- **Phase Z smoke PASS (18/18)** (`scripts/phasez-live-runtime-smoke.mjs`) — flagship: BOOTS A REAL
+  factory service in-process (the exact surface generated services use) and runs the exact ws_run probe
+  suite: all six endpoints GREEN including the two that previously failed (manifest/status), plus logs
+  guarded-and-readable and task guarded. Also: matrix requires capabilities/logs, states include the new
+  phases, limits configurable, stop-on-failure semantics, and the required scenario plan
+  (generate → AUTO-FIX loop → migration plan).
+- Regressions green: Phase Y 31/31, Phase X 28/28, 19.5 23/23, 19 11/11 (three assertions updated to the
+  auto-fix-loop plans). All 19 services + shared + service-kit typecheck; dashboard `next build` ✓.
+  No Docker; Dokploy independence intact. Scope: `packages/service-kit/`, `shared/src/{workspace,operator}/`,
+  `services/code-operator-agent/`, `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.
+
+> Re-run of the required scenario (“Create a new status-inspector service…”) now flows: workspace
+> created → service generated → auto-fix loop (typecheck, build, boot, ALL six probes — repaired until
+> GREEN) → migration plan → staged-deploy approval — with the console showing phases, matrix, loop
+> counter and logs the whole time, and a FAILED (never “completed”) outcome if limits stop it first.

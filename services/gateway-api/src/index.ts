@@ -60,6 +60,7 @@ import {
   isCapabilityQuestion,
   classifyToolFailure,
   narrateStep,
+  stopSessionOnFailure,
   type OperatorTool,
   type OperatorToolRun,
   type OperatorToolPermission,
@@ -2115,8 +2116,10 @@ async function main(): Promise<void> {
               session.observations.push(`Cause: ${fa.cause} Next: ${fa.nextAction}`);
               if (fa.mistakeMemory) { const mid = await writeOpMemory(role, 'mistake_avoidance', fa.mistakeMemory, session.runtimeSessionId, tool.toolId); session.memoryIds.push(mid); }
               await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_TOOL_FAILED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: tool.toolId, message: `${tool.name} failed: ${fa.cause}`, level: 'error' } });
-              // Read-only failures don't kill the whole session — continue observing.
-              if (tool.riskLevel !== 'low') { session.status = 'failed'; break; }
+              // Observational failures don't kill the session; failures in the
+              // critical chain (code/test/service/deploy/…) STOP it — a session
+              // with failed critical steps is never reported as completed.
+              if (stopSessionOnFailure(tool.category)) { session.status = 'failed'; break; }
             } else {
               await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_TOOL_EXECUTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: tool.toolId, message: res.summary.slice(0, 160), level: 'success' } });
             }
@@ -2134,13 +2137,24 @@ async function main(): Promise<void> {
           session.currentStep++;
         }
         if (session.currentStep >= session.plan.length && session.status === 'running') {
-          session.status = 'completed';
-          session.completedAt = nowIso();
-          session.reportSummary = session.observations.slice(-6).join(' ');
-          session.nextAction = session.plan.some((s) => s.status === 'manual_required') ? 'Some steps need configuration or a manual path — see observations.' : 'Done. Give me the next goal.';
-          const mid = await writeOpMemory(role, 'workflow', `Goal “${session.goal.slice(0, 80)}” completed with ${session.plan.length} steps.`, session.runtimeSessionId, null);
-          session.memoryIds.push(mid);
-          await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, message: `Operator session completed: ${session.goal.slice(0, 80)}`, level: 'success' } });
+          const failedSteps = session.plan.filter((s) => s.status === 'failed');
+          if (failedSteps.length > 0) {
+            // Honest outcome: reaching the end of the plan with failures is a
+            // FAILURE, reported with what failed and what to do next.
+            session.status = 'failed';
+            session.completedAt = nowIso();
+            session.reportSummary = `${failedSteps.length} step(s) failed: ${failedSteps.map((s) => `${s.toolId} (${s.observation.slice(0, 100)})`).join('; ')}`;
+            if (!session.nextAction) session.nextAction = 'Inspect the failing step observations, apply targeted edits, and re-run.';
+            await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_TOOL_FAILED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, message: `Operator session finished with failures: ${session.reportSummary.slice(0, 160)}`, level: 'error' } });
+          } else {
+            session.status = 'completed';
+            session.completedAt = nowIso();
+            session.reportSummary = session.observations.slice(-6).join(' ');
+            session.nextAction = session.plan.some((s) => s.status === 'manual_required') ? 'Some steps need configuration or a manual path — see observations.' : 'Done. Give me the next goal.';
+            const mid = await writeOpMemory(role, 'workflow', `Goal “${session.goal.slice(0, 80)}” completed with ${session.plan.length} steps.`, session.runtimeSessionId, null);
+            session.memoryIds.push(mid);
+            await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, message: `Operator session completed: ${session.goal.slice(0, 80)}`, level: 'success' } });
+          }
         }
         await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: session }, { upsert: true });
         return session;
@@ -2173,7 +2187,14 @@ async function main(): Promise<void> {
           opPermissions.find({ runtimeSessionId: req.params.id }, { projection: { _id: 0 } }).sort({ createdAt: 1 }).toArray(),
         ]);
         if (!s) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'runtime session not found'));
-        return success({ session: s, steps, toolRuns: runs, permissions: perms });
+        // Phase Z — live workspace telemetry for the console command center.
+        let workspace: unknown = null;
+        const wsId = (s.context as { workspaceId?: string } | undefined)?.workspaceId;
+        if (wsId) {
+          const r = await codeAgentTask('ws_status', { workspaceId: wsId }, 8000);
+          if (r.ok) workspace = r.data;
+        }
+        return success({ session: s, steps, toolRuns: runs, permissions: perms, workspace });
       });
       app.get('/v1/operator/memories', async (req, reply) => {
         if (!guard(req)) return deny(reply);

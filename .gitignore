@@ -67,4 +67,4 @@ Thumbs.db
 _tmp_*
 
 # Phase Y — disposable staging workspaces (never committed; promotion goes via branch)
-.workspaces/
+.workspaces/*

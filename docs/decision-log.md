@@ -2,6 +2,21 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-03 — Phase Z live runtime & honest outcomes
+
+### D-086 Service metadata is public; actions and internals stay guarded
+/.factory/manifest, /status and /capabilities are non-secret metadata — they are now public like
+/health, because infrastructure validation, registry checks and workspace temp-port probes must read
+them without credentials (this exact guard caused the failed status-inspector verification).
+/.factory/task (acts) and /.factory/logs (internals) remain internal-token-guarded, and the workspace
+probe suite verifies BOTH sides: guarded endpoints must reject without the token and answer with it.
+
+### D-085 A session that failed is a failed session
+`stopSessionOnFailure(category)`: critical-chain failures (code/test/service/deploy/repair/git/dokploy)
+stop the runtime session as FAILED with cause + next action; only observational categories may continue.
+Completing a plan with failed steps reports failure. Combined with the streamed workspace phase events
+and the GREEN gate before migration plans, the system cannot claim success it did not earn.
+
 ## 2026-07-03 — Phase Y staging workspace & service evolution
 
 ### D-084 Isolation is the approval boundary, not the edit

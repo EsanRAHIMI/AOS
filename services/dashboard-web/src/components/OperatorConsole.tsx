@@ -20,6 +20,8 @@ interface LogItem { who: 'user' | 'operator'; text: string }
 
 const ACTIVE_STATUSES = ['planning', 'running', 'verifying', 'waiting_approval'];
 const STEP_GLYPH: Record<string, string> = { done: '✓', failed: '✕', running: '▸', pending: '○', skipped: '–', awaiting_approval: '⏸', manual_required: '!' };
+/** Workspace live-phase → short label for the status strip. */
+const WS_PHASES = ['planning', 'generating', 'editing', 'building', 'booting', 'probing', 'fixing', 'verifying', 'ready_for_migration', 'waiting_approval', 'completed', 'failed'];
 
 export function OperatorConsole({ role }: { role: string }) {
   const pathname = usePathname() ?? '/';
@@ -140,7 +142,7 @@ export function OperatorConsole({ role }: { role: string }) {
     if (session && ACTIVE_STATUSES.includes(session.status)) {
       pollRef.current = setInterval(() => {
         void getRuntimeSessionAction(session.runtimeSessionId).then((s) => applySession(s, true));
-      }, 4000);
+      }, 2500);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -356,18 +358,62 @@ export function OperatorConsole({ role }: { role: string }) {
               <span className={`badge ${session.status === 'completed' ? 'ok' : session.status === 'failed' ? 'err' : 'warn'}`}>{session.status.replace(/_/g, ' ')}</span>
             </div>
             <div style={{ fontSize: 12.5, marginBottom: 8 }}><span className="m">GOAL&nbsp;&nbsp;</span>{session.goal}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
-              {session.plan.map((p, i) => (
-                <div key={p.stepId} style={{ display: 'flex', gap: 8, fontSize: 12, alignItems: 'baseline', opacity: p.status === 'pending' ? 0.55 : 1 }}>
-                  <span style={{ width: 14, textAlign: 'center', color: p.status === 'failed' ? 'var(--err)' : p.status === 'done' ? 'var(--ok)' : p.status === 'awaiting_approval' || p.status === 'manual_required' ? 'var(--warn)' : 'var(--accent)' }}>{STEP_GLYPH[p.status] ?? '○'}</span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ fontWeight: i === session.currentStep ? 650 : 450 }}>{p.toolId.replace(/_/g, ' ')}</span>
-                    {p.observation && <span className="m" style={{ fontSize: 11.5 }}> — {p.observation.slice(0, 140)}</span>}
-                  </span>
+
+            {/* Live workspace phase strip */}
+            {session.workspace && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {WS_PHASES.map((ph) => {
+                    const active = session.workspace?.status === ph;
+                    const isFail = ph === 'failed';
+                    return (
+                      <span key={ph} className={active && ACTIVE_STATUSES.includes(session.status) && !['completed', 'failed', 'ready_for_migration'].includes(ph) ? 'op-active-dot' : undefined} style={{ fontSize: 9.5, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', background: active ? (isFail ? 'rgba(255,107,129,0.18)' : 'var(--glass-2)') : 'transparent', border: `1px solid ${active ? (isFail ? 'rgba(255,107,129,0.5)' : 'var(--accent)') : 'var(--border)'}`, color: active ? (isFail ? 'var(--err)' : 'var(--accent)') : 'var(--muted, #7a8699)', opacity: active ? 1 : 0.55 }}>{ph.replace(/_/g, ' ')}</span>
+                    );
+                  })}
                 </div>
-              ))}
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11 }} className="m">
+                  <span title="Workspace id">{session.workspace.workspaceId}</span>
+                  <span title="Fix-loop iterations">loop {session.workspace.iterations}/{session.workspace.maxIterations}</span>
+                  <span title="Changed files">{session.workspace.filesChanged}/{session.workspace.maxFilesChanged} files</span>
+                  {session.workspace.tempPort && <span title="Temporary run port">:{session.workspace.tempPort}</span>}
+                  {session.workspace.status === 'ready_for_migration' && <span style={{ color: 'var(--ok)', fontWeight: 700 }}>READY FOR MIGRATION</span>}
+                </div>
+                {session.workspace.lastError && <div style={{ fontSize: 11, color: 'var(--err)', marginTop: 3 }}>{session.workspace.lastError}</div>}
+
+                {/* Verification matrix grid */}
+                {session.workspace.matrix.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                    {session.workspace.matrix.map((m) => (
+                      <span key={m.checkId} title={m.detail} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)', color: m.status === 'passed' ? 'var(--ok)' : m.status === 'failed' ? 'var(--err)' : 'var(--warn)', background: 'var(--glass-2)' }}>
+                        {m.status === 'passed' ? '✓' : m.status === 'failed' ? '✕' : '·'} {m.checkId.replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Live logs preview */}
+                {session.workspace.logsTail && (
+                  <pre className="op-mono" style={{ margin: '6px 0 0', padding: 8, borderRadius: 6, background: 'rgba(0,0,0,0.35)', border: '1px solid var(--border)', maxHeight: 84, overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-all', opacity: 0.85 }}>{session.workspace.logsTail.split('\n').slice(-5).join('\n')}</pre>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
+              {session.plan.map((p, i) => {
+                const isActive = i === session.currentStep && ACTIVE_STATUSES.includes(session.status);
+                return (
+                  <div key={p.stepId} className={isActive ? 'op-working-bar' : undefined} style={{ display: 'flex', gap: 8, fontSize: 12, alignItems: 'baseline', opacity: p.status === 'pending' && !isActive ? 0.55 : 1, borderRadius: 4 }}>
+                    <span className={isActive ? 'op-active-dot' : undefined} style={{ width: 14, textAlign: 'center', color: p.status === 'failed' ? 'var(--err)' : p.status === 'done' ? 'var(--ok)' : p.status === 'awaiting_approval' || p.status === 'manual_required' ? 'var(--warn)' : 'var(--accent)' }}>{isActive && p.status === 'pending' ? '▸' : STEP_GLYPH[p.status] ?? '○'}</span>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ fontWeight: isActive ? 650 : 450 }}>{p.toolId.replace(/_/g, ' ')}</span>
+                      {p.observation && <span className="m" style={{ fontSize: 11.5 }}> — {p.observation.slice(0, 140)}</span>}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             {session.nextAction && <div style={{ fontSize: 12 }}><span className="m">NEXT&nbsp;&nbsp;</span>{session.nextAction}</div>}
+            {session.reportSummary && !ACTIVE_STATUSES.includes(session.status) && <div style={{ fontSize: 11.5, marginTop: 4 }}><span className="m">RESULT&nbsp;&nbsp;</span>{session.reportSummary.slice(0, 300)}</div>}
             {session.evidenceCount > 0 && <div className="m" style={{ fontSize: 11, marginTop: 4 }}>{session.evidenceCount} evidence record{session.evidenceCount === 1 ? '' : 's'} stored</div>}
 
             {session.pendingPermission && (

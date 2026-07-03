@@ -23,7 +23,7 @@ import {
 } from '@factory/shared';
 import { createFactoryService, type TaskHandler } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
-import { handleWorkspaceAction } from './workspace-runtime.js';
+import { handleWorkspaceAction, setWorkspaceProgressPublisher } from './workspace-runtime.js';
 
 const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema));
 const exec = promisify(execFile);
@@ -218,6 +218,10 @@ async function main(): Promise<void> {
   const service = await createFactoryService({
     manifest, port: env.SERVICE_PORT, internalToken: env.FACTORY_INTERNAL_TOKEN, adminToken: env.FACTORY_ADMIN_TOKEN,
     registryUrl: env.SERVICE_REGISTRY_URL, eventBusUrl: env.EVENT_BUS_URL, logLevel: env.LOG_LEVEL, taskHandler: handleTask,
+  });
+  // Stream workspace phase transitions / check results / fix iterations live.
+  setWorkspaceProgressPublisher((event, message, level) => {
+    void service.ctx.publisher.publish({ type: event, taskId: null, payload: { message, level: level ?? 'info' } }).catch(() => undefined);
   });
   await service.listen();
 }

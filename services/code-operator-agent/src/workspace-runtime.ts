@@ -30,6 +30,12 @@ const LIMITS = loadWorkspaceLimits(process.env);
 
 export interface WsResult { ok: boolean; summary: string; data?: unknown }
 
+/** Live progress stream — wired to the event bus by the service entrypoint so
+ *  every phase transition and check result is visible in real time. */
+export type WsProgress = (event: string, message: string, level?: string) => void;
+let progress: WsProgress = () => undefined;
+export function setWorkspaceProgressPublisher(p: WsProgress): void { progress = p; }
+
 const wsCol = () => collection<Workspace>(COLLECTIONS.WORKSPACES);
 const runCol = () => collection<WorkspaceRun>(COLLECTIONS.WORKSPACE_RUNS);
 const svcCol = () => collection<WorkspaceService>(COLLECTIONS.WORKSPACE_SERVICES);
@@ -53,6 +59,12 @@ async function saveWs(ws: Workspace): Promise<Workspace> {
   ws.updatedAt = nowIso();
   await wsCol().updateOne({ workspaceId: ws.workspaceId }, { $set: ws }, { upsert: true });
   return ws;
+}
+
+async function setPhase(ws: Workspace, status: Workspace['status'], message: string): Promise<void> {
+  ws.status = status;
+  await saveWs(ws);
+  progress('workspace.iteration', `[${ws.workspaceId}] ${status}: ${message}`.slice(0, 200));
 }
 
 async function getWs(workspaceId: string): Promise<Workspace> {
@@ -116,6 +128,8 @@ export async function wsCreate(input: { goal: string; mode: string; sourceServic
   await fs.mkdir(join(wsDir, serviceDirName), { recursive: true });
 
   if (mode === 'create_new_service' && newService) {
+    ws.status = 'generating';
+    progress('workspace.created', `[${workspaceId}] generating ${newService.serviceId} (port ${newService.port}, ${newService.subdomain})`);
     // Generate the complete real service (standard factory endpoints, manifest,
     // README, env example, Dokploy spec) into the workspace.
     const files = generateServiceFiles(newService, input.goal);
@@ -280,7 +294,8 @@ export async function wsRun(input: { workspaceId: string }): Promise<WsResult> {
   const ws = await getWs(String(input.workspaceId));
   const dir = svcDirOf(ws);
   const port = await freePort();
-  ws.tempPort = port; ws.status = 'running'; await saveWs(ws);
+  ws.tempPort = port;
+  await setPhase(ws, 'booting', `starting on temp port ${port}`);
 
   const logs: string[] = [];
   const child = spawn('node', ['dist/index.js'], {
@@ -299,9 +314,15 @@ export async function wsRun(input: { workspaceId: string }): Promise<WsResult> {
   child.stdout?.on('data', (d: Buffer) => { logs.push(d.toString()); if (logs.length > 400) logs.shift(); });
   child.stderr?.on('data', (d: Buffer) => { logs.push(d.toString()); if (logs.length > 400) logs.shift(); });
 
-  const probe = async (path: string): Promise<{ ok: boolean; body: string; status: number }> => {
+  const internalToken = process.env.FACTORY_INTERNAL_TOKEN ?? '';
+  const probe = async (path: string, opts?: { token?: boolean; method?: string; body?: string }): Promise<{ ok: boolean; body: string; status: number }> => {
     try {
-      const r = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: opts?.method ?? 'GET',
+        headers: { 'content-type': 'application/json', ...(opts?.token ? { 'x-factory-internal-token': internalToken } : {}) },
+        body: opts?.body,
+        signal: AbortSignal.timeout(4000),
+      });
       return { ok: r.ok, body: (await r.text()).slice(0, 500), status: r.status };
     } catch { return { ok: false, body: '', status: 0 }; }
   };
@@ -316,28 +337,41 @@ export async function wsRun(input: { workspaceId: string }): Promise<WsResult> {
     }
     await runCheck(ws, 'boot', 'service boots on temp port', async () => ({ ok: up, detail: up ? `listening on ${port}` : `did not become healthy on ${port} (exit=${child.exitCode})` }));
     if (!up) {
-      await recordArtifact(ws.workspaceId, 'log', 'boot logs', logs.join(''));
+      await recordArtifact(ws.workspaceId, 'log', 'boot logs', logs.join('').slice(-LIMITS.maxLogBytes));
       return { ok: false, summary: `Service did not become healthy on temp port ${port}. Boot logs stored — inspect and fix.`, data: { port, logTail: logs.join('').slice(-1200) } };
     }
+    await setPhase(ws, 'probing', `probing all factory endpoints on :${port}`);
+    // The full standard surface. Metadata endpoints are public by design;
+    // /.factory/logs must answer WITH the internal token and /.factory/task
+    // must REJECT without it.
     const health = await probe('/health');
     const manifest = await probe('/.factory/manifest');
     const status = await probe('/.factory/status');
-    const capsOk = /capabilities/.test(manifest.body);
-    const taskGuard = await (async () => {
-      try {
-        const r = await fetch(`http://127.0.0.1:${port}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(4000) });
-        return r.status === 401 || r.status === 403;
-      } catch { return false; }
-    })();
-    await runCheck(ws, 'health', 'GET /health', async () => ({ ok: health.ok, detail: `status ${health.status}` }));
-    await runCheck(ws, 'manifest', 'GET /.factory/manifest + capabilities', async () => ({ ok: manifest.ok && capsOk, detail: manifest.ok ? (capsOk ? 'manifest valid with capabilities' : 'manifest missing capabilities') : `status ${manifest.status}` }));
-    await runCheck(ws, 'status', 'GET /.factory/status', async () => ({ ok: status.ok, detail: `status ${status.status}` }));
-    await runCheck(ws, 'task_endpoint', 'POST /.factory/task rejects without internal token', async () => ({ ok: taskGuard, detail: taskGuard ? 'unauthenticated task rejected' : 'task endpoint NOT guarded' }));
-    await recordArtifact(ws.workspaceId, 'probe_result', 'factory probes', JSON.stringify({ port, health: health.status, manifest: manifest.status, status: status.status, tokenGuard: taskGuard }));
-    await recordArtifact(ws.workspaceId, 'log', 'run logs', logs.join(''));
-    const allOk = health.ok && manifest.ok && capsOk && status.ok && taskGuard;
-    await recordRun(ws, 'ws_run', allOk, `probes on :${port} — health ${health.status}, manifest ${manifest.status}, status ${status.status}, token guard ${taskGuard}`, Date.now());
-    return { ok: allOk, summary: `Ran on temp port ${port}: health ${health.ok ? 'ok' : 'FAIL'}, manifest ${manifest.ok && capsOk ? 'ok' : 'FAIL'}, status ${status.ok ? 'ok' : 'FAIL'}, token guard ${taskGuard ? 'ok' : 'FAIL'}.`, data: { port } };
+    const capabilities = await probe('/.factory/capabilities');
+    const logsAuthed = await probe('/.factory/logs', { token: true });
+    const logsUnauthed = await probe('/.factory/logs');
+    const taskUnauthed = await probe('/.factory/task', { method: 'POST', body: '{}' });
+    const capsOk = capabilities.ok && /capabilities/.test(capabilities.body);
+    const manifestOk = manifest.ok && /serviceId/.test(manifest.body);
+    const taskGuard = taskUnauthed.status === 401 || taskUnauthed.status === 403;
+    const logsOk = logsAuthed.ok && (logsUnauthed.status === 401 || logsUnauthed.status === 403);
+    const checks: Array<[string, string, boolean, string]> = [
+      ['health', 'GET /health', health.ok, `status ${health.status}`],
+      ['manifest', 'GET /.factory/manifest', manifestOk, manifest.ok ? (manifestOk ? 'valid manifest' : 'manifest malformed') : `status ${manifest.status}`],
+      ['status', 'GET /.factory/status', status.ok, `status ${status.status}`],
+      ['capabilities', 'GET /.factory/capabilities', capsOk, capabilities.ok ? (capsOk ? 'capability list present' : 'no capabilities in body') : `status ${capabilities.status}`],
+      ['task_endpoint', 'POST /.factory/task rejects without internal token', taskGuard, taskGuard ? 'unauthenticated task rejected' : `NOT guarded (status ${taskUnauthed.status})`],
+      ['logs_endpoint', 'GET /.factory/logs guarded + answers with token', logsOk, logsOk ? 'guarded and readable with token' : `authed ${logsAuthed.status} / unauthed ${logsUnauthed.status}`],
+    ];
+    for (const [id, label, ok, detail] of checks) {
+      await runCheck(ws, id, label, async () => ({ ok, detail }));
+      progress('workspace.check.completed', `[${ws.workspaceId}] ${ok ? 'PASS' : 'FAIL'} ${id}: ${detail}`, ok ? 'success' : 'error');
+    }
+    await recordArtifact(ws.workspaceId, 'probe_result', 'factory probes', JSON.stringify({ port, health: health.status, manifest: manifest.status, status: status.status, capabilities: capabilities.status, logsAuthed: logsAuthed.status, logsUnauthed: logsUnauthed.status, taskUnauthed: taskUnauthed.status }));
+    await recordArtifact(ws.workspaceId, 'log', 'run logs', logs.join('').slice(-LIMITS.maxLogBytes));
+    const allOk = checks.every(([, , ok]) => ok);
+    await recordRun(ws, 'ws_run', allOk, checks.map(([id, , ok]) => `${ok ? '✓' : '✕'}${id}`).join(' '), Date.now());
+    return { ok: allOk, summary: `Booted on :${port} — ${checks.map(([id, , ok]) => `${id} ${ok ? 'ok' : 'FAIL'}`).join(', ')}.`, data: { port, failing: checks.filter(([, , ok]) => !ok).map(([id]) => id) } };
   } finally {
     child.kill('SIGTERM');
     setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 3000).unref();
@@ -383,45 +417,70 @@ export async function wsVerify(input: { workspaceId: string; skipRun?: boolean }
   for (const r of results) if (!latest.has(r.checkId)) latest.set(r.checkId, r);
   const summary = [...latest.values()].map((r) => `${r.status === 'passed' ? '✓' : '✕'} ${r.checkId}`).join('  ');
   const { green, missing } = matrixGreen(kind, [...latest.values()]);
-  ws.status = green ? 'ready_for_review' : 'failed';
+  ws.status = green ? 'ready_for_migration' : 'failed';
   ws.lastError = green ? '' : `required checks failing: ${missing.join(', ')}`;
   await saveWs(ws);
+  progress('workspace.verified', `[${ws.workspaceId}] verification ${green ? 'GREEN' : `INCOMPLETE (${missing.join(', ')})`}`, green ? 'success' : 'warn');
   await recordRun(ws, 'ws_verify', green, summary, Date.now());
   return { ok: green, summary: green ? `Verification GREEN (${kind}): ${summary}` : `Verification INCOMPLETE — failing: ${missing.join(', ')}. ${summary}`, data: { kind, matrix: [...latest.values()], missing } };
 }
 
-/** Check-and-fix iteration loop: repeats verification, applying built-in
- *  deterministic fixes (build after typecheck, etc.) until green or limits.
- *  It never fabricates green — every iteration is recorded with real results. */
+/** The AUTO-FIX loop: verify → diagnose failing checks → apply deterministic
+ *  repairs (regenerate missing files, rebuild, reboot, retry flaky boots) →
+ *  re-verify. Runs WITHOUT approval inside the isolated workspace until GREEN
+ *  or a configured limit pauses it with a precise cause. Every iteration and
+ *  every fix is recorded and streamed — it never fabricates green. */
 export async function wsIterate(input: { workspaceId: string }): Promise<WsResult> {
   const ws0 = await getWs(String(input.workspaceId));
   if (!LIMITS.allowAutofix) return wsVerify({ workspaceId: ws0.workspaceId });
   const startedAt = Date.now();
   let last: WsResult = { ok: false, summary: 'not run' };
+  let lastFailing: string[] = [];
   for (let i = 0; i < LIMITS.maxIterations; i++) {
     const ws = await getWs(ws0.workspaceId);
     if (Date.now() - startedAt > LIMITS.maxMinutes * 60000) {
+      progress('workspace.failed', `[${ws.workspaceId}] time limit ${LIMITS.maxMinutes}m reached at iteration ${i}`, 'warn');
       return { ok: false, summary: `Time limit reached (${LIMITS.maxMinutes}m) after ${i} iterations. Progress: ${last.summary}. Ask to continue with a raised limit.` };
     }
     ws.iterations = i + 1; await saveWs(ws);
+    progress('workspace.iteration', `[${ws.workspaceId}] iteration ${i + 1}/${LIMITS.maxIterations} — verifying`);
     last = await wsVerify({ workspaceId: ws.workspaceId });
-    if (last.ok) return { ok: true, summary: `Green after ${i + 1} iteration(s). ${last.summary}` };
-    // Deterministic diagnosis for the next iteration; deeper fixes come from
-    // wsEdit calls issued by the operator/LLM between iterations.
-    const failing = (last.data as { missing?: string[] } | undefined)?.missing ?? [];
-    if (failing.every((f) => ['docs', 'env_example', 'dokploy_spec'].includes(f))) {
-      // Auto-fixable: generate minimal missing docs/env for evolved copies.
-      const dir = svcDirOf(ws);
-      const fixes: Array<{ file: string; content: string }> = [];
-      if (failing.includes('docs')) fixes.push({ file: 'README.md', content: `# ${ws.serviceDirName}\n\nEvolved in workspace ${ws.workspaceId} — goal: ${ws.goal}\n` });
-      if (failing.includes('env_example')) fixes.push({ file: '.env.example', content: 'SERVICE_PORT=\nMONGODB_URI=\nFACTORY_INTERNAL_TOKEN=\n' });
-      if (failing.includes('dokploy_spec')) fixes.push({ file: 'deployment.dokploy.md', content: `# Dokploy — ${ws.serviceDirName}\nStaged app: ${ws.serviceDirName}-staging\n` });
-      for (const f of fixes) await fs.writeFile(join(dir, f.file), f.content, 'utf8');
-      continue;
+    if (last.ok) {
+      progress('workspace.verified', `[${ws.workspaceId}] GREEN after ${i + 1} iteration(s)`, 'success');
+      return { ok: true, summary: `Green after ${i + 1} iteration(s). ${last.summary}` };
     }
-    // Not deterministically fixable → stop with a precise cause.
-    return { ok: false, summary: `Stopped after iteration ${i + 1}: ${last.summary} — needs targeted edits (ws_edit), then run verify again.`, data: last.data };
+    const failing = (last.data as { missing?: string[] } | undefined)?.missing ?? [];
+    const wsFix = await getWs(ws0.workspaceId);
+    await setPhase(wsFix, 'fixing', `iteration ${i + 1}: repairing ${failing.join(', ')}`);
+    const dir = svcDirOf(wsFix);
+    let fixedSomething = false;
+
+    // Fix class 1 — missing docs/env/dokploy spec: regenerate minimal files.
+    const docFixes: Array<{ file: string; content: string }> = [];
+    if (failing.includes('docs')) docFixes.push({ file: 'README.md', content: `# ${wsFix.serviceDirName}\n\nEvolved in workspace ${wsFix.workspaceId} — goal: ${wsFix.goal}\n` });
+    if (failing.includes('env_example')) docFixes.push({ file: '.env.example', content: 'SERVICE_PORT=\nMONGODB_URI=\nMONGODB_DB_NAME=autonomous_os_kernel\nFACTORY_INTERNAL_TOKEN=\nLOG_LEVEL=info\n' });
+    if (failing.includes('dokploy_spec')) docFixes.push({ file: 'deployment.dokploy.md', content: `# Dokploy — ${wsFix.serviceDirName}\nStaged app: ${wsFix.serviceDirName}-staging\nHealth check: /health\n` });
+    for (const f of docFixes) {
+      await fs.writeFile(join(dir, f.file), f.content, 'utf8');
+      await changeCol().insertOne({ changeId: genId('wchg'), workspaceId: wsFix.workspaceId, file: f.file, changeType: 'create', summary: `autofix iteration ${i + 1}`, bytes: f.content.length, createdAt: nowIso() });
+      fixedSomething = true;
+    }
+
+    // Fix class 2 — stale build behind fresh sources: rebuild before reprobing.
+    if (failing.some((f) => ['boot', 'health', 'manifest', 'status', 'capabilities', 'task_endpoint', 'logs_endpoint'].includes(f))) {
+      progress('workspace.iteration', `[${wsFix.workspaceId}] rebuilding + rebooting to retry probes`);
+      const rebuilt = await wsBuild({ workspaceId: wsFix.workspaceId });
+      if (rebuilt.ok) fixedSomething = true; // reboot happens in the next verify pass
+    }
+
+    // Same failures twice with nothing fixable → stop with a precise cause.
+    if (!fixedSomething && failing.join(',') === lastFailing.join(',')) {
+      progress('workspace.failed', `[${wsFix.workspaceId}] not deterministically fixable: ${failing.join(', ')}`, 'error');
+      return { ok: false, summary: `Stopped after iteration ${i + 1}: ${last.summary} — these checks need targeted edits (ws_edit): ${failing.join(', ')}. Then re-run the loop.`, data: last.data };
+    }
+    lastFailing = failing;
   }
+  progress('workspace.failed', `[${ws0.workspaceId}] iteration limit ${LIMITS.maxIterations} reached`, 'warn');
   return { ok: false, summary: `Iteration limit reached (${LIMITS.maxIterations}). Last: ${last.summary}. Ask to continue with a raised limit.` };
 }
 
@@ -429,7 +488,8 @@ export async function wsIterate(input: { workspaceId: string }): Promise<WsResul
 
 export async function wsMigrationPlan(input: { workspaceId: string }): Promise<WsResult> {
   const ws = await getWs(String(input.workspaceId));
-  if (ws.status !== 'ready_for_review') return { ok: false, summary: `Workspace is ${ws.status} — verification must be GREEN before a migration plan (run ws_verify).` };
+  if (ws.status !== 'ready_for_migration' && ws.status !== 'ready_for_review') return { ok: false, summary: `Workspace is ${ws.status} — verification must be GREEN before a migration plan (run the fix loop until green).` };
+  progress('workspace.migration.proposed', `[${ws.workspaceId}] building migration plan`, 'warn');
   const changes = await changeCol().find({ workspaceId: ws.workspaceId }, { projection: { _id: 0 } }).toArray();
   const tests = await testCol().find({ workspaceId: ws.workspaceId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(30).toArray();
   const newSvc = await svcCol().findOne({ workspaceId: ws.workspaceId }, { projection: { _id: 0 } });
@@ -485,8 +545,16 @@ export async function wsRollback(input: { workspaceId: string; migrationId?: str
 export async function wsStatus(input: { workspaceId?: string }): Promise<WsResult> {
   if (input.workspaceId) {
     const ws = await getWs(String(input.workspaceId));
-    const tests = await testCol().find({ workspaceId: ws.workspaceId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray();
-    return { ok: true, summary: `${ws.workspaceId}: ${ws.status}, iteration ${ws.iterations}, ${ws.filesChanged} files changed${ws.lastError ? `, last error: ${ws.lastError}` : ''}.`, data: { workspace: ws, latestTests: tests, limits: LIMITS } };
+    const tests = await testCol().find({ workspaceId: ws.workspaceId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(40).toArray();
+    // Latest result per check → the live verification matrix for the console.
+    const latest = new Map<string, WorkspaceTest>();
+    for (const t of tests) if (!latest.has(t.checkId)) latest.set(t.checkId, t);
+    const lastLog = await artifactCol().find({ workspaceId: ws.workspaceId, kind: 'log' }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray();
+    return {
+      ok: true,
+      summary: `${ws.workspaceId}: ${ws.status}, iteration ${ws.iterations}/${LIMITS.maxIterations}, ${ws.filesChanged} files changed${ws.lastError ? `, last error: ${ws.lastError}` : ''}.`,
+      data: { workspace: ws, matrix: [...latest.values()].map((t) => ({ checkId: t.checkId, status: t.status, detail: t.detail })), logsTail: (lastLog[0]?.content ?? '').slice(-900), limits: LIMITS },
+    };
   }
   const list = await wsCol().find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray();
   return { ok: true, summary: `${list.length} workspaces.`, data: { workspaces: list, limits: LIMITS } };

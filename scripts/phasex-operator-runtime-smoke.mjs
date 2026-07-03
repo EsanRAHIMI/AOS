@@ -62,7 +62,7 @@ check('propose is dry-run (low, no approval); edit requires approval', (() => {
 
 console.log('— Scenario D: create a small service —');
 const d = planForGoal('Create a small status-check service and deploy it as a non-core app.', { safeMode: false, role: 'owner' });
-check('Service plan (Phase Y): generate in workspace → verify matrix → migration plan', d.kind === 'runtime_goal' && d.steps[0].toolId === 'create_new_service_workspace' && d.steps.some((s) => s.toolId === 'verify_workspace_service') && d.steps[d.steps.length - 1].toolId === 'create_migration_plan');
+check('Service plan (Phase Z): generate in workspace → auto-fix loop → migration plan', d.kind === 'runtime_goal' && d.steps[0].toolId === 'create_new_service_workspace' && d.steps.some((s) => s.toolId === 'run_workspace_tests') && d.steps[d.steps.length - 1].toolId === 'create_migration_plan');
 check('create_new_service and create_operation_plan both require approval', ['create_new_service', 'create_operation_plan'].every((id) => tools.find((t) => t.toolId === id).requiresApproval));
 
 console.log('— Scenario E: protected core safety —');

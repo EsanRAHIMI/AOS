@@ -248,6 +248,16 @@ Phase 10 candidates:
 7. 15 operator tools + planner scenarios (evolve console / new service / repair / core upgrade) with
    cross-step context; 31/31 Phase Y smoke incl. REAL generated-service typecheck; all regressions — DONE.
 
+## Phase Z — Live Runtime Fix Loop & Operator Command Center — DONE
+1. service-kit: manifest/status/capabilities public metadata; task+logs token-guarded — DONE.
+2. ws_run probes all six factory endpoints token-aware; matrix +capabilities +logs_endpoint — DONE.
+3. Real auto-fix loop (verify → repair → rebuild/reboot → re-verify) streamed live; GREEN gate — DONE.
+4. Honest outcomes: critical-step failure ⇒ session FAILED with cause + next action, never “Done” — DONE.
+5. 12-phase live state machine + console command center (phase strip, matrix grid, loop counter,
+   logs preview, migration readiness) — DONE.
+6. 18/18 Phase Z smoke incl. REAL in-process service boot with the full probe suite GREEN; all
+   regressions; all typechecks; dashboard build — DONE.
+
 Next-phase candidates:
 8. LLM-planned goals + LLM-synthesized workspace edit batches through the LLM router, still bounded
    by workspace limits and migration approvals.

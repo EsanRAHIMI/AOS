@@ -395,7 +395,7 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
       narration: `Planning a new service “${newServiceName}” in an isolated workspace: generate → verify matrix (typecheck, build, boot on temp port, factory probes) → migration plan with staged deployment. Approval gates anything live.`,
       steps: [
         step('create_new_service_workspace', 'Generate the complete real service in an isolated workspace', { goal, mode: 'create_new_service', newServiceName, description: goal }),
-        step('verify_workspace_service', 'Full verification matrix incl. temp-port boot and factory probes'),
+        step('run_workspace_tests', 'Verify + AUTO-FIX loop: typecheck, build, temp-port boot, all six factory probes — repaired until GREEN or limits'),
         step('create_migration_plan', 'Migration + staged Dokploy app + rollback plan (approval required to proceed)'),
       ],
     };
@@ -444,8 +444,7 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
       steps: [
         step('create_workspace', 'Isolated copy of dashboard-web (source untouched)', { goal, mode: 'upgrade_ui', sourceServiceId: 'dashboard-web' }),
         step('inspect_workspace', 'Map the console components'),
-        step('run_workspace_typecheck', 'Baseline typecheck of the copy'),
-        step('run_workspace_build', 'Next production build of the copy'),
+        step('run_workspace_tests', 'Verify + AUTO-FIX loop: typecheck + Next production build until GREEN or limits'),
         step('create_migration_plan', 'Changed files + risk + rollback; approval before replacing the live dashboard'),
       ],
     };
@@ -473,6 +472,19 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
   if (/\b(health|is .* up|reachable)\b/.test(t) || (/check/.test(t) && svc)) return { kind: 'single_tool', narration: `Read-only health check${svc ? ` on ${svc}` : ''}.`, steps: [step('check_service_health', 'Real /health + registry verification', { targetService: svc ?? '' })] };
 
   return { kind: 'clarify', steps: [], narration: `I heard: “${goal.trim().slice(0, 80)}”. Give me a goal I can plan — a system check, a service operation, a code improvement, research, or a new service.` };
+}
+
+/* ===================== session failure semantics ======================== */
+
+/** Categories whose failures are informational — the session may continue.
+ *  Failures in ANY other category (code/test/service/deploy/repair/git/
+ *  dokploy/security) are critical-chain: the session stops and reports
+ *  cause + next action. A session with failed critical steps is NEVER
+ *  reported as completed — no fake success. */
+export const OBSERVATIONAL_CATEGORIES: ReadonlySet<string> = new Set(['read', 'evidence', 'report', 'memory', 'reason', 'learning', 'approval']);
+
+export function stopSessionOnFailure(category: string): boolean {
+  return !OBSERVATIONAL_CATEGORIES.has(category);
 }
 
 /* ========================= failure classification ======================= */

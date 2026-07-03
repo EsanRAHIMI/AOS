@@ -97,9 +97,9 @@ check('Workspace tools unavailable (with reason) without CODE_WORKSPACE_ROOT', b
 
 console.log('— Planner scenarios —');
 const a = planForGoal('Improve the Operator Console UI into a more powerful mission-grade interface.', { safeMode: false, role: 'owner' });
-check('A (evolve console): workspace copy of dashboard-web → typecheck → next build → migration plan', a.kind === 'runtime_goal' && a.steps[0].toolId === 'create_workspace' && a.steps[0].args.sourceServiceId === 'dashboard-web' && a.steps.some((s) => s.toolId === 'run_workspace_build') && a.steps[a.steps.length - 1].toolId === 'create_migration_plan');
+check('A (evolve console): workspace copy of dashboard-web → auto-fix loop → migration plan', a.kind === 'runtime_goal' && a.steps[0].toolId === 'create_workspace' && a.steps[0].args.sourceServiceId === 'dashboard-web' && a.steps.some((s) => s.toolId === 'run_workspace_tests') && a.steps[a.steps.length - 1].toolId === 'create_migration_plan');
 const b = planForGoal('Create a new status-inspector service that checks all registered services and reports anomalies.', { safeMode: false, role: 'owner' });
-check('B (new service): generate → verify matrix → migration plan', b.kind === 'runtime_goal' && b.steps[0].toolId === 'create_new_service_workspace' && b.steps[1].toolId === 'verify_workspace_service' && b.steps[2].toolId === 'create_migration_plan');
+check('B (new service): generate → auto-fix loop → migration plan', b.kind === 'runtime_goal' && b.steps[0].toolId === 'create_new_service_workspace' && b.steps[1].toolId === 'run_workspace_tests' && b.steps[2].toolId === 'create_migration_plan');
 check('B: allocates a concrete service name', String(b.steps[0].args.newServiceName ?? '').includes('status-inspector'));
 const c = planForGoal('Repair browser-testing-agent in a workspace and prove it passes health checks.', { safeMode: false, role: 'operator' });
 check('C (repair): workspace copy of browser-testing-agent + check-fix loop', c.kind === 'runtime_goal' && c.steps[0].args.sourceServiceId === 'browser-testing-agent' && String(c.steps[0].args.mode) === 'repair_service' && c.steps.some((s) => s.toolId === 'run_workspace_tests'));

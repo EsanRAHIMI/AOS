@@ -14,6 +14,20 @@ export interface RuntimePlanStep {
   observation: string;
 }
 
+export interface WorkspaceTelemetry {
+  workspaceId: string;
+  status: string;
+  iterations: number;
+  maxIterations: number;
+  filesChanged: number;
+  maxFilesChanged: number;
+  tempPort: number | null;
+  serviceDirName: string;
+  lastError: string;
+  matrix: Array<{ checkId: string; status: string; detail: string }>;
+  logsTail: string;
+}
+
 export interface RuntimeSessionView {
   runtimeSessionId: string;
   goal: string;
@@ -25,13 +39,35 @@ export interface RuntimeSessionView {
   reportSummary: string;
   evidenceCount: number;
   pendingPermission: { permissionId: string; prompt: string; riskLevel: string; ownerOnly: boolean } | null;
+  workspace: WorkspaceTelemetry | null;
 }
 
-function toView(sessionRaw: Record<string, unknown> | null | undefined, permissions: Array<Record<string, unknown>> = []): RuntimeSessionView | null {
+function toWorkspaceTelemetry(raw: unknown): WorkspaceTelemetry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const d = raw as { workspace?: Record<string, unknown>; matrix?: Array<{ checkId: string; status: string; detail: string }>; logsTail?: string; limits?: { maxIterations?: number; maxFilesChanged?: number } };
+  const w = d.workspace;
+  if (!w) return null;
+  return {
+    workspaceId: String(w.workspaceId ?? ''),
+    status: String(w.status ?? ''),
+    iterations: Number(w.iterations ?? 0),
+    maxIterations: Number(d.limits?.maxIterations ?? 10),
+    filesChanged: Number(w.filesChanged ?? 0),
+    maxFilesChanged: Number(d.limits?.maxFilesChanged ?? 80),
+    tempPort: w.tempPort === null || w.tempPort === undefined ? null : Number(w.tempPort),
+    serviceDirName: String(w.serviceDirName ?? ''),
+    lastError: String(w.lastError ?? ''),
+    matrix: (d.matrix ?? []).map((m) => ({ checkId: String(m.checkId), status: String(m.status), detail: String(m.detail ?? '') })),
+    logsTail: String(d.logsTail ?? ''),
+  };
+}
+
+function toView(sessionRaw: Record<string, unknown> | null | undefined, permissions: Array<Record<string, unknown>> = [], workspaceRaw: unknown = null): RuntimeSessionView | null {
   if (!sessionRaw) return null;
   const s = sessionRaw as Record<string, unknown> & { plan?: RuntimePlanStep[]; observations?: string[]; evidenceIds?: string[] };
   const pending = permissions.find((p) => p.status === 'pending') ?? null;
   return {
+    workspace: toWorkspaceTelemetry(workspaceRaw),
     runtimeSessionId: String(s.runtimeSessionId ?? ''),
     goal: String(s.goal ?? ''),
     status: String(s.status ?? ''),
@@ -63,9 +99,9 @@ export async function operatorCommandAction(text: string): Promise<OperatorComma
   }
   if (kind === 'session') {
     const view = toView(r.session as Record<string, unknown>);
-    // Pull pending permission from a follow-up fetch (session doc stores ids only).
+    // Pull permissions + live workspace telemetry from the detail endpoint.
     const full = view ? await gateway.operatorSession(view.runtimeSessionId) : null;
-    const withPerm = full ? toView(full.session, full.permissions) : view;
+    const withPerm = full ? toView(full.session, full.permissions, (full as Record<string, unknown>).workspace) : view;
     return { kind: 'session', reply: String(r.narration ?? ''), spoken: String(r.narration ?? ''), groups: [], session: withPerm };
   }
   if (kind === 'clarify') return { kind: 'clarify', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [], session: null };
@@ -74,7 +110,7 @@ export async function operatorCommandAction(text: string): Promise<OperatorComma
 
 export async function getRuntimeSessionAction(id: string): Promise<RuntimeSessionView | null> {
   const r = await gateway.operatorSession(id);
-  return r ? toView(r.session, r.permissions) : null;
+  return r ? toView(r.session, r.permissions, (r as Record<string, unknown>).workspace) : null;
 }
 
 export async function decideRuntimePermissionAction(id: string, action: 'approve' | 'reject'): Promise<RuntimeSessionView | null> {
