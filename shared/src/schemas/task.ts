@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDate, Priority } from './common.js';
+import { ScopeFieldsSchema } from './scope.js';
 
 export const TaskStatus = z.enum([
   'queued',
@@ -29,7 +30,7 @@ export const TaskSchema = z.object({
   error: z.string().nullable().default(null),
   createdAt: IsoDate,
   updatedAt: IsoDate,
-});
+}).merge(ScopeFieldsSchema);
 export type Task = z.infer<typeof TaskSchema>;
 
 /** A single timeline entry shown on the dashboard /tasks/:id live view. */

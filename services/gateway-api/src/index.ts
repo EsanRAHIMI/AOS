@@ -61,6 +61,50 @@ import {
   classifyToolFailure,
   narrateStep,
   stopSessionOnFailure,
+  canAccess,
+  buildAccessDecision,
+  stampScope,
+  buildEsanSeed,
+  legacyRoleToAuthContext,
+  classifyGoalScope,
+  ESAN_TENANT_ID,
+  ESAN_USER_ID,
+  type AuthContext,
+  type AccessRequest,
+  type Tenant,
+  type UserProfile,
+  type TenantMembership,
+  type ConsentGrant,
+  type ConnectorAccount,
+  type ConnectorSyncRun,
+  type ScopedMemory,
+  type UserGoal,
+  type DailyBriefing,
+  type OpportunityReport,
+  type AccessDecision,
+  buildPersonalGraph,
+  scoreNextActions,
+  buildDailyBriefingRun,
+  buildWeeklyStrategyRun,
+  rankOpportunities,
+  analyzeResume,
+  nextConnectorFor,
+  INGESTION_KINDS,
+  type IngestionKind,
+  type IngestionResult,
+  type PersonalGraphInput,
+  type PersonalRealityProfile,
+  type PersonalAsset,
+  type PersonalProject,
+  type PersonalSystem,
+  type PersonalRisk,
+  type PersonalOpportunity,
+  type PersonalIncomeStream,
+  type PersonalCareerRecord,
+  type ResumeProfile,
+  type NextBestAction,
+  type PersonalBriefingRun,
+  type StrategyReviewRun,
   type OperatorTool,
   type OperatorToolRun,
   type OperatorToolPermission,
@@ -1804,6 +1848,377 @@ async function main(): Promise<void> {
         return success({ status: 'approved', operationPlanId, message: 'An operation plan was created — review the risk and approve it on the Overview to execute.' });
       });
 
+      // === Phase AA — Scope, Identity & Multi-Tenant Governance ==========
+      // ONE authorization engine (shared canAccess) enforced at this gateway
+      // boundary. Global software evolution; scoped human data. Missing scope
+      // fails closed; denials are recorded as access_decisions + security
+      // events. The legacy env-based owner login keeps working: it resolves
+      // to user_esan in tenant_esan_personal via legacyRoleToAuthContext.
+      const tenantsCol = collection<Tenant>(COLLECTIONS.TENANTS);
+      const userProfiles = collection<UserProfile>(COLLECTIONS.USER_PROFILES);
+      const memberships = collection<TenantMembership>(COLLECTIONS.TENANT_MEMBERSHIPS);
+      const consentGrants = collection<ConsentGrant>(COLLECTIONS.CONSENT_GRANTS);
+      const connectorAccounts = collection<ConnectorAccount>(COLLECTIONS.CONNECTOR_ACCOUNTS);
+      const connectorSyncRuns = collection<ConnectorSyncRun>(COLLECTIONS.CONNECTOR_SYNC_RUNS);
+      const scopedMemories = collection<ScopedMemory>(COLLECTIONS.SCOPED_MEMORIES);
+      const userGoals = collection<UserGoal>(COLLECTIONS.USER_GOALS);
+      const dailyBriefings = collection<DailyBriefing>(COLLECTIONS.DAILY_BRIEFINGS);
+      const opportunityReports = collection<OpportunityReport>(COLLECTIONS.OPPORTUNITY_REPORTS);
+      const accessDecisions = collection<AccessDecision>(COLLECTIONS.ACCESS_DECISIONS);
+
+      // Idempotent bootstrap: Esan is the first owner and platform governor.
+      void (async () => {
+        const seed = buildEsanSeed();
+        const seeded = await tenantsCol.updateOne({ tenantId: seed.tenant.tenantId }, { $setOnInsert: seed.tenant }, { upsert: true });
+        await userProfiles.updateOne({ userId: seed.user.userId }, { $setOnInsert: seed.user }, { upsert: true });
+        await memberships.updateOne({ membershipId: seed.membership.membershipId }, { $setOnInsert: seed.membership }, { upsert: true });
+        if (seeded.upsertedCount > 0) await ctx.publisher.publish({ type: EVENT_TYPES.IDENTITY_SEEDED, taskId: null, payload: { tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, message: 'Esan seeded as owner and platform governor' } });
+      })().catch(() => undefined);
+
+      const resolveAuth = (req: Req): AuthContext => legacyRoleToAuthContext(declaredRole(req));
+
+      /** Enforce a scoped access request. Denials/approval-required are
+       *  recorded (access_decisions + security event) and answered 403. */
+      const enforceScoped = async (req: Req, reply: FastifyReplyLike, access: Omit<AccessRequest, 'actor'>): Promise<AuthContext | null> => {
+        const actor = resolveAuth(req);
+        const verdict = canAccess({ actor, ...access });
+        if (!verdict.allowed) {
+          await accessDecisions.insertOne(buildAccessDecision({ actor, ...access }, verdict));
+          await writeSecEvent({ eventType: verdict.decision === 'approval_required' ? EVENT_TYPES.ACCESS_APPROVAL_REQUIRED : EVENT_TYPES.ACCESS_DENIED, actorId: actor.actorId, role: actor.roles[0] ?? 'unknown', ip: clientIp(req), userAgent: userAgent(req), target: access.resource, result: 'denied', riskLevel: 'medium', detail: verdict.reason });
+          reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, verdict.reason, { decision: verdict.decision, requiredApproval: verdict.requiredApproval }));
+          return null;
+        }
+        if (verdict.auditRequired) await accessDecisions.insertOne(buildAccessDecision({ actor, ...access }, verdict));
+        return actor;
+      };
+
+      // --- personal operating layer (user scope, fail closed) -------------
+      app.get('/v1/me/context', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'read', resource: 'me_context', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const [profile, tenant, goals, consents, safe] = await Promise.all([
+          userProfiles.findOne({ userId: actor.primaryUserId }, { projection: { _id: 0 } }),
+          tenantsCol.findOne({ tenantId: actor.activeTenantId }, { projection: { _id: 0 } }),
+          userGoals.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'active' }),
+          consentGrants.countDocuments({ userId: actor.primaryUserId ?? '', status: 'active' }),
+          isSafeMode(),
+        ]);
+        return success({
+          actor: { actorId: actor.actorId, actorType: actor.actorType, displayName: profile?.displayName ?? 'Esan', roles: actor.roles, isOwner: actor.isOwner },
+          tenant: tenant ? { tenantId: tenant.tenantId, name: tenant.name, kind: tenant.kind } : null,
+          activeScope: 'user', safeMode: safe, activeGoals: goals, activeConsents: consents,
+          governance: 'Global software evolution. Scoped human data.',
+        });
+      });
+      app.get('/v1/me/profile', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'read', resource: 'user_profile', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await userProfiles.findOne({ userId: actor.primaryUserId }, { projection: { _id: 0 } }));
+      });
+      app.patch<{ Body: { displayName?: string; locale?: string; timezone?: string; preferences?: Record<string, unknown> } }>('/v1/me/profile', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'update', resource: 'user_profile', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const upd: Record<string, unknown> = { updatedAt: nowIso() };
+        if (req.body?.displayName) upd.displayName = String(req.body.displayName).slice(0, 80);
+        if (req.body?.locale) upd.locale = String(req.body.locale).slice(0, 10);
+        if (req.body?.timezone) upd.timezone = String(req.body.timezone).slice(0, 60);
+        if (req.body?.preferences) upd.preferences = req.body.preferences;
+        await userProfiles.updateOne({ userId: actor.primaryUserId }, { $set: upd });
+        return success({ updated: true });
+      });
+      app.get('/v1/me/goals', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'list', resource: 'user_goals', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await userGoals.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      });
+      app.post<{ Body: { title?: string; description?: string; horizon?: string; priority?: string } }>('/v1/me/goals', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'create', resource: 'user_goals', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const title = String(req.body?.title ?? '').trim();
+        if (!title) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'title is required'));
+        const stamp = stampScope(actor, 'user');
+        const goal: UserGoal = { ...stamp, goalId: genId('goal'), title: title.slice(0, 160), description: String(req.body?.description ?? '').slice(0, 1000), horizon: (['day', 'week', 'month', 'quarter', 'year', 'life'].includes(String(req.body?.horizon)) ? req.body?.horizon : 'week') as UserGoal['horizon'], status: 'active', priority: (['low', 'normal', 'high'].includes(String(req.body?.priority)) ? req.body?.priority : 'normal') as UserGoal['priority'], createdAt: nowIso(), updatedAt: nowIso() };
+        await userGoals.insertOne(goal);
+        return success(goal);
+      });
+      app.get('/v1/me/memories', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'list', resource: 'scoped_memories', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await scopedMemories.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      });
+      app.post<{ Body: { kind?: string; content?: string } }>('/v1/me/memories', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'create', resource: 'scoped_memories', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const content = String(req.body?.content ?? '').trim();
+        if (!content) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'content is required'));
+        const stamp = stampScope(actor, 'user');
+        const mem: ScopedMemory = { ...stamp, memoryId: genId('smem'), kind: (['preference', 'fact', 'decision', 'workflow', 'mistake_avoidance', 'inference'].includes(String(req.body?.kind)) ? req.body?.kind : 'fact') as ScopedMemory['kind'], content: content.slice(0, 2000), source: 'user', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() };
+        await scopedMemories.insertOne(mem);
+        await ctx.publisher.publish({ type: EVENT_TYPES.SCOPED_MEMORY_WRITTEN, taskId: null, payload: { scope: 'user', message: 'Private user memory written (content not included in event)' } });
+        return success(mem);
+      });
+      app.get('/v1/me/briefings', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'list', resource: 'daily_briefings', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await dailyBriefings.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(14).toArray());
+      });
+      app.get('/v1/me/opportunities', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'list', resource: 'opportunity_reports', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await opportunityReports.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray());
+      });
+      app.get('/v1/tenants/current', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'read', resource: 'tenant', scope: 'tenant', tenantId: resolveAuth(req).activeTenantId ?? null });
+        if (!actor) return reply;
+        const [tenant, members] = await Promise.all([
+          tenantsCol.findOne({ tenantId: actor.activeTenantId }, { projection: { _id: 0 } }),
+          memberships.find({ tenantId: actor.activeTenantId ?? '' }, { projection: { _id: 0 } }).limit(50).toArray(),
+        ]);
+        return success({ tenant, members });
+      });
+
+      // --- consent & connector foundation (read-only, no secrets) ---------
+      app.get('/v1/consents', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'list', resource: 'consent_grants', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await consentGrants.find({ userId: actor.primaryUserId ?? '' }, { projection: { _id: 0 } }).sort({ grantedAt: -1 }).limit(50).toArray());
+      });
+      app.post<{ Body: { connectorType?: string; scopesAllowed?: string[] } }>('/v1/consents', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'create', resource: 'consent_grants', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const connectorType = String(req.body?.connectorType ?? '').trim().slice(0, 40);
+        if (!connectorType) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'connectorType is required'));
+        // Phase AA: consent is READ-ONLY by design. Write modes come later,
+        // behind preview + approval + audit + evidence.
+        const grant: ConsentGrant = { grantId: genId('consent'), tenantId: actor.activeTenantId ?? ESAN_TENANT_ID, userId: actor.primaryUserId ?? ESAN_USER_ID, connectorType, scopesAllowed: (req.body?.scopesAllowed ?? []).map(String).slice(0, 20), accessMode: 'read_only', status: 'active', grantedAt: nowIso(), expiresAt: null, revokedAt: null, createdBy: actor.actorId, auditContext: { via: 'gateway' } };
+        await consentGrants.insertOne(grant);
+        await writeAudit({ actorType: 'human', actorId: actor.actorId, role: declaredRole(req), action: 'consent_granted', targetType: 'consent_grant', targetId: grant.grantId, after: { connectorType, accessMode: grant.accessMode } });
+        await ctx.publisher.publish({ type: EVENT_TYPES.CONSENT_GRANTED, taskId: null, payload: { grantId: grant.grantId, connectorType, accessMode: grant.accessMode, message: `Read-only consent granted for ${connectorType}` } });
+        return success(grant);
+      });
+      app.post<{ Params: { id: string } }>('/v1/consents/:id/revoke', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'update', resource: 'consent_grants', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const grant = await consentGrants.findOne({ grantId: req.params.id, userId: actor.primaryUserId ?? '' });
+        if (!grant) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'consent grant not found in your scope'));
+        await consentGrants.updateOne({ grantId: grant.grantId }, { $set: { status: 'revoked', revokedAt: nowIso() } });
+        await connectorAccounts.updateMany({ consentGrantId: grant.grantId }, { $set: { status: 'blocked', error: 'consent revoked', updatedAt: nowIso() } });
+        await writeAudit({ actorType: 'human', actorId: actor.actorId, role: declaredRole(req), action: 'consent_revoked', targetType: 'consent_grant', targetId: grant.grantId });
+        await ctx.publisher.publish({ type: EVENT_TYPES.CONSENT_REVOKED, taskId: null, payload: { grantId: grant.grantId, connectorType: grant.connectorType, message: `Consent revoked for ${grant.connectorType} — future syncs blocked` } });
+        return success({ revoked: true });
+      });
+      app.get('/v1/connectors', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'list', resource: 'connector_accounts', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        return success(await connectorAccounts.find({ userId: actor.primaryUserId ?? '' }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      });
+      app.post<{ Body: { connectorType?: string; provider?: string; consentGrantId?: string } }>('/v1/connectors', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const auth = resolveAuth(req);
+        const grant = await consentGrants.findOne({ grantId: String(req.body?.consentGrantId ?? ''), userId: auth.primaryUserId ?? '' });
+        const actor = await enforceScoped(req, reply, { action: 'create', resource: 'connector_accounts', scope: 'user', userId: auth.primaryUserId ?? null, requiresConsent: true, consentStatus: (grant?.status as 'active' | 'revoked' | 'expired' | undefined) ?? 'missing' });
+        if (!actor) return reply;
+        const account: ConnectorAccount = { connectorAccountId: genId('conn'), tenantId: actor.activeTenantId ?? ESAN_TENANT_ID, userId: actor.primaryUserId ?? ESAN_USER_ID, connectorType: String(req.body?.connectorType ?? grant?.connectorType ?? '').slice(0, 40), provider: String(req.body?.provider ?? '').slice(0, 40), status: 'pending', scopes: grant?.scopesAllowed ?? [], consentGrantId: grant?.grantId ?? '', lastSyncAt: null, error: '', metadata: {}, createdAt: nowIso(), updatedAt: nowIso() };
+        await connectorAccounts.insertOne(account);
+        return success(account);
+      });
+      app.post<{ Params: { id: string } }>('/v1/connectors/:id/sync', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const auth = resolveAuth(req);
+        const account = await connectorAccounts.findOne({ connectorAccountId: req.params.id, userId: auth.primaryUserId ?? '' });
+        if (!account) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'connector account not found in your scope'));
+        const grant = await consentGrants.findOne({ grantId: account.consentGrantId });
+        const consentActive = grant?.status === 'active';
+        const run: ConnectorSyncRun = {
+          syncRunId: genId('sync'), connectorAccountId: account.connectorAccountId, tenantId: account.tenantId, userId: account.userId,
+          status: !consentActive ? 'blocked_no_consent' : 'not_configured',
+          itemsRead: 0,
+          detail: !consentActive ? `consent ${grant?.status ?? 'missing'} — sync refused` : `${account.connectorType} provider integration not configured yet (Phase AA is foundation-only; read-only sync arrives with the connector phase)`,
+          startedAt: nowIso(), finishedAt: nowIso(),
+        };
+        await connectorSyncRuns.insertOne(run);
+        if (!consentActive) {
+          await ctx.publisher.publish({ type: EVENT_TYPES.CONNECTOR_SYNC_BLOCKED, taskId: null, payload: { connectorAccountId: account.connectorAccountId, message: `Sync blocked: consent ${grant?.status ?? 'missing'}`, level: 'warn' } });
+          return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, 'consent is not active — sync blocked', { syncRunId: run.syncRunId }));
+        }
+        return success(run);
+      });
+      // === Phase AB — Personal Reality Baseline & Jarvis layer ============
+      const realityProfiles = collection<PersonalRealityProfile>(COLLECTIONS.PERSONAL_REALITY_PROFILES);
+      const personalAssets = collection<PersonalAsset>(COLLECTIONS.PERSONAL_ASSETS);
+      const personalProjects = collection<PersonalProject>(COLLECTIONS.PERSONAL_PROJECTS);
+      const personalSystems = collection<PersonalSystem>(COLLECTIONS.PERSONAL_SYSTEMS);
+      const personalRisks = collection<PersonalRisk>(COLLECTIONS.PERSONAL_RISKS);
+      const personalOpportunities = collection<PersonalOpportunity>(COLLECTIONS.PERSONAL_OPPORTUNITIES);
+      const personalIncomeStreams = collection<PersonalIncomeStream>(COLLECTIONS.PERSONAL_INCOME_STREAMS);
+      const personalCareerRecords = collection<PersonalCareerRecord>(COLLECTIONS.PERSONAL_CAREER_RECORDS);
+      const resumeProfiles = collection<ResumeProfile>(COLLECTIONS.RESUME_PROFILES);
+      const nextBestActions = collection<NextBestAction>(COLLECTIONS.NEXT_BEST_ACTIONS);
+      const personalBriefingRuns = collection<PersonalBriefingRun>(COLLECTIONS.PERSONAL_BRIEFING_RUNS);
+      const strategyReviewRuns = collection<StrategyReviewRun>(COLLECTIONS.STRATEGY_REVIEW_RUNS);
+
+      /** Load the FULL scoped graph input for an actor — the single read path
+       *  every personal engine uses. Strictly filtered by userId. */
+      const loadGraphInput = async (actor: AuthContext): Promise<PersonalGraphInput> => {
+        const uid = actor.primaryUserId ?? '';
+        const uFilter = { scope: 'user' as const, userId: uid };
+        const [profile, goals, projects, assets, systems, risks, opps, incomes, apprCount, consents] = await Promise.all([
+          realityProfiles.findOne(uFilter, { projection: { _id: 0 } }),
+          userGoals.find({ ...uFilter, status: 'active' }, { projection: { _id: 0 } }).limit(50).toArray(),
+          personalProjects.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray(),
+          personalAssets.find(uFilter, { projection: { _id: 0 } }).limit(100).toArray(),
+          personalSystems.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray(),
+          personalRisks.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray(),
+          personalOpportunities.find(uFilter, { projection: { _id: 0 } }).limit(100).toArray(),
+          personalIncomeStreams.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray(),
+          approvals.countDocuments({ status: 'pending' }),
+          consentGrants.find({ userId: uid, status: 'active' }, { projection: { _id: 0 } }).toArray(),
+        ]);
+        return {
+          profile, projects, assets, systems, risks, opportunities: opps, incomeStreams: incomes,
+          goals: goals.map((g) => ({ goalId: g.goalId, title: g.title, status: g.status, priority: g.priority })),
+          pendingApprovals: apprCount, activeConsents: consents.map((c) => c.connectorType),
+        };
+      };
+      const userStamp = (actor: AuthContext) => stampScope(actor, 'user') as Parameters<typeof scoreNextActions>[1];
+
+      // Ingestion: manual/user-provided data with source + confidence stamped.
+      app.post<{ Body: { kind?: string; data?: Record<string, unknown> } }>('/v1/me/reality/ingest', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'create', resource: 'personal_reality', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const kind = String(req.body?.kind ?? '') as IngestionKind;
+        if (!INGESTION_KINDS.includes(kind)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, `kind must be one of: ${INGESTION_KINDS.join(', ')}`));
+        const d = req.body?.data ?? {};
+        const stamp = userStamp(actor);
+        const now = nowIso();
+        const meta = { ...stamp, source: `ingestion:${kind}`, confidence: 0.9, freshness: now, createdAt: now, updatedAt: now };
+        let created = 0, updated = 0;
+        const str = (k: string, max = 500): string => String((d as Record<string, unknown>)[k] ?? '').slice(0, max);
+        const arr = (k: string): string[] => (Array.isArray((d as Record<string, unknown>)[k]) ? ((d as Record<string, unknown>)[k] as unknown[]).map(String).slice(0, 40) : []);
+        try {
+          if (kind === 'profile') {
+            const existing = await realityProfiles.findOne({ scope: 'user', userId: actor.primaryUserId });
+            if (existing) { await realityProfiles.updateOne({ profileId: existing.profileId }, { $set: { displayName: str('displayName', 80) || existing.displayName, headline: str('headline', 200) || existing.headline, summary: str('summary', 2000) || existing.summary, location: str('location', 100) || existing.location, focusAreas: arr('focusAreas').length ? arr('focusAreas') : existing.focusAreas, strengths: arr('strengths').length ? arr('strengths') : existing.strengths, currentPosition: str('currentPosition', 200) || existing.currentPosition, incomeDirection: str('incomeDirection', 500) || existing.incomeDirection, scheduleDirection: str('scheduleDirection', 500) || existing.scheduleDirection, learningDirection: str('learningDirection', 500) || existing.learningDirection, freshness: now, updatedAt: now } }); updated++; }
+            else { await realityProfiles.insertOne({ ...meta, recordKind: 'fact', profileId: genId('prof'), displayName: str('displayName', 80), headline: str('headline', 200), summary: str('summary', 2000), location: str('location', 100), focusAreas: arr('focusAreas'), strengths: arr('strengths'), currentPosition: str('currentPosition', 200), incomeDirection: str('incomeDirection', 500), scheduleDirection: str('scheduleDirection', 500), learningDirection: str('learningDirection', 500) }); created++; }
+          } else if (kind === 'project') { await personalProjects.insertOne({ ...meta, recordKind: 'fact', projectId: genId('pproj'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: arr('tags'), incomePotential: (['none', 'low', 'medium', 'high', 'unknown'].includes(str('incomePotential')) ? str('incomePotential') : 'unknown') as PersonalProject['incomePotential'], linkedGoalIds: arr('linkedGoalIds') }); created++; }
+          else if (kind === 'system') { await personalSystems.insertOne({ ...meta, recordKind: 'fact', systemId: genId('psys'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: arr('tags'), systemType: (['software', 'automation', 'process', 'habit', 'aos_service', 'other'].includes(str('systemType')) ? str('systemType') : 'other') as PersonalSystem['systemType'] }); created++; }
+          else if (kind === 'asset') { await personalAssets.insertOne({ ...meta, recordKind: 'fact', assetId: genId('passet'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: arr('tags'), assetType: (['skill', 'software', 'content', 'audience', 'infrastructure', 'financial', 'credential', 'other'].includes(str('assetType')) ? str('assetType') : 'other') as PersonalAsset['assetType'] }); created++; }
+          else if (kind === 'risk') { await personalRisks.insertOne({ ...meta, recordKind: 'fact', riskId: genId('prisk'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: [], severity: (['low', 'medium', 'high', 'critical'].includes(str('severity')) ? str('severity') : 'medium') as PersonalRisk['severity'], mitigation: str('mitigation', 500) }); created++; }
+          else if (kind === 'income_idea') { await personalIncomeStreams.insertOne({ ...meta, recordKind: 'fact', incomeStreamId: genId('pinc'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: [], streamType: (['salary', 'freelance', 'product', 'saas', 'content', 'investment', 'idea', 'other'].includes(str('streamType')) ? str('streamType') : 'idea') as PersonalIncomeStream['streamType'], monthlyEstimate: typeof (d as Record<string, unknown>).monthlyEstimate === 'number' ? (d as { monthlyEstimate: number }).monthlyEstimate : null }); created++; }
+          else if (kind === 'goal') { const g = { ...userStamp(actor), goalId: genId('goal'), title: str('title', 160), description: str('description', 1000), horizon: 'week' as const, status: 'active' as const, priority: 'normal' as const, createdAt: now, updatedAt: now }; if (!g.title) throw new Error('title required'); await userGoals.insertOne(g); created++; }
+          else if (kind === 'career_record') { await personalCareerRecords.insertOne({ ...meta, recordKind: 'fact', careerRecordId: genId('pcar'), kind: (['experience', 'education', 'achievement', 'certification'].includes(str('recordType')) ? str('recordType') : 'experience') as PersonalCareerRecord['kind'], title: str('title', 160), organization: str('organization', 160), period: str('period', 60), details: str('details', 2000) }); created++; }
+          else if (kind === 'resume') {
+            const existing = await resumeProfiles.findOne({ scope: 'user', userId: actor.primaryUserId });
+            const base = { rawText: str('rawText', 20000), skills: arr('skills'), freshness: now, updatedAt: now };
+            if (existing) { await resumeProfiles.updateOne({ resumeProfileId: existing.resumeProfileId }, { $set: base }); updated++; }
+            else { await resumeProfiles.insertOne({ ...meta, recordKind: 'fact', resumeProfileId: genId('presume'), ...base, positioning: '', verifiedFacts: [], userClaims: [], modelInferences: [], suggestions: [] }); created++; }
+          } else { return reply.code(400).send(failure(ERROR_CODES.VALIDATION, `${kind} ingestion accepts only the documented fields`)); }
+        } catch (e) { return reply.code(400).send(failure(ERROR_CODES.VALIDATION, e instanceof Error ? e.message : 'ingestion failed')); }
+        const graph = buildPersonalGraph(await loadGraphInput(actor));
+        const result: IngestionResult = { source: `ingestion:${kind}`, kind, recordsCreated: created, recordsUpdated: updated, confidence: 0.9, missingData: graph.missingData, nextSuggestedConnector: nextConnectorFor(kind) };
+        const ev = buildEvidence({ type: 'health_check_result', taskId: null, serviceName: null, summary: `Personal ingestion ${kind}: +${created}/${updated} updated (user scope)`, data: { kind, created, updated } });
+        await evidenceCol.insertOne(ev);
+        return success({ ...result, evidenceId: ev.evidenceId });
+      });
+
+      const realityGet = (path: string, fetcher: (actor: AuthContext) => Promise<unknown>) => {
+        app.get(path, async (req, reply) => {
+          if (!guard(req)) return deny(reply);
+          const actor = await enforceScoped(req, reply, { action: 'read', resource: path, scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+          if (!actor) return reply;
+          return success(await fetcher(actor));
+        });
+      };
+      realityGet('/v1/me/reality/profile', async (actor) => {
+        const input = await loadGraphInput(actor);
+        return { profile: input.profile, graph: buildPersonalGraph(input) };
+      });
+      realityGet('/v1/me/reality/goals', async (actor) => userGoals.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+      realityGet('/v1/me/reality/projects', async (actor) => ({
+        projects: await personalProjects.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(50).toArray(),
+        systems: await personalSystems.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(50).toArray(),
+        assets: await personalAssets.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(100).toArray(),
+      }));
+      realityGet('/v1/me/reality/opportunities', async (actor) => rankOpportunities(await personalOpportunities.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(100).toArray()));
+      realityGet('/v1/me/reality/risks', async (actor) => personalRisks.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(50).toArray());
+      realityGet('/v1/me/reality/next-actions', async (actor) => {
+        const ranked = scoreNextActions(await loadGraphInput(actor), userStamp(actor));
+        // Persist fresh proposals (idempotent enough: superseded ones expire).
+        if (ranked.length) await nextBestActions.insertMany(ranked.map((a) => ({ ...a })));
+        return ranked;
+      });
+
+      realityGet('/v1/me/reality/briefings', async (actor) => personalBriefingRuns.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(14).toArray());
+      realityGet('/v1/me/reality/strategies', async (actor) => strategyReviewRuns.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(8).toArray());
+      realityGet('/v1/me/reality/resume', async (actor) => ({
+        resume: await resumeProfiles.findOne({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }),
+        careerRecords: await personalCareerRecords.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(50).toArray(),
+      }));
+
+      app.post<{ Body: { type?: string } }>('/v1/me/reality/review', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'create', resource: 'personal_review', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const input = await loadGraphInput(actor);
+        const sources = { calendar: input.activeConsents.includes('calendar'), email: input.activeConsents.includes('email'), tasksConnector: input.activeConsents.includes('tasks') };
+        if (String(req.body?.type) === 'weekly') {
+          const [completed, missed, newOpps] = await Promise.all([
+            nextBestActions.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'completed' }),
+            nextBestActions.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'expired' }),
+            personalOpportunities.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'proposed' }),
+          ]);
+          const run = buildWeeklyStrategyRun({ ...input, completedActions: completed, missedActions: missed, newOpportunities: newOpps }, userStamp(actor));
+          await strategyReviewRuns.insertOne(run);
+          return success(run);
+        }
+        const aosSuggestion = buildPersonalGraph(input).missingData.length > 0
+          ? `AOS should build next: automated ingestion for “${buildPersonalGraph(input).missingData[0]}” — the biggest current intelligence gap.`
+          : 'AOS should build next: the read-only calendar connector (first real external signal).';
+        const run = buildDailyBriefingRun(input, sources, aosSuggestion, userStamp(actor));
+        await personalBriefingRuns.insertOne(run);
+        return success(run);
+      });
+
+      // Decisions on recommendations → scoped learning memory.
+      app.post<{ Params: { id: string }; Body: { action?: string } }>('/v1/me/reality/next-actions/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'update', resource: 'next_best_actions', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const act = String(req.body?.action ?? '');
+        if (!['accept', 'reject', 'complete'].includes(act)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'action must be accept|reject|complete'));
+        const nba = await nextBestActions.findOne({ actionId: req.params.id, scope: 'user', userId: actor.primaryUserId });
+        if (!nba) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'action not found in your scope'));
+        const status = act === 'accept' ? 'accepted' : act === 'reject' ? 'rejected' : 'completed';
+        await nextBestActions.updateOne({ actionId: nba.actionId }, { $set: { status, updatedAt: nowIso() } });
+        // Learn from the decision — scoped to the user, kind by outcome.
+        const stamp = userStamp(actor);
+        await scopedMemories.insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${nba.title}” (${nba.category}, score ${nba.priorityScore}). ${act === 'reject' ? 'Deprioritize similar suggestions.' : 'Similar suggestions are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
+        return success({ status });
+      });
+
+      app.get('/v1/access-decisions', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = resolveAuth(req);
+        // Owners/platform roles see the platform access log; others see their own decisions.
+        const filter = actor.isOwner || actor.roles.includes('platform_admin') ? {} : { actorId: actor.actorId };
+        return success(await accessDecisions.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray());
+      });
+
       // === Phase X — Autonomous Operator Runtime =========================
       // The real agent loop: goal → plan → tools → observe → approve → verify
       // → evidence → memory. Raw model output never executes a tool; only the
@@ -2050,6 +2465,112 @@ async function main(): Promise<void> {
         deploy_staged_workspace: async (args) => execCreateOperationPlan({ goal: `Deploy STAGED app ${args.appName ?? ''} (workspace result; verify /health before promotion)`, operationType: 'new_app_deploy', targetService: String(args.appName ?? '') }),
         promote_workspace: async (args, role) => codeAgentTask('ws_promote', { ...args, approvedForProtectedCore: role === 'owner' }, 120000),
         rollback_workspace: async (args) => codeAgentTask('ws_rollback', args, 60000),
+        // Phase AA — personal operating layer executors (user scope, honest).
+        get_my_context: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity for this actor — user scope fails closed.' };
+          const [profile, goals, consents] = await Promise.all([
+            userProfiles.findOne({ userId: actor.primaryUserId }, { projection: { _id: 0 } }),
+            userGoals.find({ scope: 'user', userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).limit(20).toArray(),
+            consentGrants.find({ userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).toArray(),
+          ]);
+          const summary = `${profile?.displayName ?? 'User'}: ${goals.length} active goal(s)${goals[0] ? ` (top: “${goals[0].title}”)` : ''}; ${consents.length} active consent(s)${consents.length ? ` (${consents.map((c) => c.connectorType).join(', ')})` : ' — no connectors consented yet'}.`;
+          return { ok: true, summary, data: { profile, goals, consents: consents.map((c) => ({ connectorType: c.connectorType, accessMode: c.accessMode })) } };
+        },
+        generate_daily_briefing: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const goals = await userGoals.find({ scope: 'user', userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).limit(20).toArray();
+          const activeConsents = await consentGrants.find({ userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).toArray();
+          const consentedTypes = new Set(activeConsents.map((c) => c.connectorType));
+          const missing = ['calendar', 'email', 'tasks'].filter((s) => !consentedTypes.has(s)).map((s) => `${s} (not_configured — no consent grant)`);
+          const summary = goals.length === 0
+            ? `No active goals recorded yet — add goals via /v1/me/goals or the Identity settings. Data sources available: ${consentedTypes.size ? [...consentedTypes].join(', ') : 'none'}. Missing: ${missing.join(', ') || 'none'}.`
+            : `Your ${goals.length} active goal(s): ${goals.map((g) => `“${g.title}” (${g.horizon}, ${g.priority})`).join('; ')}. This briefing uses ONLY your recorded goals — ${missing.length ? `these sources are not configured: ${missing.join(', ')}` : 'all core sources connected'}.`;
+          const stamp = stampScope(actor, 'user');
+          const briefing: DailyBriefing = { ...stamp, briefingId: genId('brief'), date: nowIso().slice(0, 10), summary, sourcesUsed: ['user_goals', ...[...consentedTypes]], missingSources: missing, createdAt: nowIso() };
+          await dailyBriefings.insertOne(briefing);
+          return { ok: true, summary, data: { briefingId: briefing.briefingId, missingSources: missing } };
+        },
+        // Phase AB — Jarvis personal intelligence executors (strict user scope).
+        build_reality_baseline: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const input = await loadGraphInput(actor);
+          const graph = buildPersonalGraph(input);
+          const summary = `Baseline: ${input.profile ? `profile “${input.profile.displayName || input.profile.headline || 'set'}”` : 'NO profile yet'}; ${input.goals.length} goals, ${input.projects.length} projects, ${input.assets.length} assets, ${input.systems.length} systems, ${input.risks.length} risks, ${input.opportunities.length} opportunities, ${input.incomeStreams.length} income streams. Missing: ${graph.missingData.length ? graph.missingData.slice(0, 3).join('; ') : 'nothing critical'}. Freshness: ${graph.dataFreshness.slice(0, 10)}.`;
+          return { ok: true, summary, data: { graphNodes: graph.nodes.length, graphEdges: graph.edges.length, missingData: graph.missingData } };
+        },
+        get_next_best_actions: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const ranked = scoreNextActions(await loadGraphInput(actor), userStamp(actor));
+          if (ranked.length === 0) return { ok: true, summary: 'No actions can be ranked yet — your baseline is empty. First: ingest your profile and at least one goal (POST /v1/me/reality/ingest).' };
+          await nextBestActions.insertMany(ranked.slice(0, 5).map((a) => ({ ...a })));
+          const best = ranked[0];
+          const top3 = ranked.slice(0, 3).map((a, i) => `${i + 1}) ${a.title} [${a.category}, score ${a.priorityScore}]`).join('  ');
+          return { ok: true, summary: `Best action now: ${best?.title}. Why: ${best?.reason} Top 3: ${top3}. Accept/reject on /me — decisions train your scoped memory.`, data: { ranked: ranked.slice(0, 5) } };
+        },
+        run_full_daily_briefing: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const input = await loadGraphInput(actor);
+          const sources = { calendar: input.activeConsents.includes('calendar'), email: input.activeConsents.includes('email'), tasksConnector: input.activeConsents.includes('tasks') };
+          const graph = buildPersonalGraph(input);
+          const aosSuggestion = graph.missingData.length > 0 ? `AOS next build: automated ingestion for “${graph.missingData[0]}”.` : 'AOS next build: read-only calendar connector.';
+          const run = buildDailyBriefingRun(input, sources, aosSuggestion, userStamp(actor));
+          await personalBriefingRuns.insertOne(run);
+          return { ok: true, summary: `Briefing ${run.date}: priorities — ${run.topPriorities.join('; ') || 'none rankable yet'}. Risks: ${run.risks.join('; ') || 'none recorded'}. Income: ${run.incomeAction} Growth: ${run.growthAction} AOS: ${run.aosAction} Approvals pending: ${run.pendingApprovals}. Sources off: ${run.sourcesNotConfigured.join(', ') || 'none'}.`, data: { briefingRunId: run.briefingRunId, missingData: run.missingData } };
+        },
+        run_weekly_strategy: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const input = await loadGraphInput(actor);
+          const [completed, missed, newOpps] = await Promise.all([
+            nextBestActions.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'completed' }),
+            nextBestActions.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'rejected' }),
+            personalOpportunities.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'proposed' }),
+          ]);
+          const run = buildWeeklyStrategyRun({ ...input, completedActions: completed, missedActions: missed, newOpportunities: newOpps }, userStamp(actor));
+          await strategyReviewRuns.insertOne(run);
+          return { ok: true, summary: `Week of ${run.weekOf}: ${run.goalsReviewed} goals, ${completed} completed / ${missed} rejected actions, ${newOpps} open opportunities. Plan: ${run.weeklyPlan.slice(0, 3).join(' | ')}. AOS should build: ${run.aosShouldBuild[0]}`, data: { strategyRunId: run.strategyRunId } };
+        },
+        analyze_resume: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const [resume, careers, goals] = await Promise.all([
+            resumeProfiles.findOne({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }),
+            personalCareerRecords.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).limit(50).toArray(),
+            userGoals.find({ scope: 'user', userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).limit(10).toArray(),
+          ]);
+          if (!resume && careers.length === 0) return { ok: true, summary: 'No resume data in your scope yet. Ingest it first: POST /v1/me/reality/ingest kind=resume (rawText + skills) and kind=career_record. I will not invent credentials.' };
+          const analysis = analyzeResume({ rawText: resume?.rawText ?? '', skills: resume?.skills ?? [], careerRecords: careers, goals: goals.map((g) => ({ title: g.title })) });
+          if (resume) await resumeProfiles.updateOne({ resumeProfileId: resume.resumeProfileId }, { $set: { ...analysis, updatedAt: nowIso() } });
+          return { ok: true, summary: `Positioning: ${analysis.positioning} Facts(verified): ${analysis.verifiedFacts.length}; your claims: ${analysis.userClaims.length}; inferences: ${analysis.modelInferences.length}. Top improvements: ${analysis.suggestions.slice(0, 2).join(' ')}`, data: analysis };
+        },
+        find_opportunities: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const opps = await personalOpportunities.find({ scope: 'user', userId: actor.primaryUserId, status: { $in: ['proposed', 'accepted', 'in_progress'] } }, { projection: { _id: 0 } }).limit(100).toArray();
+          if (opps.length === 0) return { ok: true, summary: 'No opportunities recorded in your scope yet, and the research provider is not_configured — I will not invent market claims. Ingest opportunity candidates (income ideas, career options) or configure research later.' };
+          const ranked = rankOpportunities(opps);
+          const top = ranked[0];
+          return { ok: true, summary: `Top opportunity: “${top?.title}” (${top?.category}), value ${top?.valueScore} — ${top?.reason.slice(0, 120)} [source: ${top?.source}, confidence ${top?.confidence}]. Next: ${top?.recommendedNextAction || 'define the first concrete step'}. ${ranked.length} ranked in total.`, data: { ranked: ranked.slice(0, 5) } };
+        },
+        propose_aos_build: async (_args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const input = await loadGraphInput(actor);
+          const graph = buildPersonalGraph(input);
+          const aosOpps = input.opportunities.filter((o) => o.category === 'aos_capability' && o.status === 'proposed');
+          const candidates: Array<{ title: string; why: string; impact: number; effort: number }> = [
+            ...aosOpps.map((o) => ({ title: o.title, why: o.reason, impact: o.impactScore, effort: o.effortScore })),
+            ...(graph.missingData.filter((m) => m.includes('not_configured')).slice(0, 2).map((m) => ({ title: `Read-only connector for ${m.split(':')[0]}`, why: `Closes intelligence gap: ${m}`, impact: 7, effort: 5 }))),
+          ];
+          if (candidates.length === 0) candidates.push({ title: 'Automated personal-data freshness monitor', why: 'All core data present — the next lever is keeping it fresh automatically.', impact: 5, effort: 3 });
+          const best = candidates.sort((a, b) => (b.impact - b.effort) - (a.impact - a.effort))[0];
+          return { ok: true, summary: `AOS should build next for you: “${best?.title}”. Why: ${best?.why} (impact ${best?.impact}/10, effort ${best?.effort}/10). Building it is GLOBAL workspace evolution — say “create a ${best?.title.toLowerCase().slice(0, 40)} service” to plan it; nothing deploys without your approval.`, data: { candidates } };
+        },
         request_approval: async () => ({ ok: true, summary: 'Approval card created.' }),
         record_decision: async (args, role) => { await writeAudit({ actorType: 'human', actorId: role, role, action: 'operator_decision', targetType: 'operator_runtime', targetId: 'decision', after: { decision: String(args.decision ?? ''), reason: String(args.reason ?? '') } }); return { ok: true, summary: 'Decision recorded in the audit log.' }; },
       };
@@ -2225,15 +2746,28 @@ async function main(): Promise<void> {
         const planned = planForGoal(text, { safeMode: safe, role });
         if (planned.kind === 'clarify') return success({ kind: 'clarify', reply: planned.narration });
 
+        // Phase AA — the operator is scope-aware: it knows who is asking, the
+        // active tenant, and whether this is global software evolution or a
+        // scoped human operation. Scopes are never mixed.
+        const authCtx = legacyRoleToAuthContext(role);
+        const scopeClass = classifyGoalScope(text);
         const session: OperatorRuntimeSession = {
           runtimeSessionId: genId('osess'), userId: role, goal: text, status: 'planning', currentStep: 0,
-          plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], context: {}, evidenceIds: [],
+          plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], context: { scopeMode: scopeClass.mode }, evidenceIds: [],
           reportSummary: '', memoryIds: [], nextAction: '', startedAt: nowIso(), completedAt: null,
+          scope: scopeClass.scope,
+          tenantId: scopeClass.scope === 'global' ? undefined : authCtx.activeTenantId,
+          createdBy: authCtx.actorId,
+          visibility: scopeClass.scope === 'user' ? 'private' : scopeClass.scope === 'global' ? 'public' : 'tenant',
         };
+        if (scopeClass.scope === 'user') session.context.scopeUserId = authCtx.primaryUserId;
         await opSessions.insertOne(session);
-        await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_STARTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, goal: text.slice(0, 120), message: `Operator session started: ${planned.narration}` } });
+        await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_STARTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, goal: text.slice(0, 120), scope: scopeClass.scope, message: `Operator session started (${scopeClass.mode}): ${planned.narration}` } });
         const done = await runLoop(session, role, tools);
-        return success({ kind: 'session', narration: planned.narration, session: done });
+        return success({
+          kind: 'session', narration: planned.narration, session: done,
+          scopeContext: { actor: authCtx.primaryUserId === ESAN_USER_ID ? 'Esan' : authCtx.actorId, scope: scopeClass.scope, mode: scopeClass.mode, tenant: authCtx.activeTenantId ?? null, reason: scopeClass.reason },
+        });
       });
 
       app.post<{ Params: { id: string }; Body: { action?: string } }>('/v1/operator/permissions/:id/decision', async (req, reply) => {

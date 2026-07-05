@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDate } from './common.js';
+import { ScopeFieldsSchema } from './scope.js';
 
 /* ===========================================================================
  * Phase 18 — Realtime Voice Operator schemas.
@@ -37,7 +38,7 @@ export const VoiceSessionSchema = z.object({
   errorSummary: z.string().default(''),
   toolCallCount: z.number().default(0),
   interactionMode: z.enum(['push_to_talk', 'always_listening']).default('push_to_talk'),
-});
+}).merge(ScopeFieldsSchema);
 export type VoiceSession = z.infer<typeof VoiceSessionSchema>;
 
 export const VoiceMessageSchema = z.object({
@@ -49,7 +50,7 @@ export const VoiceMessageSchema = z.object({
   timestamp: IsoDate,
   linkedTaskId: z.string().nullable().default(null),
   linkedOperationPlanId: z.string().nullable().default(null),
-});
+}).merge(ScopeFieldsSchema);
 export type VoiceMessage = z.infer<typeof VoiceMessageSchema>;
 
 export const VoiceToolCallSchema = z.object({

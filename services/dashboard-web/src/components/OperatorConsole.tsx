@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { voiceStartAction, voiceEndSessionAction } from '@/app/voice/actions';
-import { operatorCommandAction, getRuntimeSessionAction, decideRuntimePermissionAction, type RuntimeSessionView, type OperatorCommandResult } from '@/app/operator/actions';
+import { operatorCommandAction, getRuntimeSessionAction, decideRuntimePermissionAction, type RuntimeSessionView, type OperatorCommandResult, type ScopeContextView } from '@/app/operator/actions';
 import { useRealtimeVoiceSession, type RealtimeState } from '@/hooks/useRealtimeVoiceSession';
 import { UtteranceGate } from '@/lib/utteranceGate';
 
@@ -31,6 +31,7 @@ export function OperatorConsole({ role }: { role: string }) {
   const [log, setLog] = useState<LogItem[]>([]);
   const [input, setInput] = useState('');
   const [session, setSession] = useState<RuntimeSessionView | null>(null);
+  const [scopeCtx, setScopeCtx] = useState<ScopeContextView | null>(null);
   const [capabilities, setCapabilities] = useState<OperatorCommandResult['groups']>([]);
   const [speaker, setSpeaker] = useState(true);
   const [listening, setListening] = useState(false);
@@ -169,6 +170,7 @@ export function OperatorConsole({ role }: { role: string }) {
       if (r.kind === 'capabilities') { setCapabilities(r.groups); say(r.spoken); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       if (r.kind === 'clarify') { say(r.reply); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       // Runtime session started.
+      setScopeCtx(r.scopeContext);
       if (r.reply) say(r.reply);
       applySession(r.session, true);
     } catch {
@@ -358,6 +360,14 @@ export function OperatorConsole({ role }: { role: string }) {
               <span className={`badge ${session.status === 'completed' ? 'ok' : session.status === 'failed' ? 'err' : 'warn'}`}>{session.status.replace(/_/g, ' ')}</span>
             </div>
             <div style={{ fontSize: 12.5, marginBottom: 8 }}><span className="m">GOAL&nbsp;&nbsp;</span>{session.goal}</div>
+            {scopeCtx && (
+              <div title={scopeCtx.reason} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11, marginBottom: 8, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--glass-2)' }}>
+                <span><span className="m">ACTOR&nbsp;</span>{scopeCtx.actor}</span>
+                <span><span className="m">SCOPE&nbsp;</span><span style={{ color: scopeCtx.scope === 'global' ? 'var(--accent)' : 'var(--ok)', fontWeight: 650 }}>{scopeCtx.scope === 'global' ? 'global kernel' : scopeCtx.scope === 'user' ? 'personal' : scopeCtx.scope}</span></span>
+                <span><span className="m">MODE&nbsp;</span>{scopeCtx.mode.replace(/_/g, ' ')}</span>
+                {scopeCtx.tenant && scopeCtx.scope !== 'global' && <span><span className="m">TENANT&nbsp;</span>{scopeCtx.tenant}</span>}
+              </div>
+            )}
 
             {/* Live workspace phase strip */}
             {session.workspace && (

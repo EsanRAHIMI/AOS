@@ -20,6 +20,7 @@ import { IsoDate } from '../schemas/common.js';
 import { isProtectedCore } from '../operations/index.js';
 import { detectService } from '../voice/index.js';
 import { genId, nowIso } from '../utils/index.js';
+import { ScopeFieldsSchema } from '../schemas/scope.js';
 
 /* ============================== schemas ================================ */
 
@@ -80,7 +81,7 @@ export const OperatorToolRunSchema = z.object({
   evidenceIds: z.array(z.string()).default([]),
   startedAt: IsoDate,
   finishedAt: z.string().nullable().default(null),
-});
+}).merge(ScopeFieldsSchema);
 export type OperatorToolRun = z.infer<typeof OperatorToolRunSchema>;
 
 export const OperatorToolPermissionSchema = z.object({
@@ -132,7 +133,7 @@ export const OperatorRuntimeSessionSchema = z.object({
   nextAction: z.string().default(''),
   startedAt: IsoDate,
   completedAt: z.string().nullable().default(null),
-});
+}).merge(ScopeFieldsSchema);
 export type OperatorRuntimeSession = z.infer<typeof OperatorRuntimeSessionSchema>;
 
 export const OperatorRuntimeStepSchema = z.object({
@@ -283,6 +284,19 @@ const specs: ToolSpec[] = [
   { toolId: 'deploy_staged_workspace', name: 'Deploy staged app', description: 'Create the gated operation plan that deploys the workspace result as a STAGED Dokploy app (temporary subdomain) — verified before promotion.', category: 'deploy', risk: 'high', requiresApproval: true, serviceOwner: 'gateway-api', executionPath: 'operation_plan', rollbackAvailable: true, evidenceRequired: true, input: { appName: 'string', rootDirectory: 'string' } },
   { toolId: 'promote_workspace', name: 'Promote workspace', description: 'After approval: snapshot branch + copy the workspace service over services/<target> on that branch + commit. Default branch untouched; old version preserved. Protected core requires owner.', category: 'deploy', risk: 'high', requiresApproval: true, serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', rollbackAvailable: true, evidenceRequired: true, input: { workspaceId: 'string', migrationId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
   { toolId: 'rollback_workspace', name: 'Rollback workspace promotion', description: 'Restore the default branch; the promote branch is preserved for inspection.', category: 'repair', risk: 'high', requiresApproval: true, serviceOwner: 'code-operator-agent', executionPath: 'code_operator_agent', input: { workspaceId: 'string' }, availableWhen: (c) => c.codeWorkspaceConfigured ? { ok: true } : { ok: false, reason: 'CODE_WORKSPACE_ROOT not configured' } },
+
+  /* -------- Phase AA — personal operating layer (user scope only) ------- */
+  { toolId: 'get_my_context', name: 'Read my context', description: 'User-scoped profile, active goals, constraints and consent status. Never reads kernel data as personal data.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/context', executionPath: 'gateway_internal', examples: ['plan my week'] },
+  { toolId: 'generate_daily_briefing', name: 'Generate briefing', description: 'Honest user-scoped briefing from the data that actually exists (goals, memories); missing connectors are reported not_configured — never invented.', category: 'report', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['plan my week', 'daily briefing'] },
+
+  /* ---- Phase AB — Jarvis personal intelligence (user scope, honest) ---- */
+  { toolId: 'build_reality_baseline', name: 'Build reality baseline', description: 'Assemble the personal intelligence graph from scoped records; list every missing data category with how to add it.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/profile', executionPath: 'gateway_internal', examples: ['build my personal reality baseline'] },
+  { toolId: 'get_next_best_actions', name: 'Next best actions', description: 'Deterministic ranked actions from risks, approvals, goal-linked opportunities and data gaps — specific reasons, never generic.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/next-actions', executionPath: 'gateway_internal', examples: ['what should I do now?'] },
+  { toolId: 'run_full_daily_briefing', name: 'Daily briefing (full)', description: 'Full briefing run: top-3 priorities, risks, income/growth/AOS actions, approvals, missing data — stored and scoped.', category: 'report', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/review', executionPath: 'gateway_internal', evidenceRequired: true, examples: ['run my daily briefing'] },
+  { toolId: 'run_weekly_strategy', name: 'Weekly strategy review', description: 'Goals vs actions vs opportunities; ranked weekly plan; what AOS should build; what needs approval.', category: 'report', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/review', executionPath: 'gateway_internal', evidenceRequired: true, examples: ['weekly strategy review'] },
+  { toolId: 'analyze_resume', name: 'Analyze resume', description: 'Only provided/scoped resume data; separates verified facts, user claims, inferences and suggestions — never invents credentials.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['analyze my resume'] },
+  { toolId: 'find_opportunities', name: 'Rank opportunities', description: 'Score recorded opportunities (impact/effort/risk/goal-linkage) with source + confidence; research provider used only when configured.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/opportunities', executionPath: 'gateway_internal', examples: ['find the best opportunities for me'] },
+  { toolId: 'propose_aos_build', name: 'Propose AOS build', description: 'Identify the highest-value missing AOS capability for the user; building it routes through GLOBAL workspace evolution with approval.', category: 'reason', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['what should AOS build next for me?'] },
 
   /* ------------------------------ approval ------------------------------ */
   { toolId: 'request_approval', name: 'Request approval', description: 'Create an approval card (dock + Overview) for a gated step.', category: 'approval', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', input: { prompt: 'string', riskLevel: 'string' } },
@@ -437,7 +451,7 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
 
   // UI / console / self-improvement goals without an explicit service id →
   // Phase Y workspace copy of dashboard-web (the console lives there).
-  if (/(fix|improve|upgrade|evolve|redesign|implement|clean up|find .*(wrong|bug|issue))/.test(t) && /(ui|console|dock|dashboard|interface|page|component)/.test(t)) {
+  if (/(fix|improve|upgrade|evolve|redesign|implement|clean up|find .*(wrong|bug|issue))/.test(t) && /\b(ui|console|dock|dashboard|interface|page|component)\b/.test(t)) {
     return {
       kind: 'runtime_goal',
       narration: 'Planning a UI evolution in an isolated workspace copy of dashboard-web: deep multi-file edits are free inside the workspace; typecheck + Next build must pass; replacing the live dashboard requires approval.',
@@ -471,7 +485,43 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
   if (/research|best practices?|investigate/.test(t)) return { kind: 'single_tool', narration: 'Research pipeline.', steps: [step('research_topic', 'Intelligence pipeline', { goal })] };
   if (/\b(health|is .* up|reachable)\b/.test(t) || (/check/.test(t) && svc)) return { kind: 'single_tool', narration: `Read-only health check${svc ? ` on ${svc}` : ''}.`, steps: [step('check_service_health', 'Real /health + registry verification', { targetService: svc ?? '' })] };
 
-  return { kind: 'clarify', steps: [], narration: `I heard: “${goal.trim().slice(0, 80)}”. Give me a goal I can plan — a system check, a service operation, a code improvement, research, or a new service.` };
+  // Phase AB — Jarvis personal commands (all strictly user-scoped).
+  if (/build my personal (reality )?baseline|review my current situation|personal growth plan/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Building your personal reality baseline: profile, goals, projects, assets, risks, opportunities — and an honest list of every missing data category.', steps: [step('build_reality_baseline', 'Assemble the scoped intelligence graph + missing data'), step('get_next_best_actions', 'Rank what matters now from the baseline')] };
+  }
+  if (/what should i do (now|next)|highest.value next action|next best action/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Loading your scoped context and ranking next actions — specific to you, with reasons, sources and confidence.', steps: [step('get_my_context', 'Who is asking, goals, consents'), step('get_next_best_actions', 'Deterministic ranked actions with one clear best')] };
+  }
+  if (/(run |do )?my daily briefing/.test(t) || /^daily briefing/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Running your daily briefing from real scoped data; unconnected sources are reported not_configured.', steps: [step('run_full_daily_briefing', 'Priorities, risks, income/growth/AOS actions, approvals, missing data')] };
+  }
+  if (/weekly (strategy|review)|strategy review/.test(t) && /\b(my|me)\b/.test(t) || /^weekly strategy/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Weekly strategy review: goals vs actions vs opportunities → ranked plan, AOS build list, approvals needed.', steps: [step('run_weekly_strategy', 'Compare, rank, plan')] };
+  }
+  if (/analy[sz]e my (resume|cv)|my resume|improve my position/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Resume intelligence on YOUR provided data only — facts, claims, inferences and suggestions kept strictly separate; nothing invented.', steps: [step('get_my_context', 'Goals give positioning direction'), step('analyze_resume', 'Separate facts/claims/inferences; concrete improvements')] };
+  }
+  if (/find .*opportunit.*(me|my)|best opportunities for me|increase my income|system to increase my income/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Ranking opportunities against your goals and assets — every score carries source and confidence; no fake market claims.', steps: [step('get_my_context', 'Goals + assets for linkage'), step('find_opportunities', 'Score and rank with recommended next actions')] };
+  }
+  if (/what should aos build.*(me|my)|aos build next for me|build next to improve my/.test(t)) {
+    return { kind: 'runtime_goal', narration: 'Finding the highest-value missing AOS capability for you. Analysis is user-scoped; actually BUILDING it is global workspace evolution and needs your approval before anything live.', steps: [step('get_my_context', 'Your goals and gaps'), step('propose_aos_build', 'Rank capability gaps by impact/effort/risk + build plan proposal')] };
+  }
+
+  // Phase AA — personal goals are USER-scoped: read only the user's own data,
+  // never kernel state as personal data, and be honest about missing connectors.
+  if (/\b(my|me)\b.*(week|day|goals?|schedule|briefing|priorit)|plan (my|the) (week|day)|daily briefing|weekly (review|strategy)/.test(t)) {
+    return {
+      kind: 'runtime_goal',
+      narration: 'Personal goal — user scope only. I read your profile, goals and consents; connectors that are not configured are reported honestly, never invented.',
+      steps: [
+        step('get_my_context', 'Load user-scoped profile, goals, constraints and consent status'),
+        step('generate_daily_briefing', 'Briefing from the data that actually exists (missing sources listed as not_configured)'),
+      ],
+    };
+  }
+
+  return { kind: 'clarify', steps: [], narration: `I heard: “${goal.trim().slice(0, 80)}”. Give me a goal I can plan — a system check, a service operation, a code improvement, research, a new service, or a personal goal like “plan my week”.` };
 }
 
 /* ===================== session failure semantics ======================== */

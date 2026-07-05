@@ -18,6 +18,7 @@
  */
 import { z } from 'zod';
 import { IsoDate } from '../schemas/common.js';
+import { ScopeFieldsSchema } from '../schemas/scope.js';
 import { SERVICE_PORTS, ROOT_DOMAIN } from '../constants/index.js';
 import { isProtectedCore } from '../operations/index.js';
 
@@ -53,7 +54,7 @@ export const WorkspaceSchema = z.object({
   lastError: z.string().default(''),
   createdAt: IsoDate,
   updatedAt: IsoDate,
-});
+}).merge(ScopeFieldsSchema);
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
 export const WorkspaceRunSchema = z.object({
@@ -65,7 +66,7 @@ export const WorkspaceRunSchema = z.object({
   summary: z.string().default(''),
   durationMs: z.number().default(0),
   createdAt: IsoDate,
-});
+}).merge(ScopeFieldsSchema);
 export type WorkspaceRun = z.infer<typeof WorkspaceRunSchema>;
 
 export const WorkspaceServiceSchema = z.object({

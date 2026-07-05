@@ -18,3 +18,5 @@ export * from './security.js';
 export * from './intelligence.js';
 export * from './operations-plan.js';
 export * from './voice.js';
+export * from './scope.js';
+export * from './identity.js';

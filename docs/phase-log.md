@@ -1078,3 +1078,114 @@ Verification:
 > created → service generated → auto-fix loop (typecheck, build, boot, ALL six probes — repaired until
 > GREEN) → migration plan → staged-deploy approval — with the console showing phases, matrix, loop
 > counter and logs the whole time, and a FAILED (never “completed”) outcome if limits stop it first.
+
+## Phase AA — Scope, Identity & Multi-Tenant Governance Foundation — COMPLETE (2026-07-05)
+The platform gate before personal connectors, finance data, citizen workflows or multi-user operation.
+Invariant implemented end-to-end: **Global software evolution. Scoped human data.**
+
+Delivered (shared — one reusable module, no scattered checks):
+- **Scope model** (`schemas/scope.ts`): global/tenant/user/project/case + visibility; optional ScopeFields
+  merged into existing kernel schemas (tasks, events, evidence, voice sessions/messages, operator
+  sessions/tool-runs, workspaces/runs) with zero writer breakage; strict RequiredScope for new collections.
+- **16 identity/governance schemas + collections** (`schemas/identity.ts`): tenants, user_profiles,
+  tenant_memberships, user_roles, scope_policies, consent_grants, connector_accounts, connector_sync_runs,
+  scoped_memories, user_goals, user_constraints, daily_briefings, weekly_strategy_reviews,
+  opportunity_reports, public_service_cases, access_decisions.
+- **Central authorization engine** (`scope/index.ts`): `canAccess()` → allowed/denied/approval_required
+  with audit/evidence flags. Rules: user data only for the user (OWNER needs explicit audited approval for
+  anyone else's); tenant data member-only; citizen cases strictest (citizen-own + assigned case roles in
+  tenant); cross-tenant analytics approval-gated; connector data needs ACTIVE consent; agents never
+  approve; viewers never mutate; **missing scope fails closed**. Plus `stampScope` (fail-closed writes),
+  `scopeFilter` (leak-proof queries), `buildAccessDecision`, Esan seed builders,
+  `legacyRoleToAuthContext` (backward-compatible login mapping), `classifyGoalScope`.
+
+Delivered (gateway):
+- Standard **AuthContext** resolution for every identity route; idempotent startup seeding
+  (tenant_esan_personal / user_esan / owner membership) + identity.seeded event.
+- **Scoped routes**: /v1/me/{context,profile,goals,memories,briefings,opportunities}, /v1/tenants/current,
+  /v1/consents (+revoke), /v1/connectors (+sync), /v1/access-decisions — all through `enforceScoped`:
+  denials → access_decisions + security event + 403 with decision payload.
+- **Consent foundation**: grants forced read_only this phase; revocation blocks accounts and future syncs
+  (`blocked_no_consent` runs + connector.sync.blocked events); accounts store metadata + consent reference
+  only — never secrets. Unbuilt provider syncs return honest `not_configured`.
+- **Scope-aware operator**: every command is classified (global_kernel / personal / tenant / case);
+  sessions are stamped with scope/tenant/visibility/createdBy; personal goals plan ONLY user-scoped tools
+  (`get_my_context` → `generate_daily_briefing`) with missing connectors reported not_configured — kernel
+  data is never treated as personal data; global evolution (workspace engine) reads no private user data.
+- Migration `scripts/migrate-scope-foundation.mjs`: idempotent, non-destructive; kernel → explicit global,
+  Esan-scoped voice/operator history, ambiguity stays global with migrationNote.
+
+Delivered (dashboard):
+- Console shows **ACTOR / SCOPE / MODE / TENANT** for every runtime session.
+- Five identity pages under a new sidebar group: /settings/identity (actor, roles, profile, goals,
+  private memories), /settings/tenants (memberships/roles), /settings/consents, /settings/connectors,
+  /settings/access-log (live decision stream). Dense, serious, no fake data — empty states are honest.
+
+Verification:
+- **Phase AA smoke PASS (39/39)** (`scripts/phaseaa-scope-smoke.mjs`) covering all seven scenarios:
+  A Esan bootstrap + legacy-login mapping + global governance; B private user isolation (incl. owner
+  approval-gate) + decision records; C tenant isolation + owner foreign-tenant approval + cross-tenant
+  analytics gating; fail-closed suite (missing scope/userId, stampScope throw, leak-proof scopeFilter,
+  viewer/agent restrictions); D consent lifecycle (active allows, revoked/missing block, account requires
+  grant); E/F operator scope classification (personal vs global kernel vs tenant, honest sources);
+  G public-service safety (citizen/citizen, cross-tenant staff, owner approval-gate, fail-closed).
+- All regressions green: Z 18/18, Y 31/31, X 28/28, 19.5 23/23, 19 11/11. All 19 services + shared +
+  service-kit typecheck; dashboard `next build` ✓ incl. the five /settings routes. No Docker; Dokploy
+  independence intact; no destructive migration; no connector writes.
+  Scope: `shared/src/{schemas,scope,operator,constants}/`, `services/gateway-api/`,
+  `services/dashboard-web/`, `scripts/`, `docs/`.
+
+## Phase AB — Personal Reality Baseline & Jarvis Intelligence Layer — COMPLETE (2026-07-05)
+The first real Jarvis layer on the Phase AA rails: AOS now deeply understands the authorized user —
+scoped, honest, evidence-backed, and proactive. Esan is the first full user; nothing mixes with the
+global kernel.
+
+Delivered (shared `personal/` module — deterministic, 26/26 smoke):
+- **14 reality collections** with strict scope + source + confidence + freshness + recordKind separation
+  (facts/preferences/goals/inferences/recommendations/decisions/actions). Goals remain in user_goals
+  (one source of truth). No secrets, no invented data anywhere.
+- **Personal Intelligence Graph**: user→goals→projects→assets→systems→risks→opportunities with
+  serves_goal/advances_goal/leverages_asset/threatens edges, missing-data detection (with exact ingest
+  instructions + not_configured connectors) and freshness tracking.
+- **Next-best-action engine**: deterministic ranking — high-severity risks first, pending approvals as
+  unblockers, goal-linked opportunity value (impact×2 − effort − risk + linkage), then data-gap actions;
+  every action has a SPECIFIC reason with scores/sources/confidence.
+- **Daily briefing + weekly strategy engines**: top-3 priorities, risks, income/growth/AOS actions,
+  approvals, missing data; honest sources (`calendar: not_configured`, `email: not_configured`,
+  `tasks: limited_to_aos_tasks`); empty data asks for data instead of inventing a schedule. Weekly:
+  goals vs completed/missed vs new opportunities → ranked plan, aosShouldBuild, esanShouldDo, approvals.
+- **Opportunity engine**: value scoring + ranking with source/confidence; zero fake market claims — the
+  research provider is reported not_configured until it exists.
+- **Resume intelligence**: verified facts (connector-sourced only) vs user claims vs confidence-labeled
+  inferences vs suggestions; positioning derives ONLY from provided data; never invents credentials.
+
+Delivered (gateway):
+- **Ingestion framework**: `POST /v1/me/reality/ingest` (profile/resume/project/system/asset/goal/
+  income_idea/risk/learning_track/career_record/tech_watch) — every run returns source, records
+  created/updated, confidence, missing data, next suggested connector, and stores evidence.
+- Reality reads (profile+graph, goals, projects+systems+assets, ranked opportunities, risks,
+  next-actions, briefings, strategies, resume) — all through Phase AA `enforceScoped`, strictly
+  userId-filtered. `POST /v1/me/reality/review` runs the engines over live scoped data and persists runs.
+- **Decision learning**: accept/reject/complete on a next-best-action updates it AND writes scoped
+  memory (rejections → mistake_avoidance) — AOS learns what Esan accepts, rejects, completes.
+- **7 new operator tools** (build_reality_baseline, get_next_best_actions, run_full_daily_briefing,
+  run_weekly_strategy, analyze_resume, find_opportunities, propose_aos_build) + planner routes for all
+  six scenario commands. “What should AOS build next for me?” analyzes in USER scope and routes actual
+  building to GLOBAL workspace evolution with approval — scopes never mix. (Also fixed a planner regex
+  where “b*ui*ld” matched the UI branch — word boundaries added.)
+
+Delivered (dashboard):
+- **/me Personal Command Center**: top priority, opportunity radar, risk radar, missing-data count,
+  ranked next-best-actions with Accept/Decline/Done (decisions train scoped memory), latest briefing,
+  data-freshness line, run-briefing button — plus /me/{reality,goals,projects,systems,opportunities,
+  briefing,strategy,resume} and a “Personal” sidebar group. Every empty state says exactly what is
+  missing and how to add it. No fake cards.
+
+Verification:
+- **Phase AB smoke PASS (26/26)**: scenarios A–F at engine level + honesty guarantees (not_configured
+  sources, no invented schedule, no invented credentials, claims≠facts, labeled inferences,
+  deterministic rankings, specific reasons) + AA isolation regression inside the same run.
+- All prior suites green: AA 39/39, Z 18/18, Y 31/31, X 28/28, 19.5 23/23, 19 11/11. All 19 services +
+  shared + service-kit typecheck; dashboard `next build` ✓ (9 new /me routes). No connector writes; no
+  Docker; Dokploy independence intact. Scope: `shared/src/{personal,operator,constants}/`,
+  `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.

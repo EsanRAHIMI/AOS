@@ -53,3 +53,11 @@ Add durable, scoped memory:
 - Public-service workflows should record case outcomes without leaking cross-user data.
 - Prompt/model performance should drive provider and prompt recommendations.
 - No fine-tuning until the dataset is clean, consented, deduplicated, and useful.
+
+## Phase AB — personal decision learning
+Every next-best-action decision writes a scoped memory: accept/complete →
+`decision` (“similar suggestions are valuable”), reject → `mistake_avoidance`
+(“deprioritize similar suggestions”). Briefing and strategy runs persist as
+scoped runs with sourcesUsed / sourcesNotConfigured, so future agents know what
+data actually informed each recommendation. All of it stays user-scoped unless
+explicitly global.

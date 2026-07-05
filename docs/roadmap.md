@@ -258,7 +258,30 @@ Phase 10 candidates:
 6. 18/18 Phase Z smoke incl. REAL in-process service boot with the full probe suite GREEN; all
    regressions; all typechecks; dashboard build — DONE.
 
-## Phase AA — Reality Baseline & Documentation Truth — NEXT
+## Phase AA — Scope, Identity & Multi-Tenant Governance Foundation — DONE
+(Executed ahead of the Reality-Baseline track; front-loads the identity/tenancy parts of Phase AC/AD.)
+1. Scope model (global/tenant/user/project/case) + 16 identity/governance collections — DONE.
+2. Central `canAccess` engine at the gateway boundary; missing scope fails closed; denials audited — DONE.
+3. Esan seeded as owner/platform governor; legacy login backward compatible via AuthContext mapping — DONE.
+4. Consent/connector read-only foundation (revocation blocks syncs; metadata only, never secrets) — DONE.
+5. Personal operating layer APIs (/v1/me/*) + honest briefings (not_configured sources) — DONE.
+6. Scope-aware operator (goal classification, scoped sessions, ACTOR/SCOPE/MODE in console) — DONE.
+7. Five identity settings pages; idempotent non-destructive migration script — DONE.
+8. 39/39 isolation smoke (scenarios A–G); all regressions; all typechecks; dashboard build — DONE.
+
+## Phase AB — Personal Reality Baseline & Jarvis Intelligence Layer — DONE
+1. 14 scoped reality collections; facts/inferences/recommendations strictly separated — DONE.
+2. Personal Intelligence Graph + missing-data detection with exact ingest guidance — DONE.
+3. Next-best-action engine (deterministic, specific reasons, source/confidence/freshness) — DONE.
+4. Daily briefing + weekly strategy engines with honest not_configured sources — DONE.
+5. Opportunity engine (value scoring, no fake market claims) + resume intelligence (never invents
+   credentials; claims ≠ facts) — DONE.
+6. Ingestion framework (11 kinds) + decision→scoped-memory learning — DONE.
+7. Operator answers “What should I do now?” specifically; AOS-build analysis routes to global
+   evolution with approval — DONE.
+8. /me Personal Command Center + 8 subpages; 26/26 smoke + all regressions — DONE.
+
+## Phase AA-RB — Reality Baseline & Documentation Truth — NEXT
 1. Keep docs synchronized with the 19-service reality, not old phase assumptions.
 2. Verify live env/integration status: MongoDB, S3, Dokploy, GitHub, LLM, voice, registry, event bus.
 3. Add automated doc-health checks for service map, constants, env examples, and deployment docs.

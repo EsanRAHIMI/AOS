@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDate } from './common.js';
+import { ScopeFieldsSchema } from './scope.js';
 
 /* ===========================================================================
  * Phase 4 — Reality Execution Layer schemas.
@@ -95,7 +96,7 @@ export const EvidenceRecordSchema = z.object({
   data: z.record(z.string(), z.unknown()).default({}),
   s3ObjectId: z.string().nullable().default(null),
   createdAt: IsoDate,
-});
+}).merge(ScopeFieldsSchema);
 export type EvidenceRecord = z.infer<typeof EvidenceRecordSchema>;
 
 /* -------------------- Browser testing contracts -------------------- */

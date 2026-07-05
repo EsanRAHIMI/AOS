@@ -111,3 +111,42 @@ AOS should feel like a professional operator:
 8. Public-service/citizen case model, read-only first.
 9. Draft-only external outputs.
 10. Approval-gated write actions.
+
+## Phase AB — Personal Reality Baseline & Jarvis intelligence (implemented)
+The layer is now real: 14 scoped reality collections (profile, assets, projects,
+systems, risks, opportunities, income streams, learning tracks, career records,
+resume profiles, tech watch, next-best-actions, briefing runs, strategy runs;
+goals stay in `user_goals` as the single source of truth). Every record carries
+scope + source + confidence + freshness + recordKind, with facts / preferences /
+goals / inferences / recommendations / decisions / actions strictly separated.
+
+Engines (`shared/src/personal`, deterministic and smoke-tested 26/26):
+personal intelligence graph (user→goals→projects→assets→systems→risks→
+opportunities, with missing-data detection), next-best-action scoring
+(risk severity > approvals > goal-linked opportunity value = impact×2−effort−risk
++ linkage bonus > data gaps), daily briefing, weekly strategy, opportunity
+ranking, resume analysis (verified facts vs user claims vs labeled inferences vs
+suggestions — credentials are never invented). Vector/semantic search:
+not_configured (structured search first; config-gated later).
+
+APIs: `POST /v1/me/reality/ingest` (11 kinds, each result reports records
+created/updated, confidence, missing data, next suggested connector, evidence),
+GETs for profile/goals/projects/opportunities/risks/next-actions/briefings/
+strategies/resume, `POST /v1/me/reality/review` (daily|weekly),
+`POST /v1/me/reality/next-actions/:id/decision` — accept/reject/complete writes
+scoped learning memory (rejections become mistake_avoidance).
+
+Operator commands (all user-scoped): “build my personal reality baseline”,
+“what should I do now?”, “run my daily briefing”, “weekly strategy review”,
+“analyze my resume”, “find the best opportunities for me”, “what should AOS
+build next for me?” — the last one analyzes in user scope but routes actual
+building to GLOBAL workspace evolution with approval.
+
+UI: `/me` command center (top priority, opportunity radar, risk radar, missing
+data, accept/decline/done buttons) + /me/{reality,goals,projects,systems,
+opportunities,briefing,strategy,resume}. Empty states state exactly what is
+missing and how to ingest it.
+
+Future extraction path: engines lift into daily-briefing-agent,
+personal-strategy-agent, opportunity-agent, brand-resume-agent via the
+workspace runtime when volume justifies dedicated services.

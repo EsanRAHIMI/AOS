@@ -57,3 +57,5 @@ export * from './dokploy/index.js';
 export * from './voice/index.js';
 export * from './operator/index.js';
 export * from './workspace/index.js';
+export * from './scope/index.js';
+export * from './personal/index.js';

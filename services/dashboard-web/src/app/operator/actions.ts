@@ -81,31 +81,34 @@ function toView(sessionRaw: Record<string, unknown> | null | undefined, permissi
   };
 }
 
+export interface ScopeContextView { actor: string; scope: string; mode: string; tenant: string | null; reason: string }
+
 export interface OperatorCommandResult {
   kind: 'capabilities' | 'session' | 'clarify' | 'ignored' | 'error';
   reply: string;
   spoken: string;
   groups: Array<{ label: string; tools: Array<{ name: string; riskLevel: string; requiresApproval: boolean; available: boolean; example: string }> }>;
   session: RuntimeSessionView | null;
+  scopeContext: ScopeContextView | null;
 }
 
 export async function operatorCommandAction(text: string): Promise<OperatorCommandResult> {
   const r = await gateway.operatorCommand(text);
-  if (!r) return { kind: 'error', reply: 'The kernel is unreachable.', spoken: '', groups: [], session: null };
+  if (!r) return { kind: 'error', reply: 'The kernel is unreachable.', spoken: '', groups: [], session: null, scopeContext: null };
   const kind = String(r.kind ?? 'error');
   if (kind === 'capabilities') {
     const groups = (r.groups as OperatorCommandResult['groups'] | undefined) ?? [];
-    return { kind: 'capabilities', reply: String(r.spoken ?? ''), spoken: String(r.spoken ?? ''), groups, session: null };
+    return { kind: 'capabilities', reply: String(r.spoken ?? ''), spoken: String(r.spoken ?? ''), groups, session: null, scopeContext: null };
   }
   if (kind === 'session') {
     const view = toView(r.session as Record<string, unknown>);
     // Pull permissions + live workspace telemetry from the detail endpoint.
     const full = view ? await gateway.operatorSession(view.runtimeSessionId) : null;
     const withPerm = full ? toView(full.session, full.permissions, (full as Record<string, unknown>).workspace) : view;
-    return { kind: 'session', reply: String(r.narration ?? ''), spoken: String(r.narration ?? ''), groups: [], session: withPerm };
+    return { kind: 'session', reply: String(r.narration ?? ''), spoken: String(r.narration ?? ''), groups: [], session: withPerm, scopeContext: (r.scopeContext as ScopeContextView | undefined) ?? null };
   }
-  if (kind === 'clarify') return { kind: 'clarify', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [], session: null };
-  return { kind: 'ignored', reply: '', spoken: '', groups: [], session: null };
+  if (kind === 'clarify') return { kind: 'clarify', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [], session: null, scopeContext: null };
+  return { kind: 'ignored', reply: '', spoken: '', groups: [], session: null, scopeContext: null };
 }
 
 export async function getRuntimeSessionAction(id: string): Promise<RuntimeSessionView | null> {

@@ -225,6 +225,39 @@ export const COLLECTIONS = {
   WORKSPACE_ARTIFACTS: 'workspace_artifacts',
   WORKSPACE_MIGRATIONS: 'workspace_migrations',
   WORKSPACE_ROLLBACKS: 'workspace_rollbacks',
+  // Phase AA — Scope, Identity & Multi-Tenant Governance
+  TENANTS: 'tenants',
+  USER_PROFILES: 'user_profiles',
+  TENANT_MEMBERSHIPS: 'tenant_memberships',
+  USER_ROLES: 'user_roles',
+  SCOPE_POLICIES: 'scope_policies',
+  CONSENT_GRANTS: 'consent_grants',
+  CONNECTOR_ACCOUNTS: 'connector_accounts',
+  CONNECTOR_SYNC_RUNS: 'connector_sync_runs',
+  SCOPED_MEMORIES: 'scoped_memories',
+  USER_GOALS: 'user_goals',
+  USER_CONSTRAINTS: 'user_constraints',
+  DAILY_BRIEFINGS: 'daily_briefings',
+  WEEKLY_STRATEGY_REVIEWS: 'weekly_strategy_reviews',
+  OPPORTUNITY_REPORTS: 'opportunity_reports',
+  PUBLIC_SERVICE_CASES: 'public_service_cases',
+  ACCESS_DECISIONS: 'access_decisions',
+  // Phase AB — Personal Reality Baseline & Jarvis Intelligence Layer
+  // (personal goals live in USER_GOALS from Phase AA — one source of truth)
+  PERSONAL_REALITY_PROFILES: 'personal_reality_profiles',
+  PERSONAL_ASSETS: 'personal_assets',
+  PERSONAL_PROJECTS: 'personal_projects',
+  PERSONAL_SYSTEMS: 'personal_systems',
+  PERSONAL_RISKS: 'personal_risks',
+  PERSONAL_OPPORTUNITIES: 'personal_opportunities',
+  PERSONAL_INCOME_STREAMS: 'personal_income_streams',
+  PERSONAL_LEARNING_TRACKS: 'personal_learning_tracks',
+  PERSONAL_CAREER_RECORDS: 'personal_career_records',
+  RESUME_PROFILES: 'resume_profiles',
+  TECHNOLOGY_WATCH_ITEMS: 'technology_watch_items',
+  NEXT_BEST_ACTIONS: 'next_best_actions',
+  PERSONAL_BRIEFING_RUNS: 'personal_briefing_runs',
+  STRATEGY_REVIEW_RUNS: 'strategy_review_runs',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -363,6 +396,14 @@ export const EVENT_TYPES = {
   WORKSPACE_PROMOTED: 'workspace.promoted',
   WORKSPACE_ROLLED_BACK: 'workspace.rolled_back',
   WORKSPACE_FAILED: 'workspace.failed',
+  // Phase AA — identity, consent, access
+  IDENTITY_SEEDED: 'identity.seeded',
+  ACCESS_DENIED: 'access.denied',
+  ACCESS_APPROVAL_REQUIRED: 'access.approval_required',
+  CONSENT_GRANTED: 'consent.granted',
+  CONSENT_REVOKED: 'consent.revoked',
+  CONNECTOR_SYNC_BLOCKED: 'connector.sync.blocked',
+  SCOPED_MEMORY_WRITTEN: 'scoped.memory.written',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

@@ -65,3 +65,17 @@ When AOS needs approval, it must explain:
 
 For multi-user or public-service contexts, it must also state whose data,
 tenant, department, or citizen case is affected.
+
+## Phase AA — scope & identity enforcement
+Authorization is centralized in the shared `canAccess` engine, enforced at the
+gateway via a standard AuthContext. Missing scope FAILS CLOSED. User data is
+accessible only to the user (owner support access is approval-gated + audited);
+tenant data only to tenant members; citizen cases only to the citizen and
+assigned case roles; connector data only with an ACTIVE read-only consent
+grant; service agents never approve; viewers never mutate; cross-tenant
+analytics is approval-gated. Every denial and approval-required decision is
+recorded in `access_decisions` (+ security event) and rendered at
+`/settings/access-log`. Isolation is proven by 39 checks in
+`scripts/phaseaa-scope-smoke.mjs`. Migration (`migrate-scope-foundation.mjs`)
+is idempotent and non-destructive: kernel records become explicit
+`scope:'global'`; single-owner history is scoped to Esan.

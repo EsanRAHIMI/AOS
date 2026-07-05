@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-05 — Phase AB personal reality & Jarvis layer
+
+### D-090 Honest intelligence or none
+Every personal engine works ONLY on recorded, scoped data. Missing sources are named
+(`calendar: not_configured`), empty baselines produce requests for data instead of output, resume
+analysis keeps verified facts / user claims / labeled inferences / suggestions in separate buckets and
+never invents credentials, and opportunity scores carry source + confidence with no market claims the
+system cannot back. Deterministic engines (same input ⇒ same ranking) make honesty testable — 26 checks.
+
+### D-089 Personal analysis, global building — and decisions are training data
+“What should AOS build next for me?” is analyzed in user scope but building routes to the global
+workspace evolution flow with approval: personal context informs, the kernel stays unified. Every
+accept/reject/complete on a recommendation writes scoped memory (rejections → mistake_avoidance), so the
+ranking engines have a growing, user-owned signal about what actually helps — the seed of real
+personalization without any cross-scope leakage.
+
+## 2026-07-05 — Phase AA scope, identity & multi-tenant governance
+
+### D-088 One authorization engine, enforced at the gateway boundary
+All scoped access flows through the shared `canAccess()` — no duplicated or scattered checks. Verdicts
+are allowed/denied/approval_required with audit + evidence flags; every denial writes an access_decision
+and a security event. Missing scope fails closed everywhere (engine, stampScope, scopeFilter). Even the
+OWNER cannot silently read another user's private data or a citizen case — those paths return
+approval_required and are audited, which keeps support access possible but never invisible.
+
+### D-087 Global software evolution, scoped human data
+The kernel (services, schemas, prompts, deployments, the workspace self-development engine) stays ONE
+governed global unit; user/tenant/project/case data is isolated by construction. Existing schemas gained
+optional scope metadata without breaking writers; legacy records default to global and the idempotent
+migration stamps them explicitly, scoping only the unambiguous single-owner history to Esan. Consents
+start read-only; connector accounts hold metadata + consent references, never secrets. Esan is seeded as
+first owner and platform governor, and the legacy env login maps to user_esan — nothing broke.
+
 ## 2026-07-03 — Phase Z live runtime & honest outcomes
 
 ### D-086 Service metadata is public; actions and internals stay guarded

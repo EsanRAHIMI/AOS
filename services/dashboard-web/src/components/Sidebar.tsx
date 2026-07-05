@@ -15,6 +15,8 @@ const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
   { title: 'Intelligence', items: [['/llm', 'Real Intelligence'], ['/llm/costs', 'AI Costs & Budget'], ['/llm/prompts', 'Agent Prompts'], ['/llm-traces', 'AI Reasoning Traces'], ['/research', 'Research'], ['/reviews', 'Reviews'], ['/qa', 'QA'], ['/reports/center', 'Reports Center']] },
   { title: 'Secure', items: [['/security', 'Security'], ['/security/events', 'Security Events'], ['/security/env', 'Env Health'], ['/security/rate-limits', 'Rate Limits'], ['/security/safe-mode', 'Safe Mode']] },
   { title: 'Learn', items: [['/learning', 'Learning'], ['/learning-runs', 'Learning Runs'], ['/reliability', 'Reliability'], ['/patterns', 'Patterns'], ['/system-recommendations', 'Recommendations'], ['/improvement-workflows', 'Workflows'], ['/impact-assessments', 'Impact'], ['/memory-maintenance', 'Memory Maint.'], ['/learning/schedules', 'Schedules']] },
+  { title: 'Personal', items: [['/me', 'Command Center'], ['/me/briefing', 'Briefings'], ['/me/strategy', 'Strategy'], ['/me/opportunities', 'Opportunities'], ['/me/resume', 'Resume']] },
+  { title: 'Identity', items: [['/settings/identity', 'Identity & Scope'], ['/settings/tenants', 'Tenants'], ['/settings/consents', 'Consents'], ['/settings/connectors', 'Connectors'], ['/settings/access-log', 'Access log']] },
   { title: 'More', items: [['/docs', 'Docs'], ['/events', 'Events'], ['/logs', 'Logs'], ['/settings', 'Settings']] },
 ];
 

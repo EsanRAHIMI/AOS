@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDate } from './common.js';
+import { ScopeFieldsSchema } from './scope.js';
 
 /** A system event published to the event bus and persisted in `events`. */
 export const SystemEventSchema = z.object({
@@ -9,7 +10,7 @@ export const SystemEventSchema = z.object({
   taskId: z.string().nullable().default(null),
   payload: z.record(z.string(), z.unknown()).default({}),
   createdAt: IsoDate,
-});
+}).merge(ScopeFieldsSchema);
 export type SystemEvent = z.infer<typeof SystemEventSchema>;
 
 /** Body accepted when publishing an event. */

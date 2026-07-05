@@ -26,3 +26,10 @@ Success = an authorized user can state a goal, and AOS can plan, verify,
 execute safe steps, ask for approval when needed, remember the result in that
 user's scope, and recommend the next best move without confusion or invented
 progress.
+
+## Phase AA — platform governance direction
+Esan is the first owner and platform governor. AOS is evolving into a
+multi-tenant Autonomous Intelligence Government Platform serving future
+personal users, teams, companies, government units, departments and citizens.
+The invariant: **global software evolution, scoped human data** — one unified
+kernel, hard isolation for every user/tenant/project/case boundary.
