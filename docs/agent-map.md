@@ -1,29 +1,50 @@
 # Agent Map
 
-Each agent is an independent service. Capabilities are declared in its
-`src/factory/manifest.ts` and stored by the service-registry.
+Each agent is an independent HTTP service with a manifest in
+`services/<id>/src/factory/manifest.ts`. The registry stores the live manifest;
+this document explains ownership and operating intent.
 
-## orchestrator-agent — central brain
-receive_goal, decompose_goal, assign_work, track_progress, coordinate_services,
-request_approval, generate_reports, propose_evolution.
+## Command and Coordination
 
-## architect-agent
-design_service_architecture, define_service_boundaries, generate_api_contracts,
-define_database_schema, define_event_flows, define_env_vars,
-create_deployment_requirements.
+| Agent | Main Responsibility | Must Produce |
+|---|---|---|
+| `orchestrator-agent` | Convert authorized user/tenant goals into governed plans and specialist work | task phases, events, approvals, final report |
+| `code-operator-agent` | Inspect, evolve, verify, and prepare code in isolated workspaces | workspace run, verification matrix, migration/PR plan |
+| `voice-operator-agent` | Voice/text mediation for operator commands | safe interpretation, permission requests, session memory |
 
-## builder-agent
-generate_code, modify_code, create_service_scaffold, create_api_endpoints,
-create_frontend_components, create_workers, create_tests.
+## Build, Quality, and Operations
 
-## devops-agent
-generate_dokploy_instructions, generate_container_spec, generate_env_list,
-generate_domain_requirements, validate_deployment_readiness.
+| Agent | Main Responsibility | Must Produce |
+|---|---|---|
+| `architect-agent` | Design boundaries, APIs, data, events, deployment shape | architecture plan + risks |
+| `builder-agent` | Scaffold and implement code through existing patterns | generated/changed files + implementation notes |
+| `reviewer-agent` | Fail unsafe, low-quality, or non-compliant output | findings with severity and evidence |
+| `qa-agent` | Verify output against original goal and acceptance criteria | pass/fail report grounded in evidence |
+| `devops-agent` | Deployment specs, Dokploy actions, env readiness | checklist, target mapping, rollback notes |
+| `monitor-agent` | Runtime health, incidents, repair proposals | scans, incidents, repair tasks |
 
-## memory-agent
-store_task_history, store_decisions, store_patterns, extract_skills,
-generate_compact_summaries, reduce_token_usage.
+## Knowledge, Memory, and Intelligence
 
-## Planned agents (Phase 2)
-reviewer-agent, qa-agent, monitor-agent, report-agent — same service shape,
-generated from `templates/agent-service`.
+| Agent/Service | Main Responsibility | Must Produce |
+|---|---|---|
+| `memory-agent` | Compress outcomes into durable memories and skills | memory summaries, reusable patterns |
+| `report-agent` | Convert system state into executive reports | concise operational intelligence reports |
+| `internet-research-service` | Governed research with sources | cited findings; `fallback` clearly marked when no real search provider exists |
+| `documentation-service` | Keep docs, decisions, and phase context alive | updated docs/decision/phase records |
+| `browser-testing-agent` | UI/browser verification | screenshot/evidence or HTTP fallback result |
+
+## Future User/Tenant Operating Agents
+
+These are the priority agents for turning AOS into a real operating system for
+Esan first, then for teams, institutions, government roles, and citizens:
+
+- `daily-briefing-agent`: "What matters today?" priorities, risks, appointments, opportunities.
+- `personal-strategy-agent`: monthly/quarterly life, career, business, and learning strategy.
+- `opportunity-agent`: income ideas, jobs/projects, SaaS/product opportunities, market signals.
+- `finance-intelligence-agent`: income/expense awareness, risk, runway, investment learning.
+- `brand-resume-agent`: CV, portfolio, GitHub, LinkedIn, and public credibility growth.
+- `tenant-governance-agent`: tenant policy, role boundaries, consent, audit posture.
+- `public-service-agent`: citizen/government case workflows with strict permissions.
+
+Future agents start read-only, become action-capable only after evidence, policy,
+RBAC, and owner approval are in place.

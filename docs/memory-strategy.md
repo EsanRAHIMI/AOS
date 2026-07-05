@@ -1,25 +1,55 @@
 # Memory & Learning Strategy
 
-No fine-tuning yet. Build strong structured memory + skill extraction from day one.
+Memory is AOS's long-term operating context. It must help future agents act
+faster, ask fewer repeated questions, and align with the correct user, tenant,
+role, and policy context.
 
-## Memory types (`MemoryType`)
-task, decision, architecture, error, solution, user_preference, service,
-deployment, research, skill.
+## Current Memory Types
 
-## After every major task the memory-agent produces
-- What was done? What worked? What failed? What was learned?
-- What can be reused? What should future agents know?
-- What should be added to documentation?
+`task`, `decision`, `architecture`, `error`, `solution`, `user_preference`,
+`service`, `deployment`, `research`, `skill`.
 
-These become compact `memories` (token-efficient summaries) and, when patterns
-repeat successfully, promoted `skills` (`SkillSchema`: title, description,
-steps, confidence).
+## Current Loop
 
-## Training data capture
-`agent_messages`, plans, tool calls, code changes, errors, fixes, reviews, human
-approvals, task outcomes, and quality scores are persisted for future custom-model
-datasets — without enabling fine-tuning prematurely.
+After meaningful work, the system should record:
 
-## Token efficiency
-Documentation + memory summaries exist so future agents understand the system
-cheaply. Prefer reading a summary over re-deriving context.
+- What was done.
+- What worked.
+- What failed.
+- What evidence exists.
+- What future agents should reuse.
+- What docs should change.
+
+These become compact memories, skill candidates, reliability scores, patterns,
+recommendations, and compressed contexts.
+
+## Next Memory Layer: User and Tenant Context
+
+Add durable, scoped memory:
+
+- User profile: name style, timezone, languages, communication preference.
+- Tenant profile: personal, team, company, government department, or public-service unit.
+- Goals: personal, career, business, learning, finance, civic, organizational, project.
+- Constraints: budget, time, risk tolerance, deadlines, commitments, legal/policy limits.
+- Assets: resume, portfolio, GitHub, domains, products, documents, approved records.
+- Preferences: decision style, notification style, approval thresholds.
+- Relationships: contacts, organizations, departments, and cases, only with permission.
+
+## Memory Quality Rules
+
+- Never store secrets.
+- Mark source and confidence.
+- Separate facts, preferences, inferences, and temporary context.
+- Allow user correction/deletion where policy permits.
+- Scope every memory to `global`, `tenant`, `user`, `role`, `project`, or `case`.
+- Summarize aggressively; keep raw logs only when useful for audit/evidence.
+- Do not let stale memories silently override current authorized instructions.
+
+## Future Learning Direction
+
+- Daily briefings should write summary memory.
+- Weekly strategy reviews should update goals and priorities.
+- Opportunity analysis should record outcomes: accepted, rejected, profitable, failed.
+- Public-service workflows should record case outcomes without leaking cross-user data.
+- Prompt/model performance should drive provider and prompt recommendations.
+- No fine-tuning until the dataset is clean, consented, deduplicated, and useful.

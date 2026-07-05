@@ -258,14 +258,45 @@ Phase 10 candidates:
 6. 18/18 Phase Z smoke incl. REAL in-process service boot with the full probe suite GREEN; all
    regressions; all typechecks; dashboard build — DONE.
 
-Next-phase candidates:
-8. LLM-planned goals + LLM-synthesized workspace edit batches through the LLM router, still bounded
-   by workspace limits and migration approvals.
-9. PR review loop with reviewer-agent on `ws/*-promote` branches; auto-open PRs when GitHub configured.
-10. Point Dokploy diagnostics at the live instance and adjust any path/parser deltas.
-11. Real web-fetch for research; real timer-driven scheduler.
-12. OIDC/JWT login + per-user RBAC store; Redis rate limiter + distributed safe-mode.
-13. Rename `middleware.ts` → `proxy.ts` (Next 16); realtime voice cost records into cost_records.
+## Phase AA — Reality Baseline & Documentation Truth — NEXT
+1. Keep docs synchronized with the 19-service reality, not old phase assumptions.
+2. Verify live env/integration status: MongoDB, S3, Dokploy, GitHub, LLM, voice, registry, event bus.
+3. Add automated doc-health checks for service map, constants, env examples, and deployment docs.
+4. Point Dokploy diagnostics at the live instance and capture parser/endpoint deltas honestly.
+5. Rename deprecated framework surfaces when required by the current framework contract.
+6. Ensure every dashboard capability displays `real`, `fallback`, `manual_required`, or `not_configured`.
+
+## Phase AB — Real Research & Intelligence Fabric — NEXT
+1. Add real web search + fetch provider with citation extraction, source reliability, and freshness.
+2. Store research sources separately from synthesized reports.
+3. Add watch topics for technology, business, market, project, user, and public-service-relevant news.
+4. Let research feed daily briefing, opportunity scoring, architecture decisions, and reports.
+5. Keep deterministic fallback visible for tests/offline mode only.
+
+## Phase AC — Multi-User Operating Layer — NEXT
+1. Add identity/tenant model: Esan as primary owner, future users as tenant-scoped actors.
+2. Add user/tenant context memory: goals, constraints, preferences, roles, projects, consent.
+3. Add read-only connectors first: calendar, email, files/drive, GitHub/projects, and approved records.
+4. Build user-scoped daily briefing and weekly strategy review loops.
+5. Add opportunity engine for income, projects, career, products, learning, technology, and civic signals.
+6. Keep all external/personal/public-service write actions draft-only until approval, audit, and rollback are ready.
+
+## Phase AD — Production Hardening & Scale — NEXT
+1. OIDC/OAuth2 login + JWT/session revocation + persistent per-user RBAC.
+2. Tenant-aware authorization, row-level access checks, consent records, and role delegation.
+3. Redis-backed rate limits, locks, safe-mode propagation, and session invalidation.
+4. Redis Streams or NATS behind event-bus-service for multi-instance fan-out.
+5. OpenTelemetry traces/metrics/log correlation.
+6. OpenAPI/AsyncAPI generation from shared schemas.
+7. Contract tests for every standard service endpoint.
+
+## Phase AE — Governed Autonomous Execution — NEXT
+1. LLM-planned goals and LLM-synthesized workspace edit batches through the LLM router.
+2. Reviewer/QA loop on workspace promotion branches before PR creation.
+3. GitHub PR automation when configured; protected core remains owner-gated.
+4. Approval-gated connector write actions with previews and evidence.
+5. Public-service/citizen workflows only after tenant policy, audit, and privacy gates pass.
+6. Outcome learning tied to real user/tenant/business/civic results, not only technical runs.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

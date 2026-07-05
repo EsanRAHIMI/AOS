@@ -1,26 +1,44 @@
 # Dokploy Setup
 
-## Prerequisites
-- Dokploy installed on the host; DNS for `simorx.com` pointing at it.
-- MongoDB Atlas cluster reachable; AWS S3 bucket + IAM user created.
-- Repo pushed to GitHub; `GITHUB_TOKEN`/owner configured if private.
+Dokploy is the production deployment layer. AOS never assumes uncontrolled host
+access; it plans, verifies, and records deployment work through explicit targets,
+diagnostics, checklists, and approvals.
 
-## Creating a service (generic)
-1. New Application → from GitHub repo (the monorepo).
-2. Build context = repo root; **Root Directory** = `services/<id>`.
+## Prerequisites
+
+- DNS for `*.simorx.com` points to the Dokploy host.
+- MongoDB Atlas and AWS S3 are configured.
+- GitHub repo is available to Dokploy.
+- Shared secrets are generated: `FACTORY_INTERNAL_TOKEN`, `FACTORY_ADMIN_TOKEN`,
+  dashboard session secret, provider keys as needed.
+
+## Creating a Service
+
+1. New Dokploy application from the monorepo.
+2. Set root directory to `services/<id>`.
 3. Build command:
    `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/<id>... run build`
-4. Start command: `pnpm --filter @factory/<id> run start`
-5. Set the **Domain** to the service subdomain and **Port** to its port.
-6. Add environment variables from `deployment/env/<id>.env.example`.
-7. Health check path `/health`.
-8. Deploy. Confirm `https://<subdomain>/health` returns `{ "status": "ok" }`.
+4. Start command:
+   `pnpm --filter @factory/<id> run start`
+5. Set domain and port from `docs/service-map.md`.
+6. Fill env from `.env.example` and `deployment/env`.
+7. Set health check path `/health`.
+8. Deploy and verify all standard factory endpoints.
 
-## Why build from repo root
-pnpm workspace links `@factory/shared` and `@factory/service-kit` at build time.
-The `--filter @factory/<id>...` (with trailing `...`) builds the service and its
-workspace dependencies. The running container only needs the built service.
+## Calibration
 
-## After creation
-The system validates: domain reachable, `/health` ok, internal token accepted,
-manifest available, and registration in the service-registry succeeded.
+Run Dokploy diagnostics before relying on API execution. Unsupported or drifting
+API shapes must become `manual_required`, not success. AOS can still provide
+exact manual steps and re-verify after the human completes them.
+
+## Rollback
+
+- Code rollback: redeploy previous successful commit/build for the affected service.
+- Env rollback: restore previous env and redeploy.
+- Workspace promotion rollback: use the generated rollback plan and preserved snapshot branch.
+- Protected core rollback requires owner review.
+
+## Safety
+
+Safe mode blocks mutation/deploy/repair/governance actions. Reads, monitoring,
+reports, and recommendations continue.

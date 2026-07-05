@@ -7,7 +7,7 @@ documents, agent traces, and system state. Collection names are defined once in
 ## Collections
 | Collection | Purpose | Schema (shared/src/schemas) |
 |---|---|---|
-| users | Operators / admins | — |
+| users | Human users across owner/admin/operator/government/citizen roles | — |
 | sessions | Auth/session records | — |
 | services | Registry records (manifest + lifecycle) | service-manifest.ts |
 | agents | Agent definitions | — |
@@ -39,6 +39,40 @@ documents, agent traces, and system state. Collection names are defined once in
 - Timestamps are ISO-8601 strings (`createdAt`, `updatedAt`).
 - Indexes: unique on natural id (`serviceId`, `taskId`, `objectId`, …);
   time/compound indexes on `events` for fast streaming/history.
+
+## Future Multi-User Operating Layer collections
+
+These collections are not canonical until added to `shared/src/constants/index.ts`
+and backed by Zod schemas. They define the next data-model direction for turning
+AOS into a tenant/user-scoped operating system with a single unified software
+kernel.
+
+| Proposed Collection | Purpose |
+|---|---|
+| tenants | Personal, team, organization, government, or public-service tenant boundary |
+| user_profiles | Per-user identity, timezone, language, preferences, risk tolerance |
+| user_roles | Tenant-scoped role assignments and delegation rules |
+| user_goals | Life, business, career, finance, learning, civic, or project goals |
+| user_constraints | Budget, time, deadlines, commitments, limitations |
+| context_items | User/tenant facts, preferences, inferences with source, confidence, expiry |
+| consent_grants | Explicit permission grants for data sources and actions |
+| connector_accounts | Permission-scoped calendar/email/drive/github/finance connections |
+| connector_sync_runs | Read-only ingestion runs, errors, freshness, counts |
+| daily_briefings | User/role-specific priorities, risks, approvals, schedule notes |
+| weekly_strategy_reviews | Progress review, decisions, next-week plan, user feedback |
+| opportunity_reports | Income/project/job/product/technology/civic opportunities and scores |
+| watch_topics | Topics AOS monitors per user/tenant with cadence and source policy |
+| public_service_cases | Government/citizen workflows with strict role and privacy boundaries |
+
+Rules for these future collections:
+
+- Every user/tenant-scoped record must include `tenantId`, `userId` or an explicit service/global scope.
+- Store source, confidence, freshness, and user-editability.
+- Separate personal facts, institutional records, public records, and model inferences.
+- Start connectors read-only and consent-based.
+- Never store secrets in personal context.
+- Write actions require approval, audit, evidence, and clear rollback notes.
+- Global software state such as services, capabilities, schemas, deployments, and docs remains shared.
 
 ## Phase 3 — Self-Expanding Capability Engine collections
 | Collection | Purpose | Schema (shared/src/schemas/capability.ts) |

@@ -1,83 +1,65 @@
 # Backup, Recovery & Production Safety
 
-Operational runbook for keeping the live kernel (`*.simorx.com`) safe and recoverable.
-Phase 12 adds authentication, RBAC, rate limiting, an env/secret audit, a security event
-trail, and an emergency safe mode. This document covers the human side: backups, rotation,
-rollback, and emergency procedures.
+This runbook protects the live AOS kernel and the future personal operating
+layer. Recovery must be rehearsed before the system is trusted with more of
+any user's, organization's, department's, or citizen's real data.
 
-## 1. MongoDB Atlas backup
+## MongoDB Atlas
 
-MongoDB Atlas is the single source of truth (tasks, agents, governance, learning, security).
+MongoDB is the source of truth for tasks, events, approvals, memory, governance,
+learning, voice/operator sessions, workspace runs, incidents, and evidence metadata.
+Future user/tenant data must be recoverable per tenant where possible, not only
+as one global restore.
 
-- **Automated:** enable Atlas Cloud Backup (continuous + daily snapshots) on the cluster.
-  Set a retention window (≥7 daily, ≥4 weekly). Atlas → Cluster → Backup.
-- **Manual / portable:** `mongodump --uri "$MONGODB_URI" --archive=backup-$(date +%F).gz --gzip`
-- **Restore:** `mongorestore --uri "$MONGODB_URI" --archive=backup.gz --gzip` (test into a
-  staging DB first; never restore straight over production without a snapshot).
-- **PITR:** Atlas point-in-time recovery covers the retention window for accidental deletes.
+- Enable Atlas Cloud Backup with continuous backup and daily snapshots.
+- Keep at least 7 daily and 4 weekly snapshots.
+- Test restore into staging before touching production.
+- Portable backup:
+  `mongodump --uri "$MONGODB_URI" --archive=backup-$(date +%F).gz --gzip`
+- Portable restore:
+  `mongorestore --uri "$MONGODB_URI" --archive=backup.gz --gzip`
 
-## 2. AWS S3 backup
+## S3 / Assets
 
-S3 stores files/artifacts/screenshots; metadata lives in MongoDB (`s3_objects`, `files`).
+- Enable bucket versioning.
+- Use lifecycle rules for noncurrent versions.
+- Consider cross-region replication when artifacts become business-critical.
+- Restore Mongo metadata and S3 versions together for consistent recovery.
 
-- Enable **S3 Versioning** on the bucket so overwrites/deletes are recoverable.
-- Enable a lifecycle rule to expire old noncurrent versions (cost control).
-- Optional: cross-region replication for disaster recovery.
-- Because object metadata is in MongoDB, a consistent recovery = restore Mongo + keep S3
-  versioning intact.
+## Secrets
 
-## 3. Secret rotation
+Rotate these through provider console + Dokploy env + redeploy:
 
-Run the env/secret audit first: **dashboard → Security → Env Health** (or `GET /v1/security/env`).
+- `FACTORY_INTERNAL_TOKEN` on all services together.
+- `FACTORY_ADMIN_TOKEN` on gateway and dashboard together.
+- `DASHBOARD_SESSION_SECRET` to invalidate sessions.
+- Password hashes generated through `scripts/hash-password.mjs`.
+- `MONGODB_URI`, AWS keys, GitHub token, LLM provider keys, Dokploy token.
 
-Rotate by updating the value in Dokploy env, then redeploying the affected services:
+After rotation, run security checks and service health verification.
 
-- `FACTORY_INTERNAL_TOKEN` — rotate on ALL services at once (shared secret). Stagger carefully:
-  set new value everywhere, redeploy, verify `/health` + service registration.
-- `FACTORY_ADMIN_TOKEN` — rotate on the gateway and the dashboard together.
-- `DASHBOARD_SESSION_SECRET` — rotating invalidates all existing sessions (everyone re-logs in).
-- `DASHBOARD_*_PASSWORD_HASH` — regenerate with `node scripts/hash-password.mjs '<password>'`.
-- `MONGODB_URI`, `AWS_*`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN` — rotate at the
-  provider, update Dokploy env, redeploy.
+## Emergency Safe Mode
 
-After rotation, re-run the security check (**Security → Run security check**) and confirm it passes.
+Enable safe mode when a risky condition appears:
 
-## 4. Deployment rollback (Dokploy)
+1. Dashboard Security page or gateway safe-mode endpoint.
+2. Mutations, deploys, repairs, governance changes, and external actions stop.
+3. Reads, monitoring, reports, recommendations, and evidence review continue.
+4. Rotate/recover/verify.
+5. Disable safe mode only after owner approval.
 
-Each service deploys independently from GitHub via Dokploy.
+## Rollback
 
-- **Roll back code:** in Dokploy, redeploy the previous successful commit/build for the service.
-- **Roll back config:** revert the env change in Dokploy and redeploy.
-- **Health gates:** after any deploy, confirm `GET /health` (public) returns ok and the service
-  re-registers (dashboard → Services). The gateway’s `/v1/security/check` should still pass.
-- Because services are independent, roll back only the affected one; the rest keep running.
+- One service rollback: redeploy previous Dokploy build/commit.
+- Env rollback: restore previous env and redeploy.
+- Workspace promotion rollback: use preserved snapshot/migration record.
+- Data rollback: restore to staging first, inspect, then plan production restore.
+- Tenant/user rollback: restore or replay only the affected scope when the data model supports it.
 
-## 5. Dokploy service restart checklist
+## Recovery Drill Cadence
 
-1. Identify the service (dashboard → Monitor / Services).
-2. Restart it in Dokploy.
-3. Verify `/health` is ok and it appears registered in the registry.
-4. Verify `/.factory/manifest` responds with the internal token (it must NOT be public).
-5. Confirm the dashboard can reach it (no new incidents on `/incidents`).
-
-## 6. Emergency: enable safe mode
-
-`AUTONOMY_SAFE_MODE` (env default) is mirrored into `system_settings` and toggled at runtime.
-
-- **Enable now:** dashboard → Security → Safe Mode → *Enable safe mode* (owner only), or
-  `POST /v1/security/safe-mode {"enabled":true}` with the admin token + owner role header.
-- **Effect:** the gateway and dashboard refuse all mutation/deploy/repair/governance actions and
-  log a security event for each blocked attempt. Reads, monitoring, reports and recommendations
-  continue. A banner shows across the dashboard.
-- **Disable:** same page → *Disable safe mode* (owner only). Mutations resume immediately.
-- **Boot default:** set `AUTONOMY_SAFE_MODE=true` in Dokploy to start a service locked down; the
-  runtime setting then takes over once an owner toggles it.
-
-## 7. Incident response quick path
-
-1. **Contain:** enable safe mode.
-2. **Assess:** Security → Events (denials, failed logins, rate-limit hits) and Audit Log.
-3. **Rotate** any exposed secret (section 3); redeploy.
-4. **Recover** data if needed (sections 1–2).
-5. **Verify:** run a security check; confirm it passes.
-6. **Resume:** disable safe mode.
+- Monthly: restore Mongo snapshot to staging.
+- Monthly: verify S3 version recovery.
+- Quarterly: rotate secrets in staging.
+- Quarterly: simulate service rollback and safe-mode incident.
+- Before personal, organizational, or public-service connector writes: run a full restore and approval-flow drill.

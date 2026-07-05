@@ -1,65 +1,63 @@
 # Environment Variables
 
-Each service has its own `.env` (copy from its `.env.example`). Real values are
-never committed. Service-specific examples also live in `deployment/env/`.
+Each service validates env at startup through `shared/src/env`. Invalid env must
+fail fast with a readable error. Real secrets are never committed.
 
-## Shared (most services)
+## Shared Service Env
+
 | Var | Purpose |
 |---|---|
-| NODE_ENV | development \| test \| production |
-| FACTORY_ENV | local \| staging \| production |
-| FACTORY_INTERNAL_TOKEN | service-to-service auth (required) |
-| FACTORY_ADMIN_TOKEN | human/dashboard privileged auth |
-| SERVICE_ID / SERVICE_NAME / SERVICE_DOMAIN / SERVICE_PORT | service identity |
-| SERVICE_REGISTRY_URL | registry base URL for self-registration/discovery |
-| EVENT_BUS_URL | event-bus base URL for publishing/streaming |
-| LOG_LEVEL | trace…fatal |
+| `NODE_ENV` | `development`, `test`, or `production` |
+| `FACTORY_ENV` | `local`, `staging`, or `production` |
+| `SERVICE_ID`, `SERVICE_NAME`, `SERVICE_DOMAIN`, `SERVICE_PORT` | service identity |
+| `FACTORY_INTERNAL_TOKEN` | service-to-service auth |
+| `FACTORY_ADMIN_TOKEN` | privileged gateway/dashboard auth |
+| `SERVICE_REGISTRY_URL` | registry base URL |
+| `EVENT_BUS_URL` | event bus base URL |
+| `LOG_LEVEL` | pino log level |
 
-## Database (all stateful services)
+## Data and Assets
+
 | Var | Purpose |
 |---|---|
-| MONGODB_URI | MongoDB Atlas connection string (required) |
-| MONGODB_DB_NAME | default `autonomous_os_kernel` |
+| `MONGODB_URI`, `MONGODB_DB_NAME` | persistent state |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET` | file asset service |
+| `CLOUDFRONT_DOMAIN` | optional public asset delivery |
 
-## Object storage (file-asset-service)
+## Intelligence and Voice
+
 | Var | Purpose |
 |---|---|
-| AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY | IAM credentials |
-| AWS_REGION / AWS_S3_BUCKET | bucket location + name |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | real LLM/realtime providers |
+| `LLM_DEFAULT_PROVIDER` | default provider selection |
+| `LLM_MAX_COST_PER_TASK_USD` | per-task budget gate |
+| `LLM_SAFE_MODE_FALLBACK` | force deterministic fallback |
+| `VOICE_*` | realtime voice model/session settings |
 
-## LLM (thinking agents)
+## Delivery and Operations
+
 | Var | Purpose |
 |---|---|
-| OPENAI_API_KEY / ANTHROPIC_API_KEY | provider keys |
-| LLM_DEFAULT_PROVIDER | anthropic \| openai (router default) |
+| `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_DEFAULT_BRANCH` | real PR delivery |
+| `DOKPLOY_BASE_URL`, `DOKPLOY_API_TOKEN` | Dokploy diagnostics/execution |
+| `CODE_WORKSPACE_ROOT` | isolated checkout for code operator work |
+| `WORKSPACE_ROOT`, `SERVICES_ROOT`, `REPO_SERVICES_ROOT` | validation/generation roots |
+| `ALLOW_BUILD_VALIDATION` | opt-in build validation |
 
-## Dashboard (server-side only)
+## Dashboard
+
 | Var | Purpose |
 |---|---|
-| FACTORY_API_URL | gateway base URL |
-| FACTORY_ADMIN_TOKEN | admin token used server-side |
-| EVENT_BUS_URL + FACTORY_INTERNAL_TOKEN | for the `/api/stream` SSE proxy |
+| `FACTORY_API_URL` | gateway URL |
+| `DASHBOARD_SESSION_SECRET` | signed session cookies |
+| `DASHBOARD_*_PASSWORD_HASH` | login credentials |
+| `DASHBOARD_*_ROLE` | owner/operator/viewer role mapping |
 
-Validation: `shared/src/env` parses these with Zod at startup and fails fast on
-missing/invalid values.
+## Future Env Direction
 
-## Peer service URLs (Phase 2 — service-to-service discovery)
-For each peer a service calls, set `<SERVICE_ID_UPPER_SNAKE>_URL` (e.g.
-`ARCHITECT_AGENT_URL=https://architect.simorx.com`). If unset, the caller falls
-back to `http://localhost:<port>` from the canonical `SERVICE_PORTS`. This is how
-the orchestrator reaches specialists and the gateway reaches the orchestrator —
-HTTP only, so every service stays independently deployable on Dokploy.
-
-Orchestrator needs: ARCHITECT_AGENT_URL, BUILDER_AGENT_URL, DEVOPS_AGENT_URL,
-MEMORY_AGENT_URL, DOCUMENTATION_SERVICE_URL.
-Gateway needs: ORCHESTRATOR_AGENT_URL.
-
-## Phase 4 — Reality Execution env
-| Var | Purpose |
-|---|---|
-| GITHUB_TOKEN / GITHUB_OWNER / GITHUB_REPO | enable real GitHub delivery (else "prepared" mode) |
-| GITHUB_DEFAULT_BRANCH | base branch for PRs (default `main`) |
-| ALLOW_BUILD_VALIDATION | `true` to also run tsc typecheck during validation (opt-in) |
-| REPO_SERVICES_ROOT | where in-repo services live (builder/devops validate/deliver) |
-| SERVICES_ROOT | where the generator writes new services |
-| WORKSPACE_ROOT | repo root for filtered build/typecheck during validation |
+- Move user auth to OIDC/OAuth2/JWT and persistent per-user RBAC.
+- Add tenant, organization, and public-service identity provider configuration.
+- Add connector consent and permission scopes per tenant/user.
+- Add Redis URL when distributed rate limits/safe mode/session invalidation are implemented.
+- Add NATS/Redis Streams URL if event bus becomes multi-instance.
+- Add connector-specific env only after read-only connector contracts are documented.

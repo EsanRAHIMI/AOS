@@ -1,22 +1,70 @@
 # Service Map
 
-| Service | ID | Type | Port | Subdomain | Purpose |
-|---|---|---|---|---|---|
-| Gateway API | gateway-api | gateway | 4101 | api.simorx.com | Front door: tasks, approvals, infra, registry proxy, events |
-| Dashboard Web | dashboard-web | web | 4100 | factory.simorx.com | Real-time control room (Next.js 16) |
-| Orchestrator Agent | orchestrator-agent | agent | 4102 | orchestrator.simorx.com | Decompose goals, coordinate agents |
-| Architect Agent | architect-agent | agent | 4103 | architect.simorx.com | Service/system architecture |
-| Builder Agent | builder-agent | agent | 4104 | builder.simorx.com | Code generation/modification |
-| DevOps Agent | devops-agent | agent | 4105 | devops.simorx.com | Dokploy/infra instructions |
-| Memory Agent | memory-agent | agent | 4109 | memory.simorx.com | Memory + skill extraction |
-| Documentation Service | documentation-service | infra | 4110 | docs.simorx.com | Living documentation store |
-| Service Registry | service-registry | infra | 4108 | registry.simorx.com | Knows every service |
-| Event Bus Service | event-bus-service | infra | 4111 | events.simorx.com | Persist + SSE fan-out |
-| File Asset Service | file-asset-service | infra | 4112 | assets.simorx.com | S3 files + metadata |
-| Browser Testing Agent | browser-testing-agent | agent | 4116 | browser-testing.simorx.com | Validate UI (Playwright/HTTP), screenshots, evidence |
-| Monitor Agent | monitor-agent | agent | 4113 | monitor.simorx.com | Live activation checks, health scans, incidents, repairs |
+Current truth: AOS has **19 independently deployable services**. Service ids,
+ports, and production subdomains are canonical in `shared/src/constants/index.ts`;
+this document is the human-readable operating map.
 
-## Planned (Phase 2+)
-reviewer-agent (4106), qa-agent (4107), monitor-agent (4113),
-report-agent (4114), internet-research-service (4115). Ports/subdomains are
-reserved in `shared/src/constants`.
+## Control Plane
+
+| Service | ID | Type | Port | Subdomain | Role |
+|---|---|---|---:|---|---|
+| Dashboard Web | `dashboard-web` | web | 4100 | `factory.simorx.com` | Mission control, Operator Console, approvals, voice/text interface |
+| Gateway API | `gateway-api` | gateway | 4101 | `api.simorx.com` | Public/API front door, auth, RBAC, task intake, operator executor, approvals |
+| Orchestrator Agent | `orchestrator-agent` | agent | 4102 | `orchestrator.simorx.com` | Goal decomposition, pipeline coordination, policy-gated delegation |
+
+## Specialist Intelligence Agents
+
+| Service | ID | Type | Port | Subdomain | Role |
+|---|---|---|---:|---|---|
+| Architect Agent | `architect-agent` | agent | 4103 | `architect.simorx.com` | System design, service boundaries, API/data/event plans |
+| Builder Agent | `builder-agent` | agent | 4104 | `builder.simorx.com` | Code generation, scaffolding, implementation planning |
+| DevOps Agent | `devops-agent` | agent | 4105 | `devops.simorx.com` | Dokploy specs, env plans, deployment readiness |
+| Reviewer Agent | `reviewer-agent` | agent | 4106 | `reviewer.simorx.com` | Independent code/architecture/security review |
+| QA Agent | `qa-agent` | agent | 4107 | `qa.simorx.com` | Acceptance verification against goals and evidence |
+| Memory Agent | `memory-agent` | agent | 4109 | `memory.simorx.com` | Memory summaries, reusable skills, decision/history compression |
+| Monitor Agent | `monitor-agent` | agent | 4113 | `monitor.simorx.com` | Health scans, incidents, repair tasks, activation checks |
+| Report Agent | `report-agent` | agent | 4114 | `reports.simorx.com` | Executive/system intelligence reports |
+| Internet Research Service | `internet-research-service` | integration | 4115 | `research.simorx.com` | Governed research; currently LLM/fallback, needs real search/fetch provider |
+| Browser Testing Agent | `browser-testing-agent` | agent | 4116 | `browser-testing.simorx.com` | Playwright/HTTP UI validation, screenshots, evidence |
+| Voice Operator Agent | `voice-operator-agent` | agent | 4121 | `voice.simorx.com` | Realtime voice session orchestration; never mutates directly |
+| Code Operator Agent | `code-operator-agent` | agent | 4122 | `code.simorx.com` | Workspace-scoped repo search/edit/typecheck/build/git/PR operations |
+
+## Infrastructure Services
+
+| Service | ID | Type | Port | Subdomain | Role |
+|---|---|---|---:|---|---|
+| Service Registry | `service-registry` | infra | 4108 | `registry.simorx.com` | Service discovery, manifests, capability index |
+| Documentation Service | `documentation-service` | infra | 4110 | `docs.simorx.com` | Living docs, phase logs, decisions, token-efficient context |
+| Event Bus Service | `event-bus-service` | infra | 4111 | `events.simorx.com` | Persisted events + SSE fan-out to dashboard |
+| File Asset Service | `file-asset-service` | infra | 4112 | `assets.simorx.com` | S3 files/artifacts + MongoDB metadata |
+
+## Standard Service Surface
+
+Every backend service must expose:
+
+- `GET /health` public liveness.
+- `GET /.factory/manifest` public identity/capability metadata.
+- `GET /.factory/status` public uptime/dependency status.
+- `GET /.factory/capabilities` public capability list.
+- `POST /.factory/task` token-guarded work intake.
+- `GET /.factory/logs` token-guarded recent logs.
+
+This surface is provided by `@factory/service-kit` and verified by workspace
+runtime probes before promotion.
+
+## Growth Direction
+
+The next services should extend AOS from a self-development kernel into a
+multi-user operating layer. Esan remains the platform owner; each future user,
+team, department, or citizen gets isolated data and role-scoped capabilities.
+
+- `identity-and-tenant-service`: users, tenants, roles, consent, delegation.
+- `personal-context-service`: user/tenant profiles, goals, preferences, constraints.
+- `calendar-connector`, `email-connector`, `drive-connector`: read-first personal data ingestion.
+- `opportunity-agent`: income, project, market, and technology opportunity analysis.
+- `daily-briefing-agent`: daily/weekly planning, priorities, risks, and approvals.
+- `knowledge-ingestion-service`: trusted web/file/email notes with citations and freshness.
+- `public-service-case-service`: government/citizen workflows with strict audit and privacy.
+
+All future services keep the same rules: isolated deployment, schema contracts,
+evidence, approval for sensitive actions, no fake success.
