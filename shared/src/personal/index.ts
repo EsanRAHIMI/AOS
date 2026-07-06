@@ -310,14 +310,14 @@ export function buildPersonalGraph(input: PersonalGraphInput): PersonalGraph {
     for (const aid of o.linkedAssetIds) edges.push({ from: o.opportunityId, to: aid, rel: 'leverages_asset' });
   }
   const missingData: string[] = [];
-  if (!input.profile) missingData.push('reality profile (ingest kind=profile)');
-  if (input.goals.length === 0) missingData.push('goals (POST /v1/me/goals or ingest kind=goal)');
-  if (input.projects.length === 0) missingData.push('projects inventory (ingest kind=project)');
-  if (input.assets.length === 0) missingData.push('assets/skills inventory (ingest kind=asset)');
-  if (input.incomeStreams.length === 0) missingData.push('income streams/ideas (ingest kind=income_idea)');
-  if (input.risks.length === 0) missingData.push('known risks/blockers (ingest kind=risk)');
-  if (!input.activeConsents.includes('calendar')) missingData.push('calendar: not_configured (consent grant required)');
-  if (!input.activeConsents.includes('email')) missingData.push('email: not_configured (consent grant required)');
+  if (!input.profile) missingData.push('personal profile (role + focus)');
+  if (input.goals.length === 0) missingData.push('at least one active goal');
+  if (input.projects.length === 0) missingData.push('projects you are working on');
+  if (input.assets.length === 0) missingData.push('skills and assets');
+  if (input.incomeStreams.length === 0) missingData.push('income streams or ideas');
+  if (input.risks.length === 0) missingData.push('known risks or blockers');
+  if (!input.activeConsents.includes('calendar')) missingData.push('calendar connector');
+  if (!input.activeConsents.includes('email')) missingData.push('email connector');
   const freshest = [input.profile?.freshness, ...input.projects.map((p) => p.freshness)].filter(Boolean).sort().pop();
   return { nodes, edges, missingData, dataFreshness: freshest ?? 'no data yet' };
 }
@@ -352,7 +352,7 @@ export function scoreNextActions(input: PersonalGraphInput, stamp: { scope: 'use
   }
   const missing = buildPersonalGraph(input).missingData;
   if (missing.length > 0) {
-    actions.push(mk(`Fill missing data: ${missing[0]}`, `Better intelligence needs this next. All gaps: ${missing.slice(0, 4).join('; ')}.`, 'data', 4 + Math.min(missing.length, 4) * 0.5, { executable: true, executeHint: 'POST /v1/me/reality/ingest' }));
+    actions.push(mk(`Complete: ${missing[0]}`, `Your profile is stronger once this is filled in.`, 'data', 4 + Math.min(missing.length, 4) * 0.5, { executable: true, executeHint: 'Tell Jarvis in one sentence, or use the intake panel on /me' }));
   }
   const activeGoals = input.goals.filter((g) => g.status === 'active');
   const firstGoal = activeGoals[0];

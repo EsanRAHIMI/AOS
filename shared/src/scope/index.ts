@@ -255,7 +255,7 @@ export type GoalScopeClass = { scope: Scope; mode: 'global_kernel' | 'personal' 
  *  The operator must never mix scopes. */
 export function classifyGoalScope(goal: string): GoalScopeClass {
   const t = goal.toLowerCase();
-  if (/\b(my|me|mine)\b.*(week|day|goals?|schedule|briefing|plan|priorit|calendar|email|task list)|plan (my|the) (week|day)|daily briefing|weekly (review|strategy)/.test(t)) {
+  if (/\b(my|me|mine)\b.*(week|day|goals?|schedule|briefing|plan|priorit|calendar|email|task list)|plan (my|the) (week|day)|daily briefing|weekly (review|strategy)|what should i do (now|next)|next best action|my goal is|i want to|i need to/.test(t)) {
     return { scope: 'user', mode: 'personal', reason: 'personal goal — user-scoped data only, never kernel data as personal data' };
   }
   if (/\b(citizen|case #|public service case|case [a-z0-9_-]+)\b/.test(t)) {

@@ -296,6 +296,8 @@ const specs: ToolSpec[] = [
   { toolId: 'run_weekly_strategy', name: 'Weekly strategy review', description: 'Goals vs actions vs opportunities; ranked weekly plan; what AOS should build; what needs approval.', category: 'report', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/review', executionPath: 'gateway_internal', evidenceRequired: true, examples: ['weekly strategy review'] },
   { toolId: 'analyze_resume', name: 'Analyze resume', description: 'Only provided/scoped resume data; separates verified facts, user claims, inferences and suggestions — never invents credentials.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['analyze my resume'] },
   { toolId: 'find_opportunities', name: 'Rank opportunities', description: 'Score recorded opportunities (impact/effort/risk/goal-linkage) with source + confidence; research provider used only when configured.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/opportunities', executionPath: 'gateway_internal', examples: ['find the best opportunities for me'] },
+  { toolId: 'capture_personal_goal', name: 'Capture personal goal', description: 'Store one user-scoped active goal from the conversation and immediately re-rank actions.', category: 'service', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/goals', executionPath: 'gateway_internal', input: { title: 'string', horizon: 'string?', priority: 'string?', description: 'string?' }, examples: ['my goal is to earn 5k more this month'] },
+  { toolId: 'capture_reality_profile', name: 'Capture reality profile', description: 'Store a minimal personal reality profile (headline/focus/current position) from the conversation.', category: 'service', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/ingest', executionPath: 'gateway_internal', input: { headline: 'string', currentPosition: 'string?', focusArea: 'string?' }, examples: ['my current role is product engineer and my focus is automation'] },
   { toolId: 'propose_aos_build', name: 'Propose AOS build', description: 'Identify the highest-value missing AOS capability for the user; building it routes through GLOBAL workspace evolution with approval.', category: 'reason', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['what should AOS build next for me?'] },
 
   /* ------------------------------ approval ------------------------------ */
@@ -367,6 +369,25 @@ export interface PlannedCommand {
 
 const step = (toolId: string, reason: string, args: Record<string, unknown> = {}): PlanStep =>
   PlanStepSchema.parse({ stepId: genId('step'), toolId, reason, args });
+
+function extractGoalTitle(text: string): string {
+  const trimmed = text.trim();
+  const m =
+    trimmed.match(/(?:^|\b)(?:my goal is|goal\s*:|i want to|i need to)\s+(.+)$/i) ??
+    trimmed.match(/^(.+)$/);
+  return (m?.[1] ?? '').trim().replace(/[.?!]+$/, '').slice(0, 160);
+}
+
+function extractProfileHints(text: string): { headline?: string; currentPosition?: string; focusArea?: string } {
+  const t = text.trim();
+  const out: { headline?: string; currentPosition?: string; focusArea?: string } = {};
+  const role = t.match(/(?:my role is|i am|i'm)\s+([^.,;]+)/i)?.[1]?.trim();
+  const focus = t.match(/(?:my focus is|focused on|focus on)\s+([^.,;]+)/i)?.[1]?.trim();
+  if (role) out.currentPosition = role.slice(0, 120);
+  if (focus) out.focusArea = focus.slice(0, 120);
+  if (role || focus) out.headline = `${role ?? 'Builder'}${focus ? ` — focus: ${focus}` : ''}`.slice(0, 180);
+  return out;
+}
 
 export function isCapabilityQuestion(text: string): boolean {
   return /(what can you do|what are you able|your (capabilities|tools)|list (your )?tools|^help$|what do you know how)/i.test(text.trim());
@@ -489,8 +510,30 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
   if (/build my personal (reality )?baseline|review my current situation|personal growth plan/.test(t)) {
     return { kind: 'runtime_goal', narration: 'Building your personal reality baseline: profile, goals, projects, assets, risks, opportunities — and an honest list of every missing data category.', steps: [step('build_reality_baseline', 'Assemble the scoped intelligence graph + missing data'), step('get_next_best_actions', 'Rank what matters now from the baseline')] };
   }
+  if (/(^|\b)(my goal is|goal\s*:|i want to|i need to)\b/.test(t)) {
+    const title = extractGoalTitle(goal);
+    return {
+      kind: 'runtime_goal',
+      narration: 'Captured. I will store this as your active goal, then re-rank your next actions from your updated personal context.',
+      steps: [
+        step('capture_personal_goal', 'Store the goal in your personal scope', { title, horizon: 'week', priority: 'high' }),
+        step('get_next_best_actions', 'Re-rank actions after goal update'),
+      ],
+    };
+  }
+  if (/(my role is|i am|i'm).*(focus|focused on|focus on)|my focus is/.test(t)) {
+    const hints = extractProfileHints(goal);
+    return {
+      kind: 'runtime_goal',
+      narration: 'Captured. I will update your personal reality profile from this context and then re-rank your next actions.',
+      steps: [
+        step('capture_reality_profile', 'Store profile hints in your personal reality baseline', hints),
+        step('get_next_best_actions', 'Re-rank actions after profile update'),
+      ],
+    };
+  }
   if (/what should i do (now|next)|highest.value next action|next best action/.test(t)) {
-    return { kind: 'runtime_goal', narration: 'Loading your scoped context and ranking next actions — specific to you, with reasons, sources and confidence.', steps: [step('get_my_context', 'Who is asking, goals, consents'), step('get_next_best_actions', 'Deterministic ranked actions with one clear best')] };
+    return { kind: 'runtime_goal', narration: 'Loading your scoped context, then giving one clear next step with a short summary. If key data is missing, I will ask one precise question and capture your answer.', steps: [step('get_my_context', 'Who is asking, goals, consents'), step('get_next_best_actions', 'Deterministic ranked actions with one clear best')] };
   }
   if (/(run |do )?my daily briefing/.test(t) || /^daily briefing/.test(t)) {
     return { kind: 'runtime_goal', narration: 'Running your daily briefing from real scoped data; unconnected sources are reported not_configured.', steps: [step('run_full_daily_briefing', 'Priorities, risks, income/growth/AOS actions, approvals, missing data')] };

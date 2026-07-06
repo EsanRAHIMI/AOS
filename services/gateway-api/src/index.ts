@@ -2564,7 +2564,11 @@ async function main(): Promise<void> {
             userGoals.find({ scope: 'user', userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).limit(20).toArray(),
             consentGrants.find({ userId: actor.primaryUserId, status: 'active' }, { projection: { _id: 0 } }).toArray(),
           ]);
-          const summary = `${profile?.displayName ?? 'User'}: ${goals.length} active goal(s)${goals[0] ? ` (top: “${goals[0].title}”)` : ''}; ${consents.length} active consent(s)${consents.length ? ` (${consents.map((c) => c.connectorType).join(', ')})` : ' — no connectors consented yet'}.`;
+          const name = profile?.displayName ?? 'You';
+          const consentList = consents.length ? consents.map((c) => c.connectorType).join(', ') : 'none';
+          const summary = goals.length === 0
+            ? `${name}: ${consents.length} source(s) connected (${consentList}) — no active goals yet.`
+            : `${name}: ${goals.length} active goal(s)${goals[0] ? ` — top: “${goals[0].title}”` : ''}; ${consents.length} source(s) (${consentList}).`;
           return { ok: true, summary, data: { profile, goals, consents: consents.map((c) => ({ connectorType: c.connectorType, accessMode: c.accessMode })) } };
         },
         generate_daily_briefing: async (_args, role) => {
@@ -2591,15 +2595,127 @@ async function main(): Promise<void> {
           const summary = `Baseline: ${input.profile ? `profile “${input.profile.displayName || input.profile.headline || 'set'}”` : 'NO profile yet'}; ${input.goals.length} goals, ${input.projects.length} projects, ${input.assets.length} assets, ${input.systems.length} systems, ${input.risks.length} risks, ${input.opportunities.length} opportunities, ${input.incomeStreams.length} income streams. Missing: ${graph.missingData.length ? graph.missingData.slice(0, 3).join('; ') : 'nothing critical'}. Freshness: ${graph.dataFreshness.slice(0, 10)}.`;
           return { ok: true, summary, data: { graphNodes: graph.nodes.length, graphEdges: graph.edges.length, missingData: graph.missingData } };
         },
+        capture_personal_goal: async (args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const title = String(args.title ?? '').trim().slice(0, 160);
+          if (!title) return { ok: false, summary: 'Goal title is required. Say: "My goal is ..."' };
+          const stamp = stampScope(actor, 'user');
+          const goal: UserGoal = {
+            ...stamp,
+            goalId: genId('goal'),
+            title,
+            description: String(args.description ?? '').trim().slice(0, 1000),
+            horizon: (['day', 'week', 'month', 'quarter', 'year', 'life'].includes(String(args.horizon)) ? String(args.horizon) : 'week') as UserGoal['horizon'],
+            status: 'active',
+            priority: (['low', 'normal', 'high'].includes(String(args.priority)) ? String(args.priority) : 'normal') as UserGoal['priority'],
+            createdAt: nowIso(),
+            updatedAt: nowIso(),
+          };
+          await userGoals.insertOne(goal);
+          return { ok: true, summary: `Saved your goal: “${goal.title}” (${goal.horizon}, ${goal.priority}).` };
+        },
+        capture_reality_profile: async (args, role) => {
+          const actor = legacyRoleToAuthContext(role);
+          if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
+          const stamp = stampScope(actor, 'user');
+          const now = nowIso();
+          const headline = String(args.headline ?? '').trim().slice(0, 180);
+          const currentPosition = String(args.currentPosition ?? '').trim().slice(0, 140);
+          const focusArea = String(args.focusArea ?? '').trim().slice(0, 120);
+          if (!headline && !currentPosition && !focusArea) {
+            return { ok: false, summary: 'No profile details detected. Try: “My role is ..., my focus is ...”.' };
+          }
+          const existing = await realityProfiles.findOne({ scope: 'user', userId: actor.primaryUserId });
+          if (existing) {
+            await realityProfiles.updateOne(
+              { profileId: existing.profileId },
+              {
+                $set: {
+                  ...(headline ? { headline } : {}),
+                  ...(currentPosition ? { currentPosition } : {}),
+                  ...(focusArea ? { focusAreas: [focusArea] } : {}),
+                  updatedAt: now,
+                  freshness: now,
+                  source: 'operator_capture',
+                  confidence: 1,
+                  recordKind: 'fact',
+                },
+              },
+            );
+          } else {
+            await realityProfiles.insertOne({
+              ...stamp,
+              profileId: genId('pprof'),
+              displayName: '',
+              headline: headline || currentPosition || 'Personal profile',
+              summary: '',
+              location: '',
+              focusAreas: focusArea ? [focusArea] : [],
+              strengths: [],
+              currentPosition: currentPosition || '',
+              incomeDirection: '',
+              scheduleDirection: '',
+              learningDirection: '',
+              source: 'operator_capture',
+              confidence: 1,
+              freshness: now,
+              recordKind: 'fact',
+              createdAt: now,
+              updatedAt: now,
+            } as PersonalRealityProfile);
+          }
+          return { ok: true, summary: 'Saved profile context. I will use it in your next recommendations.' };
+        },
         get_next_best_actions: async (_args, role) => {
           const actor = legacyRoleToAuthContext(role);
           if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
-          const ranked = scoreNextActions(await loadGraphInput(actor), userStamp(actor));
-          if (ranked.length === 0) return { ok: true, summary: 'No actions can be ranked yet — your baseline is empty. First: ingest your profile and at least one goal (POST /v1/me/reality/ingest).' };
+          const input = await loadGraphInput(actor);
+          const graph = buildPersonalGraph(input);
+          const ranked = scoreNextActions(input, userStamp(actor));
+          if (ranked.length === 0) {
+            return {
+              ok: true,
+              summary:
+                `Current snapshot: goals ${input.goals.length}, consented sources ${input.activeConsents.length}, profile ${input.profile ? 'ready' : 'missing'}. ` +
+                `I cannot rank a useful next step yet. Question: what is your single most important goal for the next 7 days? ` +
+                `Reply in one sentence: "My goal is ...".`,
+            };
+          }
           await nextBestActions.insertMany(ranked.slice(0, 5).map((a) => ({ ...a })));
+          const missing = graph.missingData.length;
           const best = ranked[0];
-          const top3 = ranked.slice(0, 3).map((a, i) => `${i + 1}) ${a.title} [${a.category}, score ${a.priorityScore}]`).join('  ');
-          return { ok: true, summary: `Best action now: ${best?.title}. Why: ${best?.reason} Top 3: ${top3}. Accept/reject on /me — decisions train your scoped memory.`, data: { ranked: ranked.slice(0, 5) } };
+          const askGoal = input.goals.length === 0;
+          const askProfile = !input.profile;
+          const askConsent = input.activeConsents.length === 0;
+          const guidedBest = askGoal
+            ? 'Define one clear 7-day goal'
+            : askProfile
+              ? 'Set a short personal profile (role + focus)'
+              : askConsent
+                ? 'Connect one read-only source'
+                : (best?.title ?? 'Run daily briefing');
+          const reason = askGoal
+            ? 'Without a concrete goal, recommendations stay generic.'
+            : askProfile
+              ? 'Your role/focus improves ranking quality.'
+              : askConsent
+                ? 'One source improves signal quality.'
+                : (best?.reason ?? 'Highest scored action.');
+          const question = askGoal
+            ? 'Question: what is your top goal for the next 7 days?'
+            : askProfile
+              ? 'Question: what is your current role and main focus right now?'
+              : askConsent
+                ? 'Question: which source should I connect first (calendar/email/tasks)?'
+                : 'Question: do you want me to run your daily briefing now?';
+          return {
+            ok: true,
+            summary:
+              `Snapshot: Goals ${input.goals.length}, Consents ${input.activeConsents.length}${input.activeConsents.length ? ` (${input.activeConsents.join(', ')})` : ''}, Missing areas ${missing}. ` +
+              `Best next step: ${guidedBest}. Why: ${reason} ${question}`,
+            data: { ranked: ranked.slice(0, 5) },
+          };
         },
         run_full_daily_briefing: async (_args, role) => {
           const actor = legacyRoleToAuthContext(role);
@@ -2652,6 +2768,19 @@ async function main(): Promise<void> {
           if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
           const input = await loadGraphInput(actor);
           const graph = buildPersonalGraph(input);
+          if (!input.profile || input.goals.length === 0 || input.activeConsents.length === 0) {
+            const gaps: string[] = [];
+            if (!input.profile) gaps.push('identity/profile');
+            if (input.goals.length === 0) gaps.push('at least one active goal');
+            if (input.activeConsents.length === 0) gaps.push('one read-only connector consent');
+            return {
+              ok: true,
+              summary:
+                `I can propose a higher-quality build after your baseline is complete. Missing now: ${gaps.join(', ')}. ` +
+                `Quick path: open /me and fill the intake panel (identity, one goal, one consent, one fact), then run “daily briefing”. ` +
+                `If you prefer voice, say: “build my personal reality baseline and then propose the next AOS build”.`,
+            };
+          }
           const aosOpps = input.opportunities.filter((o) => o.category === 'aos_capability' && o.status === 'proposed');
           const candidates: Array<{ title: string; why: string; impact: number; effort: number }> = [
             ...aosOpps.map((o) => ({ title: o.title, why: o.reason, impact: o.impactScore, effort: o.effortScore })),
@@ -2760,8 +2889,18 @@ async function main(): Promise<void> {
           } else {
             session.status = 'completed';
             session.completedAt = nowIso();
-            session.reportSummary = session.observations.slice(-6).join(' ');
-            session.nextAction = session.plan.some((s) => s.status === 'manual_required') ? 'Some steps need configuration or a manual path — see observations.' : 'Done. Give me the next goal.';
+            const lastObs = session.observations[session.observations.length - 1] ?? '';
+            session.reportSummary = session.scope === 'user'
+              ? lastObs
+              : session.observations.slice(-6).join(' ');
+            if (session.plan.some((s) => s.status === 'manual_required')) {
+              session.nextAction = 'Some steps need configuration or a manual path — see observations.';
+            } else {
+              const qIdx = lastObs.lastIndexOf('Question:');
+              session.nextAction = qIdx >= 0
+                ? lastObs.slice(qIdx).trim()
+                : 'Done. Give me the next goal.';
+            }
             const mid = await writeOpMemory(role, 'workflow', `Goal “${session.goal.slice(0, 80)}” completed with ${session.plan.length} steps.`, session.runtimeSessionId, null);
             session.memoryIds.push(mid);
             await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, message: `Operator session completed: ${session.goal.slice(0, 80)}`, level: 'success' } });

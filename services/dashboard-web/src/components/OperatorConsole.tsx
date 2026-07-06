@@ -145,8 +145,14 @@ export function OperatorConsole({ role }: { role: string }) {
       setState('idle');
       const finishedNow = !prev || ACTIVE_STATUSES.includes(prev.status) || prev.runtimeSessionId !== next.runtimeSessionId;
       if (announce && finishedNow) {
-        if (next.status === 'completed') say(next.reportSummary || 'Goal completed.');
-        else if (next.status === 'failed') say(`The goal failed. ${next.observations[next.observations.length - 1] ?? ''} Next: ${next.nextAction}`.trim());
+        if (next.status === 'completed') {
+          const spoken = next.nextAction?.startsWith('Question:')
+            ? next.nextAction
+            : (next.reportSummary?.includes('Question:')
+              ? next.reportSummary.slice(next.reportSummary.lastIndexOf('Question:')).trim()
+              : (next.reportSummary || 'Goal completed.'));
+          say(spoken);
+        } else if (next.status === 'failed') say(`The goal failed. ${next.observations[next.observations.length - 1] ?? ''} Next: ${next.nextAction}`.trim());
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -206,6 +206,8 @@ export const gateway = {
   // Phase AA — Scope, Identity & Multi-Tenant Governance
   meContext: () => call<{ actor: { actorId: string; displayName: string; roles: string[]; isOwner: boolean }; tenant: { tenantId: string; name: string; kind: string } | null; activeScope: string; safeMode: boolean; activeGoals: number; activeConsents: number; governance: string }>('/v1/me/context'),
   meProfile: () => call<Record<string, unknown>>('/v1/me/profile'),
+  updateMeProfile: (patch: { displayName?: string; locale?: string; timezone?: string; preferences?: Record<string, unknown> }) =>
+    call<{ updated: boolean }>('/v1/me/profile', { method: 'PATCH', body: JSON.stringify(patch) }),
   meGoals: () => call<Array<Record<string, unknown>>>('/v1/me/goals'),
   createGoal: (goal: { title: string; description?: string; horizon?: string; priority?: string }) => call<Record<string, unknown>>('/v1/me/goals', { method: 'POST', body: JSON.stringify(goal) }),
   meBriefings: () => call<Array<Record<string, unknown>>>('/v1/me/briefings'),
@@ -225,6 +227,8 @@ export const gateway = {
   realityBriefings: () => call<Array<Record<string, unknown>>>('/v1/me/reality/briefings'),
   realityStrategies: () => call<Array<Record<string, unknown>>>('/v1/me/reality/strategies'),
   realityResume: () => call<{ resume: Record<string, unknown> | null; careerRecords: Array<Record<string, unknown>> }>('/v1/me/reality/resume'),
+  realityIngest: (payload: { kind: string; data?: Record<string, unknown>; source?: string; confidence?: number }) =>
+    call<Record<string, unknown>>('/v1/me/reality/ingest', { method: 'POST', body: JSON.stringify(payload) }),
   realityReview: (type: 'daily' | 'weekly') => call<Record<string, unknown>>('/v1/me/reality/review', { method: 'POST', body: JSON.stringify({ type }) }),
   decideNextAction: (id: string, action: 'accept' | 'reject' | 'complete') => call<{ status: string }>(`/v1/me/reality/next-actions/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   // Phase AC+ — Command Universe
