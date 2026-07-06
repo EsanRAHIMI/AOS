@@ -82,6 +82,20 @@ export function OperatorConsole({ role }: { role: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtActive]);
 
+  // Phase AC+ — Jarvis bridge: any Command Universe zone can summon the
+  // console with a contextual command via `aos:jarvis`.
+  useEffect(() => {
+    const onSummon = (e: Event): void => {
+      const command = String((e as CustomEvent<{ command?: string }>).detail?.command ?? '').trim();
+      setOpen(true);
+      if (log.length === 0) setLog([{ who: 'operator', text: 'Operator runtime online.' }]);
+      if (command) void submitCommand(command, 'text');
+    };
+    window.addEventListener('aos:jarvis', onSummon);
+    return () => window.removeEventListener('aos:jarvis', onSummon);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [log, session, capabilities, interimText, rt.partialUserText, rt.partialAssistantText]);
 
   const showHint = (text: string): void => {
@@ -423,6 +437,13 @@ export function OperatorConsole({ role }: { role: string }) {
               })}
             </div>
             {session.nextAction && <div style={{ fontSize: 12 }}><span className="m">NEXT&nbsp;&nbsp;</span>{session.nextAction}</div>}
+            {/* Deep links — Jarvis takes you to the relevant view */}
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+              {scopeCtx?.scope === 'user' && <a href="/me" className="chip" style={{ fontSize: 10, textDecoration: 'none' }}>Open personal center</a>}
+              {(session.workspace || scopeCtx?.scope === 'global') && <a href="/operations" className="chip" style={{ fontSize: 10, textDecoration: 'none' }}>Open engine room</a>}
+              {session.pendingPermission && <a href="/approvals" className="chip" style={{ fontSize: 10, textDecoration: 'none' }}>Approvals</a>}
+              {session.evidenceCount > 0 && <a href="/evidence" className="chip" style={{ fontSize: 10, textDecoration: 'none' }}>Evidence</a>}
+            </div>
             {session.reportSummary && !ACTIVE_STATUSES.includes(session.status) && <div style={{ fontSize: 11.5, marginTop: 4 }}><span className="m">RESULT&nbsp;&nbsp;</span>{session.reportSummary.slice(0, 300)}</div>}
             {session.evidenceCount > 0 && <div className="m" style={{ fontSize: 11, marginTop: 4 }}>{session.evidenceCount} evidence record{session.evidenceCount === 1 ? '' : 's'} stored</div>}
 

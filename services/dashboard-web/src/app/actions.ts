@@ -258,3 +258,11 @@ export async function rollbackOperationAction(formData: FormData): Promise<void>
   await gateway.rollbackOperation(String(formData.get('operationPlanId')));
   revalidatePath('/');
 }
+
+export async function cancelOperationAction(formData: FormData): Promise<void> {
+  await requirePermission('cancelOperation');
+  const reason = String(formData.get('reason') ?? '').trim() || undefined;
+  await gateway.cancelOperation(String(formData.get('operationPlanId')), reason);
+  revalidatePath('/');
+  revalidatePath('/approvals');
+}

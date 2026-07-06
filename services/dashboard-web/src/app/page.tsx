@@ -1,151 +1,75 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { getSession } from '@/lib/auth';
+import { UniverseZone, type ZoneData } from '@/components/UniverseZone';
+import { BodyMap, type BodyMetric } from '@/components/BodyMap';
 import { LiveEvents } from '@/components/LiveEvents';
-import { OperationCommand } from '@/components/OperationCommand';
-import { OperationConsole } from '@/components/OperationConsole';
-import { DokployCalibration } from '@/components/DokployCalibration';
-import { NextBestAction } from '@/components/NextBestAction';
-import { PageHeader, MetricCard, EmptyState, StatusPill } from '@/components/ui';
-import { timeAgo } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
-export default async function OverviewPage() {
-  const [session, status, services, approvals, tasks, reliability, safe, operatorSession] = await Promise.all([
-    getSession(),
-    gateway.systemStatus(),
-    gateway.services() as Promise<Array<Record<string, unknown>> | null>,
-    gateway.approvals() as Promise<Array<Record<string, unknown>> | null>,
-    gateway.tasks() as Promise<Array<Record<string, unknown>> | null>,
-    gateway.reliability() as Promise<Array<Record<string, unknown>> | null>,
-    gateway.safeMode(),
-    gateway.operatorActiveSession(),
-  ]);
-  const svc = services ?? [];
-  const appr = approvals ?? [];
-  const latest = (tasks ?? [])[0];
-  const reachable = Boolean(status);
-  const rels = (reliability ?? []).filter((r) => r.targetType === 'service').sort((a, b) => Number(b.score) - Number(a.score)).slice(0, 4);
+/**
+ * Phase AC+ — The Command Universe. The living home of AOS: nine life/work/
+ * system domains on one operating surface, fed by ONE scope-enforced
+ * aggregation contract (/v1/me/universe). Every zone is honest — LIVE only
+ * with real data, otherwise a premium setup-ready state that says exactly how
+ * to activate it. Jarvis (the Operator Console, bottom right) is summonable
+ * from every zone with a contextual command.
+ */
+export default async function CommandUniversePage() {
+  const [session, universe, ctx] = await Promise.all([getSession(), gateway.universe(), gateway.meContext()]);
+  const zones = new Map<string, ZoneData>((universe?.zones ?? []).map((z) => [z.zoneId, z as ZoneData]));
+  const z = (id: string): ZoneData | undefined => zones.get(id);
+  const health = z('health');
+  const live = [...zones.values()].filter((x) => x.status === 'live').length;
+  const attention = [...zones.values()].filter((x) => x.status === 'attention').length;
+
+  // Body map metrics from the health zone's real items (level parsed from detail).
+  const bodyMetrics: BodyMetric[] = (health?.items ?? []).map((it) => ({
+    metric: it.label,
+    level: /^(\d+(?:\.\d+)?)\/10/.test(it.detail) ? Number(it.detail.split('/')[0]) : null,
+    concern: it.tone === 'warn' || it.tone === 'err',
+    detail: it.detail,
+  }));
 
   return (
     <>
-      <PageHeader
-        title="Mission Control"
-        subtitle="Start, monitor, approve, verify and understand real operations — all from here. Other pages are archives; the main journey stays on this page."
-        actions={<Link href="/start" className="btn btn-ghost">New here? Start guide</Link>}
-      />
-
-      {operatorSession ? (
-        <div className="card" style={{ marginBottom: 16, border: '1px solid var(--border-2)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-            <div className="label">Operator runtime — active session</div>
-            <StatusPill status={String(operatorSession.status ?? '')} />
+      {/* Hero strip — the world state in one line */}
+      <div className="card" style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '14px 18px' }}>
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 750, letterSpacing: '0.01em' }}>
+            {universe?.actor.displayName ?? 'Esan'} — Command Universe
           </div>
-          <div style={{ fontSize: 13, marginBottom: 6 }}><span className="m">GOAL&nbsp;&nbsp;</span>{String(operatorSession.goal ?? '')}</div>
-          <div className="m" style={{ fontSize: 12 }}>
-            Step {Number(operatorSession.currentStep ?? 0) + 1} of {((operatorSession.plan as unknown[]) ?? []).length}
-            {operatorSession.nextAction ? <> — next: {String(operatorSession.nextAction)}</> : null}. Open the Operator Console (bottom right) to follow or approve.
+          <div className="m" style={{ fontSize: 11.5 }}>
+            {live}/9 domains live · {attention ? `${attention} need attention · ` : ''}
+            {ctx?.safeMode ? 'safe mode ON · ' : ''}
+            {ctx?.activeConsents ?? 0} consent(s) · generated {String(universe?.generatedAt ?? '').slice(11, 19)} ·{' '}
+            <span title="Global software evolution. Scoped human data.">{ctx?.governance ?? ''}</span>
           </div>
         </div>
-      ) : null}
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="label" style={{ marginBottom: 10 }}>Command — start a real operation</div>
-        <OperationCommand />
-        <div className="m" style={{ fontSize: 12.5, marginTop: 10 }}>
-          Need an AI / research task instead? Use a real <Link href="/start/actions">action template</Link>. Operations here go through target → risk → approval → execute → verify, safely.
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link href="/operations" className="btn btn-ghost" style={{ fontSize: 12 }}>Engine room</Link>
+          <Link href="/me" className="btn btn-ghost" style={{ fontSize: 12 }}>Personal center</Link>
+          {session?.role === 'owner' && <span className="badge ok" style={{ alignSelf: 'center' }}>owner</span>}
         </div>
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <OperationConsole role={session?.role ?? 'viewer'} safeMode={Boolean(safe?.enabled)} />
+      {/* The universe grid */}
+      <div className="uz-grid" style={{ marginBottom: 14 }}>
+        {health && (
+          <UniverseZone zone={health} tall>
+            <BodyMap metrics={bodyMetrics} />
+          </UniverseZone>
+        )}
+        {(['daily', 'finance', 'ventures', 'life', 'opportunities', 'growth', 'systems', 'presence'] as const).map((id) => {
+          const zone = z(id);
+          return zone ? <UniverseZone key={id} zone={zone} /> : null;
+        })}
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <DokployCalibration />
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <NextBestAction />
-      </div>
-
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <MetricCard label="Registered services" value={svc.length} hint="in the service registry" />
-        <MetricCard label="Tasks" value={status?.taskCount ?? 0} hint="created in the kernel" />
-        <MetricCard label="Pending approvals" value={appr.length} tone={appr.length ? 'warn' : undefined} hint={appr.length ? 'need your decision' : 'all clear'} />
-        <MetricCard label="Environment" value={<span style={{ fontSize: 20 }}>{status?.env ?? 'unknown'}</span>} tone={reachable ? 'ok' : 'err'} hint={reachable ? 'gateway reachable' : 'gateway unreachable'} />
-      </div>
-
-      <div className="grid cols-2" style={{ marginBottom: 16 }}>
+      {/* Live pulse — the kernel is alive under everything */}
+      <div className="card">
+        <div className="label" style={{ marginBottom: 8 }}>Live pulse — kernel & operator events</div>
         <LiveEvents />
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span className="label">Pending approvals</span>
-            <Link href="/approvals" className="chip">Open</Link>
-          </div>
-          {appr.length === 0 ? (
-            <EmptyState icon="✓" title="Nothing awaiting you" hint="Sensitive actions appear here for approval." />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {appr.slice(0, 4).map((a, i) => (
-                <Link href="/approvals" key={i} className="glass interactive" style={{ padding: 12, display: 'block' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                    <b style={{ fontSize: 13.5 }}>{String(a.actionType)}</b>
-                    <span className="badge warn">{String(a.riskLevel ?? 'medium')}</span>
-                  </div>
-                  <div className="m" style={{ fontSize: 12.5, marginTop: 4 }}>{String(a.summary)}</div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid cols-2">
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span className="label">Latest task</span>
-            <Link href="/tasks" className="chip">All tasks</Link>
-          </div>
-          {!latest ? (
-            <EmptyState icon="◇" title="No tasks yet" hint="Use the command box above to create one." />
-          ) : (
-            <Link href={`/tasks/${String(latest.taskId)}`} className="glass interactive" style={{ padding: 14, display: 'block' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                <b>{String(latest.goal)}</b>
-                <StatusPill status={String(latest.status)} />
-              </div>
-              <div className="m" style={{ fontSize: 12.5, marginTop: 6 }}>{String(latest.assignedServiceId ?? 'unassigned')} · {timeAgo(String(latest.createdAt))}</div>
-            </Link>
-          )}
-        </div>
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span className="label">Reliability snapshot</span>
-            <Link href="/reliability" className="chip">Details</Link>
-          </div>
-          {rels.length === 0 ? (
-            <EmptyState icon="✦" title="No reliability data yet" hint="Run “Analyze system history” to compute it." />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {rels.map((r, i) => {
-                const score = Number(r.score ?? 0);
-                const tone = score >= 0.75 ? 'var(--ok)' : score >= 0.5 ? 'var(--warn)' : 'var(--err)';
-                return (
-                  <div key={i}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <span>{String(r.targetId)}</span><span className="m">{score.toFixed(2)} · {String(r.trend)}</span>
-                    </div>
-                    <div style={{ height: 7, borderRadius: 99, background: 'var(--glass-2)', marginTop: 5, overflow: 'hidden' }}>
-                      <div style={{ width: `${Math.round(score * 100)}%`, height: '100%', background: tone, borderRadius: 99 }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
       </div>
     </>
   );

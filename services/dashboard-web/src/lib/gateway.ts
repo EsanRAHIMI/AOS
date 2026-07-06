@@ -173,6 +173,7 @@ export const gateway = {
   syncDokploy: () => call<{ synced: number; lastSyncedAt: string; note?: string }>('/v1/dokploy/sync', { method: 'POST' }),
   retryOperation: (id: string) => call<Record<string, unknown>>(`/v1/operations/${id}/retry`, { method: 'POST' }),
   rollbackOperation: (id: string) => call<Record<string, unknown>>(`/v1/operations/${id}/rollback`, { method: 'POST' }),
+  cancelOperation: (id: string, reason?: string) => call<Record<string, unknown>>(`/v1/operations/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
   // Phase 17 — Dokploy calibration
   runDokployDiagnostics: () => call<{ probed: number; supported: string[]; unsupported: string[]; diagnostics: Array<Record<string, unknown>> }>('/v1/dokploy/diagnostics', { method: 'POST' }),
   dokployDiagnostics: () => call<Array<Record<string, unknown>>>('/v1/dokploy/diagnostics'),
@@ -226,4 +227,6 @@ export const gateway = {
   realityResume: () => call<{ resume: Record<string, unknown> | null; careerRecords: Array<Record<string, unknown>> }>('/v1/me/reality/resume'),
   realityReview: (type: 'daily' | 'weekly') => call<Record<string, unknown>>('/v1/me/reality/review', { method: 'POST', body: JSON.stringify({ type }) }),
   decideNextAction: (id: string, action: 'accept' | 'reject' | 'complete') => call<{ status: string }>(`/v1/me/reality/next-actions/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  // Phase AC+ — Command Universe
+  universe: () => call<{ zones: Array<{ zoneId: string; title: string; status: string; headline: string; items: Array<{ label: string; detail: string; tone: string; href?: string }>; setupHint: string; jarvisCommand: string; href: string; metrics: Array<{ label: string; value: string; tone: string }> }>; actor: { displayName: string }; generatedAt: string }>('/v1/me/universe'),
 };

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { timeAgo } from '@/lib/format';
 import { StatusPill } from '@/components/ui';
-import { confirmOperationTargetAction, decideOperationAction, markOperationExecutedAction, syncDokployAction, retryOperationAction, rollbackOperationAction } from '@/app/actions';
+import { confirmOperationTargetAction, decideOperationAction, markOperationExecutedAction, syncDokployAction, retryOperationAction, rollbackOperationAction, cancelOperationAction } from '@/app/actions';
 import { SERVICE_CATALOG } from '@/lib/services-catalog';
 
 const riskTone = (r: string) => (r === 'critical' || r === 'high' ? 'err' : r === 'medium' ? 'warn' : 'ok');
@@ -47,6 +47,7 @@ export async function OperationConsole({ role, safeMode }: { role: string; safeM
   const requiredApprovals = (p.requiredApprovals as string[]) ?? [];
   const opId = String(p.operationPlanId);
   const canApprove = !((protectedCore || risk === 'critical') && role !== 'owner');
+  const isTerminal = ['completed', 'failed', 'rolled_back', 'cancelled'].includes(status);
 
   return (
     <div className="card" style={{ borderColor: protectedCore ? 'rgba(255,107,129,0.4)' : undefined }}>
@@ -189,6 +190,13 @@ export async function OperationConsole({ role, safeMode }: { role: string; safeM
           )}
           {status === 'failed' && snapshot && role === 'owner' && (
             <form action={rollbackOperationAction}><input type="hidden" name="operationPlanId" value={opId} /><button type="submit" className="btn btn-err" style={{ padding: '6px 12px', fontSize: 12.5 }}>Rollback (owner)</button></form>
+          )}
+          {!isTerminal && (
+            <form action={cancelOperationAction} title="Stop and discard this operation (no changes applied)">
+              <input type="hidden" name="operationPlanId" value={opId} />
+              <input type="hidden" name="reason" value={`Cancelled from Mission Control (was ${status})`} />
+              <button type="submit" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12.5 }}>Cancel / Discard</button>
+            </form>
           )}
         </span>
       </div>

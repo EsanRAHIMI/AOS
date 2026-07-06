@@ -274,3 +274,8 @@ button { font: inherit; }
 .op-working-bar { position: relative; overflow: hidden; }
 .op-working-bar::after { content: ''; position: absolute; inset: 0; width: 45%; background: linear-gradient(90deg, transparent, rgba(110,168,255,0.35), transparent); animation: op-sweep 1.6s linear infinite; }
 .op-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; line-height: 1.5; }
+
+/* Phase AC+ — Command Universe grid */
+.uz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; align-items: stretch; }
+.uz-card { transition: transform 140ms ease, box-shadow 140ms ease; min-height: 190px; }
+.uz-card:hover { transform: translateY(-2px); box-shadow: 0 12px 34px -14px rgba(110,168,255,0.35); }

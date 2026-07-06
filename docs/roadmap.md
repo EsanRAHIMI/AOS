@@ -281,6 +281,17 @@ Phase 10 candidates:
    evolution with approval — DONE.
 8. /me Personal Command Center + 8 subpages; 26/26 smoke + all regressions — DONE.
 
+## Phase AC+ — Living AI Government Interface / Jarvis Command Universe — DONE
+1. New `/` home: 9-zone living operating surface (health/daily/life/finance/ventures/growth/
+   opportunities/systems/presence) on ONE scope-enforced contract (/v1/me/universe) — DONE.
+2. Abstract SVG body map (real metrics only; dormant setup-ready nodes) — DONE.
+3. Finance structure (income/expense/bill/installment/obligation/investment) with monthly-normalized
+   real math; life/family/home structure; 3 new ingestion kinds — DONE.
+4. Jarvis bridge: every zone summons the console with a contextual command; console deep-links back —
+   DONE.
+5. Old overview preserved as /operations Engine Room; zones honest (live only with real data) — DONE.
+6. 18/18 universe smoke + all 7 regression suites; all typechecks; dashboard build — DONE.
+
 ## Phase AA-RB — Reality Baseline & Documentation Truth — NEXT
 1. Keep docs synchronized with the 19-service reality, not old phase assumptions.
 2. Verify live env/integration status: MongoDB, S3, Dokploy, GitHub, LLM, voice, registry, event bus.

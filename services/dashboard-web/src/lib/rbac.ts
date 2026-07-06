@@ -38,6 +38,7 @@ export const ACTION_PERMISSION: Record<string, string> = {
   createOperation: 'create_task',
   confirmOperationTarget: 'create_task',
   decideOperation: 'approve_deployment',
+  cancelOperation: 'approve_deployment',
 };
 
 export function canRolePerformAction(role: Role, action: string): boolean {
@@ -46,8 +47,13 @@ export function canRolePerformAction(role: Role, action: string): boolean {
   return (ROLE_PERMISSIONS[role] ?? []).includes(perm);
 }
 
-/** Mutating actions blocked while safe mode is active (everything except the security controls). */
-export const SAFE_MODE_BLOCKED = new Set(Object.keys(ACTION_PERMISSION).filter((a) => a !== 'runSecurityCheck' && a !== 'setSafeMode'));
+/**
+ * Mutating actions blocked while safe mode is active (everything except the
+ * security controls and de-escalations). `cancelOperation` STOPS an in-flight
+ * operation, so it must stay available even in safe mode.
+ */
+const SAFE_MODE_ALLOWED = new Set(['runSecurityCheck', 'setSafeMode', 'cancelOperation']);
+export const SAFE_MODE_BLOCKED = new Set(Object.keys(ACTION_PERMISSION).filter((a) => !SAFE_MODE_ALLOWED.has(a)));
 
 export const ACTION_LABEL: Record<string, string> = {
   createTask: 'create a task',
@@ -64,4 +70,5 @@ export const ACTION_LABEL: Record<string, string> = {
   triggerLearning: 'trigger a learning run',
   runSecurityCheck: 'run a security check',
   setSafeMode: 'change safe mode',
+  cancelOperation: 'cancel an operation',
 };

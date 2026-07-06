@@ -258,6 +258,10 @@ export const COLLECTIONS = {
   NEXT_BEST_ACTIONS: 'next_best_actions',
   PERSONAL_BRIEFING_RUNS: 'personal_briefing_runs',
   STRATEGY_REVIEW_RUNS: 'strategy_review_runs',
+  // Phase AC+ — Command Universe domains
+  PERSONAL_HEALTH_STATES: 'personal_health_states',
+  PERSONAL_LIFE_ITEMS: 'personal_life_items',
+  PERSONAL_FINANCE_ITEMS: 'personal_finance_items',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

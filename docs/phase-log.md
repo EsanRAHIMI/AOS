@@ -1189,3 +1189,53 @@ Verification:
   shared + service-kit typecheck; dashboard `next build` ✓ (9 new /me routes). No connector writes; no
   Docker; Dokploy independence intact. Scope: `shared/src/{personal,operator,constants}/`,
   `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.
+
+## Phase AC+ — AOS Living AI Government Interface / Jarvis Command Universe — COMPLETE (2026-07-05)
+The product leap: AOS's home is no longer a technical dashboard — it is a one-page living operating
+surface for life, work, money, growth and the AI kernel, with Jarvis as the connective intelligence
+layer. Old overview preserved as the Engine Room (/operations).
+
+Delivered (shared — the universe contract):
+- **3 new scoped domain structures**: personal_health_states (9 body metrics, level 0–10, concern
+  flags), personal_life_items (family/home/relationship/household/personal · responsibility/concern/
+  event/task · importance/dueDate), personal_finance_items (income/expense/bill/installment/obligation/
+  investment/purchase/sale · amount+currency+cadence+dueDate — user-entered amounts ONLY).
+- **`buildUniverseZones`** — pure, deterministic 9-zone contract (health/daily/life/finance/ventures/
+  growth/opportunities/systems/presence), each zone with status (live/attention/setup_needed/
+  not_configured), headline, items, metrics, an ACTIONABLE setup hint, a contextual Jarvis command and a
+  deep-link. `aggregateFinance` (monthly-normalized in/out/net/obligations/upcoming, hasAmounts guard) and
+  `latestHealthByMetric` (body-map contract). A zone is LIVE only with real scoped data — proven by smoke.
+- 3 new ingestion kinds (health_state / life_item / finance_item; learning_track handler added too),
+  each with honest next-connector guidance.
+
+Delivered (gateway):
+- **`GET /v1/me/universe`** — ONE scope-enforced aggregation for the whole home: personal graph + health
+  + life + finance + learning + next actions + latest briefing + connectors + kernel state (services,
+  incidents, approvals, safe mode, active operation, active operator goal, recent events).
+
+Delivered (dashboard — the Command Universe):
+- **New `/` home**: hero strip (actor, domains-live count, attention count, safe mode, consents,
+  governance line) + 9-zone living grid + kernel live-events pulse. Health zone renders an **abstract
+  SVG body map** — nodes breathe only for real reported metrics; unreported nodes are dormant
+  setup-ready points with per-node guidance. Finance shows monthly net/obligations/upcoming from real
+  entries; every empty state is premium and says exactly how to activate (ingest kind / consent path).
+  Zone cards: status glow border, hover lift, metric chips, tone-dotted items with deep links.
+- **Jarvis bridge**: every zone has a ◈ Jarvis button dispatching `aos:jarvis` with a contextual command
+  — the Operator Console opens and executes it (same gated runtime; nothing bypassed). The console now
+  also shows **deep-link chips** (personal center / engine room / approvals / evidence) so Jarvis takes
+  you to the relevant view, alongside the existing ACTOR/SCOPE/MODE line, live workspace telemetry,
+  narration and approval cards.
+- Old Mission Control → **/operations “Engine Room”** unchanged in capability; sidebar gains a Universe
+  group (Command Universe / Engine Room).
+
+Verification:
+- **Phase AC+ smoke PASS (18/18)**: 9-zone completeness; empty world ⇒ personal zones NEVER live while
+  the kernel zone stays live; actionable setup hints; presence not_configured without connectors;
+  finance math (monthly normalization, obligations, upcoming ordering, no fake totals without amounts);
+  health latest-per-metric + concern⇒attention; life high-importance⇒attention; determinism; new
+  ingestion kinds + honest connector guidance.
+- All prior suites green: AB 26/26, AA 39/39, Z 18/18, Y 31/31, X 28/28, 19.5 23/23, 19 11/11. All 19
+  services + shared + service-kit typecheck; dashboard `next build` ✓ (new /, /operations). No fake
+  data; no connector writes; no Docker; Dokploy independence intact.
+  Scope: `shared/src/{personal,constants}/`, `services/gateway-api/`, `services/dashboard-web/`,
+  `scripts/`, `docs/`.

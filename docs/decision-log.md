@@ -2,6 +2,22 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-05 — Phase AC+ command universe
+
+### D-092 One aggregation contract for the whole world view
+The home surface is fed by a single scope-enforced endpoint (/v1/me/universe) built on a pure,
+deterministic zone builder in shared. Every domain — body, time, family, money, ventures, growth,
+opportunities, kernel, presence — has ONE status vocabulary (live/attention/setup_needed/
+not_configured), and a zone can only be LIVE when real scoped data backs it. Empty states are part of
+the product: premium, specific, and actionable (exact ingest kind or consent path). This contract is
+what lets the interface scale to tenants, organizations and citizens later without redesign.
+
+### D-091 Jarvis is the connective layer, not a widget
+Zones summon the operator console with contextual commands over a browser event bridge; the console
+executes them through the SAME gated runtime (scope classification, deterministic planning, approvals)
+and offers deep links back into the relevant views. Human and AI look at the same world and act through
+the same governed paths — no side channel, no bypass.
+
 ## 2026-07-05 — Phase AB personal reality & Jarvis layer
 
 ### D-090 Honest intelligence or none

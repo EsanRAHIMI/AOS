@@ -105,6 +105,11 @@ import {
   type NextBestAction,
   type PersonalBriefingRun,
   type StrategyReviewRun,
+  buildUniverseZones,
+  type PersonalHealthState,
+  type PersonalLifeItem,
+  type PersonalFinanceItem,
+  type PersonalLearningTrack,
   type OperatorTool,
   type OperatorToolRun,
   type OperatorToolPermission,
@@ -1172,7 +1177,9 @@ async function main(): Promise<void> {
       app.get('/v1/operations/active', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const rows = await operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(20).toArray();
-        const active = rows.find((p) => !TERMINAL.has(p.status)) ?? rows[0] ?? null;
+        // Only a genuinely in-flight (non-terminal) operation is "active". Terminal
+        // ones (completed/failed/rolled_back/cancelled) must never occupy the panel.
+        const active = rows.find((p) => !TERMINAL.has(p.status)) ?? null;
         return success(active);
       });
       app.get<{ Params: { id: string } }>('/v1/operations/:id', async (req, reply) => {
@@ -1468,6 +1475,33 @@ async function main(): Promise<void> {
         await evidenceCol.insertOne(ev); plan.evidenceIds.push(ev.evidenceId);
         await writeAudit({ actorType: 'human', actorId: role, role, action: 'operation_rolled_back', targetType: 'operation_plan', targetId: plan.operationPlanId, after: { snapshotId: plan.snapshotId, mode } });
         await ctx.publisher.publish({ type: EVENT_TYPES.OPERATION_UPDATED, taskId: plan.taskId, payload: { operationPlanId: plan.operationPlanId, message: `Operation rolled back (${mode})`, level: 'warn' } });
+        await saveOp(plan);
+        return success(plan);
+      });
+
+      // Cancel / discard an operation from ANY non-terminal state (e.g. stuck in
+      // waiting_target_selection). Cancelling is a de-escalation: it is never
+      // blocked by safe mode and is idempotent. Completed operations cannot be
+      // cancelled — only in-flight ones. In-flight steps are marked skipped;
+      // already-done steps stay as an honest record of what ran.
+      app.post<{ Params: { id: string }; Body: { reason?: string } }>('/v1/operations/:id/cancel', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        if (await rateLimited(req, reply, 'operation_cancel')) return reply;
+        if (await enforce('decideOperation', req, reply)) return reply;
+        const role = declaredRole(req);
+        const plan = await operationPlans.findOne({ operationPlanId: req.params.id });
+        if (!plan) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'operation not found'));
+        if (plan.status === 'cancelled') return success(plan); // idempotent
+        if (TERMINAL.has(plan.status)) return reply.code(409).send(failure(ERROR_CODES.CONFLICT, `operation is ${plan.status} — a finished operation cannot be cancelled`));
+        const prev = plan.status;
+        const reason = (String(req.body?.reason ?? '').trim() || 'Cancelled by operator').slice(0, 200);
+        plan.steps = plan.steps.map((s) =>
+          s.status === 'active' || s.status === 'waiting' || s.status === 'manual_required'
+            ? { ...s, status: 'skipped' as const, message: reason, actor: role, at: nowIso() }
+            : s,
+        );
+        plan.status = 'cancelled';
+        await writeAudit({ actorType: role === 'agent' ? 'agent' : 'human', actorId: role, role, action: 'operation_cancelled', targetType: 'operation_plan', targetId: plan.operationPlanId, reason, after: { previousStatus: prev } });
         await saveOp(plan);
         return success(plan);
       });
@@ -2068,6 +2102,10 @@ async function main(): Promise<void> {
       const personalCareerRecords = collection<PersonalCareerRecord>(COLLECTIONS.PERSONAL_CAREER_RECORDS);
       const resumeProfiles = collection<ResumeProfile>(COLLECTIONS.RESUME_PROFILES);
       const nextBestActions = collection<NextBestAction>(COLLECTIONS.NEXT_BEST_ACTIONS);
+      const personalHealthStates = collection<PersonalHealthState>(COLLECTIONS.PERSONAL_HEALTH_STATES);
+      const personalLifeItems = collection<PersonalLifeItem>(COLLECTIONS.PERSONAL_LIFE_ITEMS);
+      const personalFinanceItems = collection<PersonalFinanceItem>(COLLECTIONS.PERSONAL_FINANCE_ITEMS);
+      const personalLearningTracks = collection<PersonalLearningTrack>(COLLECTIONS.PERSONAL_LEARNING_TRACKS);
       const personalBriefingRuns = collection<PersonalBriefingRun>(COLLECTIONS.PERSONAL_BRIEFING_RUNS);
       const strategyReviewRuns = collection<StrategyReviewRun>(COLLECTIONS.STRATEGY_REVIEW_RUNS);
 
@@ -2121,6 +2159,19 @@ async function main(): Promise<void> {
           else if (kind === 'risk') { await personalRisks.insertOne({ ...meta, recordKind: 'fact', riskId: genId('prisk'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: [], severity: (['low', 'medium', 'high', 'critical'].includes(str('severity')) ? str('severity') : 'medium') as PersonalRisk['severity'], mitigation: str('mitigation', 500) }); created++; }
           else if (kind === 'income_idea') { await personalIncomeStreams.insertOne({ ...meta, recordKind: 'fact', incomeStreamId: genId('pinc'), title: str('title', 160), description: str('description', 2000), status: 'active', tags: [], streamType: (['salary', 'freelance', 'product', 'saas', 'content', 'investment', 'idea', 'other'].includes(str('streamType')) ? str('streamType') : 'idea') as PersonalIncomeStream['streamType'], monthlyEstimate: typeof (d as Record<string, unknown>).monthlyEstimate === 'number' ? (d as { monthlyEstimate: number }).monthlyEstimate : null }); created++; }
           else if (kind === 'goal') { const g = { ...userStamp(actor), goalId: genId('goal'), title: str('title', 160), description: str('description', 1000), horizon: 'week' as const, status: 'active' as const, priority: 'normal' as const, createdAt: now, updatedAt: now }; if (!g.title) throw new Error('title required'); await userGoals.insertOne(g); created++; }
+          else if (kind === 'health_state') {
+            const level = typeof (d as Record<string, unknown>).level === 'number' ? Math.max(0, Math.min(10, (d as { level: number }).level)) : null;
+            await personalHealthStates.insertOne({ ...meta, recordKind: 'fact', healthStateId: genId('phlth'), metric: (['wellbeing', 'energy', 'sleep', 'stress', 'weight', 'activity', 'nutrition', 'symptom', 'habit'].includes(str('metric')) ? str('metric') : 'wellbeing') as PersonalHealthState['metric'], level, value: str('value', 60), note: str('note', 400), concern: Boolean((d as Record<string, unknown>).concern) }); created++;
+          }
+          else if (kind === 'life_item') {
+            await personalLifeItems.insertOne({ ...meta, recordKind: 'fact', lifeItemId: genId('plife'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), domain: (['family', 'home', 'relationship', 'household', 'personal'].includes(str('domain')) ? str('domain') : 'personal') as PersonalLifeItem['domain'], itemType: (['responsibility', 'concern', 'event', 'task', 'note'].includes(str('itemType')) ? str('itemType') : 'responsibility') as PersonalLifeItem['itemType'], dueDate: str('dueDate', 10) || null, importance: (['low', 'normal', 'high'].includes(str('importance')) ? str('importance') : 'normal') as PersonalLifeItem['importance'] }); created++;
+          }
+          else if (kind === 'finance_item') {
+            await personalFinanceItems.insertOne({ ...meta, recordKind: 'fact', financeItemId: genId('pfin'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), itemType: (['income', 'expense', 'bill', 'installment', 'obligation', 'investment', 'purchase', 'sale'].includes(str('itemType')) ? str('itemType') : 'expense') as PersonalFinanceItem['itemType'], amount: typeof (d as Record<string, unknown>).amount === 'number' ? (d as { amount: number }).amount : null, currency: str('currency', 8), cadence: (['once', 'weekly', 'monthly', 'quarterly', 'yearly'].includes(str('cadence')) ? str('cadence') : 'monthly') as PersonalFinanceItem['cadence'], dueDate: str('dueDate', 10) || null }); created++;
+          }
+          else if (kind === 'learning_track') {
+            await personalLearningTracks.insertOne({ ...meta, recordKind: 'fact', learningTrackId: genId('plearn'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), targetSkill: str('targetSkill', 120), linkedGoalIds: arr('linkedGoalIds') }); created++;
+          }
           else if (kind === 'career_record') { await personalCareerRecords.insertOne({ ...meta, recordKind: 'fact', careerRecordId: genId('pcar'), kind: (['experience', 'education', 'achievement', 'certification'].includes(str('recordType')) ? str('recordType') : 'experience') as PersonalCareerRecord['kind'], title: str('title', 160), organization: str('organization', 160), period: str('period', 60), details: str('details', 2000) }); created++; }
           else if (kind === 'resume') {
             const existing = await resumeProfiles.findOne({ scope: 'user', userId: actor.primaryUserId });
@@ -2161,6 +2212,45 @@ async function main(): Promise<void> {
         // Persist fresh proposals (idempotent enough: superseded ones expire).
         if (ranked.length) await nextBestActions.insertMany(ranked.map((a) => ({ ...a })));
         return ranked;
+      });
+
+      // Phase AC+ — THE Command Universe contract: one scope-enforced fetch
+      // for the entire living home surface (9 zones, honest statuses).
+      realityGet('/v1/me/universe', async (actor) => {
+        const uid = actor.primaryUserId ?? '';
+        const uFilter = { scope: 'user' as const, userId: uid };
+        const [graph, health, life, finance, learning, nbas, briefing, connectors, svcCount, inc, op, activeSession, recentEvents, safe] = await Promise.all([
+          loadGraphInput(actor),
+          personalHealthStates.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
+          personalLifeItems.find(uFilter, { projection: { _id: 0 } }).limit(100).toArray(),
+          personalFinanceItems.find(uFilter, { projection: { _id: 0 } }).limit(200).toArray(),
+          personalLearningTracks.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray(),
+          nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
+          personalBriefingRuns.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),
+          connectorAccounts.find({ userId: uid }, { projection: { _id: 0 } }).limit(50).toArray(),
+          (async () => { try { const r = await fetch(`${env.SERVICE_REGISTRY_URL}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, signal: AbortSignal.timeout(3000) }); const b = (await r.json()) as { data?: unknown[] }; return Array.isArray(b.data) ? b.data.length : 0; } catch { return 0; } })(),
+          incidents.find({}, { projection: { _id: 0 } }).limit(100).toArray(),
+          operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(1).toArray(),
+          opSessions.find({ status: { $in: ['planning', 'running', 'waiting_approval', 'verifying'] } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(1).toArray(),
+          events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(5).toArray(),
+          isSafeMode(),
+        ]);
+        const activeOp = op[0] && !['completed', 'failed', 'rolled_back', 'cancelled'].includes(op[0].status) ? op[0] : null;
+        const zones = buildUniverseZones({
+          graph, healthStates: health, lifeItems: life, financeItems: finance,
+          learningTracks: learning.map((t) => ({ title: t.title, targetSkill: t.targetSkill, status: t.status })),
+          nextActions: nbas, latestBriefing: briefing[0] ?? null,
+          kernel: {
+            services: svcCount,
+            openIncidents: inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed').length,
+            pendingApprovals: graph.pendingApprovals, safeMode: safe,
+            activeOperation: activeOp ? `${activeOp.goal} (${activeOp.status})` : null,
+            activeRuntimeGoal: activeSession[0]?.goal ?? null,
+            recentEvents: recentEvents.map((e) => (e.payload as { message?: string })?.message ?? e.type),
+          },
+          connectors: connectors.map((c) => ({ connectorType: c.connectorType, status: c.status })),
+        });
+        return { zones, actor: { displayName: graph.profile?.displayName || 'Esan' }, generatedAt: nowIso() };
       });
 
       realityGet('/v1/me/reality/briefings', async (actor) => personalBriefingRuns.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(14).toArray());

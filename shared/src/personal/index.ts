@@ -201,9 +201,47 @@ export const StrategyReviewRunSchema = RequiredScopeSchema.merge(Sourced).extend
 });
 export type StrategyReviewRun = z.infer<typeof StrategyReviewRunSchema>;
 
+/* ============= Phase AC+ — Command Universe domain schemas ============== */
+
+/** Health/body state — user-reported or (later) connector-sourced. One record
+ *  per metric report; the body map renders the latest per metric. Never fake. */
+export const PersonalHealthStateSchema = RequiredScopeSchema.merge(Sourced).extend({
+  healthStateId: z.string(),
+  metric: z.enum(['wellbeing', 'energy', 'sleep', 'stress', 'weight', 'activity', 'nutrition', 'symptom', 'habit']),
+  /** 0–10 for scaled metrics; free value (e.g. kg, hours) goes in `value`. */
+  level: z.number().min(0).max(10).nullable().default(null),
+  value: z.string().default(''),
+  note: z.string().default(''),
+  concern: z.boolean().default(false),
+  createdAt: IsoDate,
+  updatedAt: IsoDate,
+});
+export type PersonalHealthState = z.infer<typeof PersonalHealthStateSchema>;
+
+/** Family / home / relationships / household — the personal world structure. */
+export const PersonalLifeItemSchema = NamedScopedBase.extend({
+  lifeItemId: z.string(),
+  domain: z.enum(['family', 'home', 'relationship', 'household', 'personal']),
+  itemType: z.enum(['responsibility', 'concern', 'event', 'task', 'note']).default('responsibility'),
+  dueDate: z.string().nullable().default(null),
+  importance: z.enum(['low', 'normal', 'high']).default('normal'),
+});
+export type PersonalLifeItem = z.infer<typeof PersonalLifeItemSchema>;
+
+/** Finance structure: user-entered amounts only — never invented. */
+export const PersonalFinanceItemSchema = NamedScopedBase.extend({
+  financeItemId: z.string(),
+  itemType: z.enum(['income', 'expense', 'bill', 'installment', 'obligation', 'investment', 'purchase', 'sale']),
+  amount: z.number().nullable().default(null),
+  currency: z.string().default(''),
+  cadence: z.enum(['once', 'weekly', 'monthly', 'quarterly', 'yearly']).default('monthly'),
+  dueDate: z.string().nullable().default(null),
+});
+export type PersonalFinanceItem = z.infer<typeof PersonalFinanceItemSchema>;
+
 /* ============================== ingestion =============================== */
 
-export const INGESTION_KINDS = ['profile', 'resume', 'project', 'system', 'asset', 'goal', 'income_idea', 'risk', 'learning_track', 'career_record', 'tech_watch'] as const;
+export const INGESTION_KINDS = ['profile', 'resume', 'project', 'system', 'asset', 'goal', 'income_idea', 'risk', 'learning_track', 'career_record', 'tech_watch', 'health_state', 'life_item', 'finance_item'] as const;
 export type IngestionKind = (typeof INGESTION_KINDS)[number];
 
 export interface IngestionResult {
@@ -224,6 +262,9 @@ export function nextConnectorFor(kind: IngestionKind): string {
     case 'goal': case 'learning_track': return 'calendar/tasks (not_configured — consent grant required)';
     case 'income_idea': return 'finance (not_configured — finance connectors are a later phase, approval-gated)';
     case 'risk': case 'asset': case 'tech_watch': return 'none — manual input is the primary source for now';
+    case 'health_state': return 'health wearable/app (not_configured — a later consent-gated connector phase)';
+    case 'life_item': return 'calendar (not_configured — consent grant required)';
+    case 'finance_item': return 'bank/finance (not_configured — finance connectors are a later, approval-gated phase)';
   }
 }
 
@@ -402,6 +443,216 @@ export function analyzeResume(input: { rawText: string; skills: string[]; career
     ? `Based only on your provided data: ${input.skills.slice(0, 3).join(', ') || 'core experience'} practitioner${input.goals[0] ? ` heading toward “${input.goals[0].title}”` : ''}.`
     : 'No positioning possible yet — no resume data ingested.';
   return { verifiedFacts, userClaims, modelInferences, suggestions, positioning };
+}
+
+/* ================= Phase AC+ — Command Universe contract ================= */
+
+export type ZoneStatus = 'live' | 'setup_needed' | 'not_configured' | 'attention';
+
+export interface ZoneItem { label: string; detail: string; tone: 'ok' | 'warn' | 'err' | 'neutral'; href?: string }
+
+export interface UniverseZone {
+  zoneId: 'health' | 'daily' | 'life' | 'finance' | 'ventures' | 'growth' | 'opportunities' | 'systems' | 'presence';
+  title: string;
+  status: ZoneStatus;
+  headline: string;
+  items: ZoneItem[];
+  /** Exactly how to activate/improve this zone — honest, actionable. */
+  setupHint: string;
+  jarvisCommand: string;
+  href: string;
+  metrics: Array<{ label: string; value: string; tone: 'ok' | 'warn' | 'err' | 'neutral' }>;
+}
+
+export interface UniverseInput {
+  graph: PersonalGraphInput;
+  healthStates: PersonalHealthState[];
+  lifeItems: PersonalLifeItem[];
+  financeItems: PersonalFinanceItem[];
+  learningTracks: Array<{ title: string; targetSkill: string; status: string }>;
+  nextActions: NextBestAction[];
+  latestBriefing: PersonalBriefingRun | null;
+  kernel: { services: number; openIncidents: number; pendingApprovals: number; safeMode: boolean; activeOperation: string | null; activeRuntimeGoal: string | null; recentEvents: string[] };
+  connectors: Array<{ connectorType: string; status: string }>;
+}
+
+/** Latest health state per metric (the body map contract). */
+export function latestHealthByMetric(states: PersonalHealthState[]): Map<string, PersonalHealthState> {
+  const m = new Map<string, PersonalHealthState>();
+  for (const s of [...states].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) m.set(s.metric, s);
+  return m;
+}
+
+/** Monthly-normalized finance aggregation from user-entered amounts only. */
+export function aggregateFinance(items: PersonalFinanceItem[]): { monthlyIn: number; monthlyOut: number; net: number; obligations: number; upcoming: PersonalFinanceItem[]; hasAmounts: boolean } {
+  const monthly = (i: PersonalFinanceItem): number => {
+    if (i.amount === null) return 0;
+    const f = { once: 0, weekly: 4.33, monthly: 1, quarterly: 1 / 3, yearly: 1 / 12 }[i.cadence];
+    return i.amount * f;
+  };
+  const inTypes = new Set(['income', 'sale']);
+  const outTypes = new Set(['expense', 'bill', 'installment', 'obligation', 'purchase']);
+  const active = items.filter((i) => i.status === 'active');
+  const monthlyIn = active.filter((i) => inTypes.has(i.itemType)).reduce((s, i) => s + monthly(i), 0);
+  const monthlyOut = active.filter((i) => outTypes.has(i.itemType)).reduce((s, i) => s + monthly(i), 0);
+  const upcoming = active.filter((i) => i.dueDate).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).slice(0, 5);
+  return {
+    monthlyIn: Math.round(monthlyIn * 100) / 100,
+    monthlyOut: Math.round(monthlyOut * 100) / 100,
+    net: Math.round((monthlyIn - monthlyOut) * 100) / 100,
+    obligations: active.filter((i) => ['installment', 'obligation', 'bill'].includes(i.itemType)).length,
+    upcoming,
+    hasAmounts: active.some((i) => i.amount !== null),
+  };
+}
+
+/** Build all nine zones. Pure and honest: a zone is 'live' only when real
+ *  scoped data backs it; otherwise setup_needed/not_configured with exact
+ *  activation guidance. Same input ⇒ same output. */
+export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
+  const zones: UniverseZone[] = [];
+  const g = input.graph;
+
+  // 1 — Health / body
+  const hm = latestHealthByMetric(input.healthStates);
+  const concerns = input.healthStates.filter((h) => h.concern);
+  zones.push({
+    zoneId: 'health', title: 'Body & Health', href: '/me/reality',
+    status: hm.size === 0 ? 'setup_needed' : concerns.length ? 'attention' : 'live',
+    headline: hm.size === 0 ? 'No health data yet — the body map activates with your first report.' : `${hm.size} metric(s) tracked${concerns.length ? `, ${concerns.length} concern(s) flagged` : ''}.`,
+    items: [...hm.values()].slice(0, 6).map((h) => ({ label: h.metric, detail: h.level !== null ? `${h.level}/10${h.note ? ` — ${h.note.slice(0, 40)}` : ''}` : h.value || h.note.slice(0, 40), tone: h.concern ? 'warn' : 'ok' })),
+    setupHint: 'Report a state: ingest kind=health_state (metric, level 0–10, note). Wearable/app connectors arrive in a later consent-gated phase.',
+    jarvisCommand: 'Review my current situation.',
+    metrics: [
+      { label: 'tracked', value: String(hm.size), tone: hm.size ? 'ok' : 'neutral' },
+      { label: 'concerns', value: String(concerns.length), tone: concerns.length ? 'warn' : 'ok' },
+    ],
+  });
+
+  // 2 — Daily life / time / tasks
+  const proposed = input.nextActions.filter((a) => a.status === 'proposed');
+  const overdueLife = input.lifeItems.filter((l) => l.dueDate && l.dueDate < nowIso().slice(0, 10) && l.status === 'active');
+  zones.push({
+    zoneId: 'daily', title: 'Today & Priorities', href: '/me',
+    status: proposed.length || input.latestBriefing ? 'live' : 'setup_needed',
+    headline: proposed[0] ? `Top: ${proposed[0].title}` : 'No ranked priorities yet — build your baseline first.',
+    items: [
+      ...proposed.slice(0, 3).map((a) => ({ label: a.title.slice(0, 60), detail: `${a.category} · score ${a.priorityScore}`, tone: (a.category === 'risk' ? 'warn' : 'ok') as ZoneItem['tone'], href: '/me' })),
+      ...(overdueLife.length ? [{ label: `${overdueLife.length} overdue personal item(s)`, detail: overdueLife[0]?.title ?? '', tone: 'err' as const }] : []),
+      ...(g.pendingApprovals ? [{ label: `${g.pendingApprovals} approval(s) waiting`, detail: 'decisions unblock execution', tone: 'warn' as const, href: '/approvals' }] : []),
+    ],
+    setupHint: 'Calendar: not_configured (consent grant required). Priorities derive from your goals, risks and opportunities.',
+    jarvisCommand: 'Run my daily briefing.',
+    metrics: [
+      { label: 'ranked', value: String(proposed.length), tone: proposed.length ? 'ok' : 'neutral' },
+      { label: 'approvals', value: String(g.pendingApprovals), tone: g.pendingApprovals ? 'warn' : 'ok' },
+    ],
+  });
+
+  // 3 — Family / home / personal world
+  const lifeActive = input.lifeItems.filter((l) => l.status === 'active');
+  const byDomain = new Map<string, number>();
+  for (const l of lifeActive) byDomain.set(l.domain, (byDomain.get(l.domain) ?? 0) + 1);
+  zones.push({
+    zoneId: 'life', title: 'Family & Home', href: '/me/reality',
+    status: lifeActive.length ? (lifeActive.some((l) => l.importance === 'high') ? 'attention' : 'live') : 'setup_needed',
+    headline: lifeActive.length ? `${lifeActive.length} active item(s) across ${byDomain.size} domain(s).` : 'Your personal world is not mapped yet.',
+    items: lifeActive.slice(0, 5).map((l) => ({ label: l.title.slice(0, 60), detail: `${l.domain} · ${l.itemType}${l.dueDate ? ` · due ${l.dueDate}` : ''}`, tone: l.importance === 'high' ? 'warn' : 'neutral' })),
+    setupHint: 'Ingest kind=life_item (domain: family|home|relationship|household, title, importance, dueDate) to map responsibilities and concerns.',
+    jarvisCommand: 'What should I do now?',
+    metrics: [{ label: 'active', value: String(lifeActive.length), tone: lifeActive.length ? 'ok' : 'neutral' }, { label: 'high', value: String(lifeActive.filter((l) => l.importance === 'high').length), tone: 'warn' }],
+  });
+
+  // 4 — Finance
+  const fin = aggregateFinance(input.financeItems);
+  const finRisks = g.risks.filter((r) => r.tags.includes('financial') || /income|money|financ/i.test(r.title));
+  zones.push({
+    zoneId: 'finance', title: 'Money & Commitments', href: '/me/opportunities',
+    status: input.financeItems.length === 0 ? 'setup_needed' : fin.net < 0 ? 'attention' : 'live',
+    headline: input.financeItems.length === 0
+      ? 'No financial structure recorded — amounts are never invented.'
+      : fin.hasAmounts ? `Monthly: ${fin.monthlyIn} in / ${fin.monthlyOut} out → net ${fin.net}. ${fin.obligations} obligation(s).` : `${input.financeItems.length} item(s) recorded without amounts yet.`,
+    items: [
+      ...fin.upcoming.slice(0, 3).map((i) => ({ label: i.title.slice(0, 50), detail: `${i.itemType}${i.amount !== null ? ` · ${i.amount}${i.currency}` : ''} · due ${i.dueDate}`, tone: 'warn' as const })),
+      ...finRisks.slice(0, 2).map((r) => ({ label: r.title.slice(0, 50), detail: `financial risk · ${r.severity}`, tone: 'err' as const })),
+      ...g.opportunities.filter((o) => o.category === 'income' && o.status === 'proposed').slice(0, 2).map((o) => ({ label: o.title.slice(0, 50), detail: `income opportunity · impact ${o.impactScore}/10`, tone: 'ok' as const, href: '/me/opportunities' })),
+    ],
+    setupHint: 'Ingest kind=finance_item (itemType income|expense|bill|installment|obligation|investment, amount, cadence, dueDate). Bank connectors: not_configured (later, approval-gated).',
+    jarvisCommand: 'Find the best opportunities for me based on my goals and current assets.',
+    metrics: [
+      { label: 'net/mo', value: fin.hasAmounts ? String(fin.net) : '—', tone: fin.net > 0 ? 'ok' : fin.hasAmounts ? 'err' : 'neutral' },
+      { label: 'obligations', value: String(fin.obligations), tone: fin.obligations ? 'warn' : 'ok' },
+    ],
+  });
+
+  // 5 — Businesses / projects / ventures
+  const activeProjects = g.projects.filter((p) => p.status === 'active');
+  zones.push({
+    zoneId: 'ventures', title: 'Ventures & Projects', href: '/me/projects',
+    status: activeProjects.length ? 'live' : 'setup_needed',
+    headline: activeProjects.length ? `${activeProjects.length} active project(s); ${activeProjects.filter((p) => p.incomePotential === 'high').length} with high income potential.` : 'No ventures recorded yet.',
+    items: activeProjects.slice(0, 5).map((p) => ({ label: p.title.slice(0, 55), detail: `income: ${p.incomePotential} · ${p.linkedGoalIds.length} goal link(s)`, tone: p.incomePotential === 'high' ? 'ok' : 'neutral', href: '/me/projects' })),
+    setupHint: 'Ingest kind=project with incomePotential + linkedGoalIds. GitHub import: not_configured until token + consent.',
+    jarvisCommand: 'Review my current situation.',
+    metrics: [{ label: 'active', value: String(activeProjects.length), tone: activeProjects.length ? 'ok' : 'neutral' }, { label: 'high-income', value: String(activeProjects.filter((p) => p.incomePotential === 'high').length), tone: 'ok' }],
+  });
+
+  // 6 — Learning / growth / career
+  const activeTracks = input.learningTracks.filter((t) => t.status === 'active');
+  zones.push({
+    zoneId: 'growth', title: 'Learning & Growth', href: '/me/resume',
+    status: activeTracks.length || g.goals.length ? 'live' : 'setup_needed',
+    headline: activeTracks.length ? `${activeTracks.length} learning track(s) active.` : g.goals.length ? 'Goals exist but no learning tracks — what should you learn next?' : 'No growth direction recorded yet.',
+    items: activeTracks.slice(0, 4).map((t) => ({ label: t.title.slice(0, 55), detail: t.targetSkill ? `→ ${t.targetSkill}` : '', tone: 'ok' })),
+    setupHint: 'Ingest kind=learning_track (title, targetSkill, linkedGoalIds); ask Jarvis “analyze my resume” for gap-driven suggestions.',
+    jarvisCommand: 'Analyze my resume and tell me how to improve my position.',
+    metrics: [{ label: 'tracks', value: String(activeTracks.length), tone: activeTracks.length ? 'ok' : 'neutral' }, { label: 'goals', value: String(g.goals.length), tone: g.goals.length ? 'ok' : 'warn' }],
+  });
+
+  // 7 — Investments / opportunities / strategic upside
+  const rankedOpps = rankOpportunities(g.opportunities.filter((o) => ['proposed', 'accepted', 'in_progress'].includes(o.status)));
+  zones.push({
+    zoneId: 'opportunities', title: 'Opportunity Radar', href: '/me/opportunities',
+    status: rankedOpps.length ? 'live' : 'setup_needed',
+    headline: rankedOpps[0] ? `Top upside: “${rankedOpps[0].title}” (value ${rankedOpps[0].valueScore}).` : 'No upside recorded — research provider not_configured, nothing is invented.',
+    items: rankedOpps.slice(0, 4).map((o) => ({ label: o.title.slice(0, 55), detail: `${o.category} · value ${o.valueScore} · conf ${o.confidence}`, tone: 'ok', href: '/me/opportunities' })),
+    setupHint: 'Ingest opportunity candidates or accept AOS-proposed ones; real market research arrives with the research provider phase.',
+    jarvisCommand: 'Find the best opportunities for me based on my goals and current assets.',
+    metrics: [{ label: 'open', value: String(rankedOpps.length), tone: rankedOpps.length ? 'ok' : 'neutral' }, { label: 'top value', value: rankedOpps[0] ? String(rankedOpps[0].valueScore) : '—', tone: 'ok' }],
+  });
+
+  // 8 — Systems / infrastructure / AI kernel
+  const k = input.kernel;
+  zones.push({
+    zoneId: 'systems', title: 'AI Kernel & Systems', href: '/operations',
+    status: k.openIncidents > 0 ? 'attention' : 'live',
+    headline: `${k.services} service(s) registered · ${k.openIncidents} open incident(s) · safe mode ${k.safeMode ? 'ON' : 'off'}${k.activeRuntimeGoal ? ` · operator: “${k.activeRuntimeGoal.slice(0, 50)}”` : ''}.`,
+    items: [
+      ...(k.activeOperation ? [{ label: 'Active operation', detail: k.activeOperation.slice(0, 70), tone: 'warn' as const, href: '/operations' }] : []),
+      ...(k.pendingApprovals ? [{ label: `${k.pendingApprovals} approval(s) pending`, detail: 'kernel governance', tone: 'warn' as const, href: '/approvals' }] : []),
+      ...k.recentEvents.slice(0, 3).map((e) => ({ label: e.slice(0, 70), detail: 'recent event', tone: 'neutral' as const, href: '/events' })),
+    ],
+    setupHint: 'The self-developing kernel is always live. Deep dive: Operations.',
+    jarvisCommand: 'Check the whole system.',
+    metrics: [
+      { label: 'services', value: String(k.services), tone: 'ok' },
+      { label: 'incidents', value: String(k.openIncidents), tone: k.openIncidents ? 'err' : 'ok' },
+    ],
+  });
+
+  // 9 — Social / presence
+  const social = input.connectors.filter((c) => ['social', 'twitter', 'x', 'linkedin', 'youtube', 'instagram', 'github'].includes(c.connectorType));
+  zones.push({
+    zoneId: 'presence', title: 'Presence & Channels', href: '/settings/connectors',
+    status: social.length ? 'live' : 'not_configured',
+    headline: social.length ? `${social.length} channel account(s) registered.` : 'No channels connected — presence intelligence activates with consented, read-only connectors.',
+    items: social.slice(0, 4).map((c) => ({ label: c.connectorType, detail: c.status, tone: c.status === 'connected' ? 'ok' : 'neutral', href: '/settings/connectors' })),
+    setupHint: 'Grant a read-only consent (POST /v1/consents, e.g. connectorType “linkedin”), then register the connector account. No writes, ever, without approval phases.',
+    jarvisCommand: 'What should AOS build next to improve my life, income, and future position?',
+    metrics: [{ label: 'channels', value: String(social.length), tone: social.length ? 'ok' : 'neutral' }, { label: 'writes', value: 'off', tone: 'ok' }],
+  });
+
+  return zones;
 }
 
 /* ==================== personal command classification =================== */
