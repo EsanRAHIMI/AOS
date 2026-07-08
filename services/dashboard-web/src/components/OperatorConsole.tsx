@@ -33,6 +33,7 @@ export function OperatorConsole({ role }: { role: string }) {
   const [session, setSession] = useState<RuntimeSessionView | null>(null);
   const [scopeCtx, setScopeCtx] = useState<ScopeContextView | null>(null);
   const [capabilities, setCapabilities] = useState<OperatorCommandResult['groups']>([]);
+  const [followUps, setFollowUps] = useState<string[]>([]);
   const [speaker, setSpeaker] = useState(true);
   const [listening, setListening] = useState(false);
   const [interimText, setInterimText] = useState('');
@@ -181,6 +182,7 @@ export function OperatorConsole({ role }: { role: string }) {
     gate.markSubmitted(text);
     setInterimText('');
     setCapabilities([]);
+    setFollowUps([]);
     setLog((c) => [...c, { who: 'user', text: text.trim() }]);
     setState('thinking');
     try {
@@ -188,9 +190,13 @@ export function OperatorConsole({ role }: { role: string }) {
       if (r.kind === 'ignored') { setLog((c) => c.slice(0, -1)); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       if (r.kind === 'error') { say(r.reply); setState('error'); return; }
       if (r.kind === 'capabilities') { setCapabilities(r.groups); say(r.spoken); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
+      // Phase AD — grounded direct answer: no fake tool session, just a real,
+      // context-grounded reply (honest about what's not configured).
+      if (r.kind === 'answer') { setScopeCtx(r.scopeContext); setFollowUps(r.suggestedFollowUps); say(r.reply); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       if (r.kind === 'clarify') { say(r.reply); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       // Runtime session started.
       setScopeCtx(r.scopeContext);
+      setFollowUps(r.suggestedFollowUps);
       if (r.reply) say(r.reply);
       applySession(r.session, true);
     } catch {
@@ -352,6 +358,14 @@ export function OperatorConsole({ role }: { role: string }) {
             <div className={m.who === 'user' ? 'glass' : ''} style={{ padding: '8px 11px', borderRadius: 10, fontSize: 13, background: m.who === 'operator' ? 'var(--glass-2)' : undefined, border: m.who === 'operator' ? '1px solid var(--border)' : undefined }}>{m.text}</div>
           </div>
         ))}
+
+        {followUps.length > 0 && (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {followUps.map((f, i) => (
+              <button key={i} type="button" className="chip" style={{ cursor: 'pointer', fontSize: 11 }} onClick={() => { setFollowUps([]); void submitCommand(f, 'text'); }}>{f}</button>
+            ))}
+          </div>
+        )}
 
         {capabilities.length > 0 && (
           <div className="glass" style={{ padding: 10 }}>

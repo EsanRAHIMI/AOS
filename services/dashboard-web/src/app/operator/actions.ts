@@ -84,31 +84,50 @@ function toView(sessionRaw: Record<string, unknown> | null | undefined, permissi
 export interface ScopeContextView { actor: string; scope: string; mode: string; tenant: string | null; reason: string }
 
 export interface OperatorCommandResult {
-  kind: 'capabilities' | 'session' | 'clarify' | 'ignored' | 'error';
+  kind: 'capabilities' | 'session' | 'answer' | 'clarify' | 'ignored' | 'error';
   reply: string;
   spoken: string;
   groups: Array<{ label: string; tools: Array<{ name: string; riskLevel: string; requiresApproval: boolean; available: boolean; example: string }> }>;
   session: RuntimeSessionView | null;
   scopeContext: ScopeContextView | null;
+  /** Phase AD — Jarvis Intelligence Core: present on 'session' and 'answer'. */
+  language: string;
+  suggestedFollowUps: string[];
+  intentCategory: string;
 }
 
 export async function operatorCommandAction(text: string): Promise<OperatorCommandResult> {
+  const empty: Pick<OperatorCommandResult, 'session' | 'scopeContext' | 'language' | 'suggestedFollowUps' | 'intentCategory'> = { session: null, scopeContext: null, language: '', suggestedFollowUps: [], intentCategory: '' };
   const r = await gateway.operatorCommand(text);
-  if (!r) return { kind: 'error', reply: 'The kernel is unreachable.', spoken: '', groups: [], session: null, scopeContext: null };
+  if (!r) return { kind: 'error', reply: 'The kernel is unreachable.', spoken: '', groups: [], ...empty };
   const kind = String(r.kind ?? 'error');
   if (kind === 'capabilities') {
     const groups = (r.groups as OperatorCommandResult['groups'] | undefined) ?? [];
-    return { kind: 'capabilities', reply: String(r.spoken ?? ''), spoken: String(r.spoken ?? ''), groups, session: null, scopeContext: null };
+    return { kind: 'capabilities', reply: String(r.spoken ?? ''), spoken: String(r.spoken ?? ''), groups, ...empty };
+  }
+  if (kind === 'answer') {
+    return {
+      kind: 'answer', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [],
+      session: null, scopeContext: (r.scopeContext as ScopeContextView | undefined) ?? null,
+      language: String(r.language ?? ''), suggestedFollowUps: (r.suggestedFollowUps as string[] | undefined) ?? [], intentCategory: String(r.intentCategory ?? ''),
+    };
   }
   if (kind === 'session') {
     const view = toView(r.session as Record<string, unknown>);
     // Pull permissions + live workspace telemetry from the detail endpoint.
     const full = view ? await gateway.operatorSession(view.runtimeSessionId) : null;
     const withPerm = full ? toView(full.session, full.permissions, (full as Record<string, unknown>).workspace) : view;
-    return { kind: 'session', reply: String(r.narration ?? ''), spoken: String(r.narration ?? ''), groups: [], session: withPerm, scopeContext: (r.scopeContext as ScopeContextView | undefined) ?? null };
+    // Phase AD — prefer the grounded composed reply; fall back to the
+    // mechanical narration if composition somehow produced nothing.
+    const reply = String(r.reply ?? r.narration ?? '');
+    return {
+      kind: 'session', reply, spoken: reply, groups: [], session: withPerm,
+      scopeContext: (r.scopeContext as ScopeContextView | undefined) ?? null,
+      language: String(r.language ?? ''), suggestedFollowUps: (r.suggestedFollowUps as string[] | undefined) ?? [], intentCategory: '',
+    };
   }
-  if (kind === 'clarify') return { kind: 'clarify', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [], session: null, scopeContext: null };
-  return { kind: 'ignored', reply: '', spoken: '', groups: [], session: null, scopeContext: null };
+  if (kind === 'clarify') return { kind: 'clarify', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [], ...empty };
+  return { kind: 'ignored', reply: '', spoken: '', groups: [], ...empty };
 }
 
 export async function getRuntimeSessionAction(id: string): Promise<RuntimeSessionView | null> {

@@ -1,0 +1,309 @@
+/**
+ * Phase AD — Jarvis Intelligence Core.
+ *
+ * Turns the operator/home experience from a pure regex command router into a
+ * real (but still safety-bounded) reasoning layer:
+ *  - intent classification (LLM + bilingual EN/FA deterministic fallback)
+ *  - a compact, RANKED context packet built only from facts the caller supplies
+ *    (never fetched or invented here — this module stays pure and testable)
+ *  - a grounded response composer (LLM + deterministic fallback) that never
+ *    answers with anything outside the supplied context packet
+ *  - an honest, explicitly-maintained self-knowledge record for meta questions
+ *    ("why isn't this real Jarvis yet", "what's next for AOS")
+ *
+ * Hard rule, unchanged from Phase X: raw LLM output NEVER executes a tool or
+ * mutates state. This module only ever returns schema-validated structured
+ * data. The existing deterministic planner (`../operator`) + approval gate
+ * remain the only path from a decision to an actual action — Jarvis's LLM
+ * layer only decides HOW TO TALK about what already happened/will happen,
+ * and for read-only status questions, answers straight from real context.
+ */
+import { z } from 'zod';
+import { IsoDate } from '../schemas/common.js';
+import { nowIso } from '../utils/index.js';
+import type { LlmRouter } from '../llm/index.js';
+import { promptFor } from '../llm/prompts.js';
+
+/* ============================== intent ================================== */
+
+export const JarvisIntentCategory = z.enum([
+  'system_status',
+  'personal_life_planning',
+  'business_project',
+  'finance_ops',
+  'schedule_calendar',
+  'email_communication',
+  'research_opportunities',
+  'code_development',
+  'approvals_tasks',
+  'memory_profile_capture',
+  'meta_self_assessment',
+  'general_conversation',
+]);
+export type JarvisIntentCategory = z.infer<typeof JarvisIntentCategory>;
+
+export const JarvisLanguage = z.enum(['fa', 'en', 'other']);
+export type JarvisLanguage = z.infer<typeof JarvisLanguage>;
+
+export const JarvisIntentSchema = z.object({
+  category: JarvisIntentCategory,
+  language: JarvisLanguage,
+  confidence: z.number().min(0).max(1),
+  reasoning: z.string().default(''),
+});
+export type JarvisIntent = z.infer<typeof JarvisIntentSchema>;
+
+/** Very cheap language guess: presence of Arabic/Persian-range characters. */
+export function detectLanguage(text: string): JarvisLanguage {
+  if (/[؀-ۿ]/.test(text)) return 'fa';
+  if (/[A-Za-z]/.test(text)) return 'en';
+  return 'other';
+}
+
+interface CategoryPattern { category: JarvisIntentCategory; en: RegExp; fa: RegExp }
+
+/** Ordered — first match wins. Bilingual on purpose: the owner speaks Persian. */
+const CATEGORY_PATTERNS: CategoryPattern[] = [
+  { category: 'meta_self_assessment', en: /why (isn'?t|is not) this|like a real jarvis|what'?s next for aos|next step for aos|what should aos build/i, fa: /چرا.*(جارویس|jarvis)|چرا.*(هوشمند نیست|واقعی نیست)|(قدم بعدی|مرحله بعد).*aos|aos.*(قدم بعدی|مرحله بعد)/i },
+  { category: 'system_status', en: /system status|system health|whole system|is .*(up|down|reachable)|health check|check the system/i, fa: /وضعیت سیستم|سلامت سیستم|سیستم چطور|وضعیت الان|چک کن سیستم|سیستم رو چک/i },
+  { category: 'approvals_tasks', en: /\bapprov|\btask\b|pending (approval|task)/i, fa: /تایید|تأیید|تسک|وظیفه|در انتظار/i },
+  { category: 'code_development', en: /\bcode\b|\bbug\b|deploy|typecheck|\bbuild\b|repo|repository|create .*(service|agent)/i, fa: /کد نویسی|باگ|دیپلوی|ریپو|سرویس بساز/i },
+  { category: 'research_opportunities', en: /research|opportunit|best practice|market|investigate/i, fa: /تحقیق|فرصت|بازار|بررسی کن/i },
+  { category: 'finance_ops', en: /\bfinance|budget|income|expense|invoice|money\b/i, fa: /مالی|بودجه|درآمد|هزینه|قبض|پول/i },
+  { category: 'schedule_calendar', en: /calendar|appointment|\bmeeting\b|schedule (a|my)/i, fa: /تقویم|قرار ملاقات|جلسه/i },
+  { category: 'email_communication', en: /\bemail\b|inbox|send .*(message|email)/i, fa: /ایمیل|پیام بفرست|ارسال ایمیل/i },
+  { category: 'memory_profile_capture', en: /my goal is|remember that|my role is|my focus is|i want to|i need to/i, fa: /هدف من|یادت باشه|نقش من|تمرکز من|می‌خوام|میخوام/i },
+  { category: 'business_project', en: /\bproject\b|\bventure\b|\bbusiness\b/i, fa: /پروژه|کسب.?وکار|ونچر/i },
+  { category: 'personal_life_planning', en: /\b(my|me)\b.*(day|week|schedule|priorit|goals?)|what should i do|plan my (day|week)|most important (thing|task)/i, fa: /امروز چیکار|کار مهم امروز|برنامه امروز|اولویت|چیکار باید|مهم‌ترین کار/i },
+];
+
+/** Deterministic bilingual fallback — used when no LLM key is configured or
+ *  the model output fails schema validation. Never guesses wildly: anything
+ *  unmatched is honestly 'general_conversation'. */
+export function classifyIntentFallback(text: string): JarvisIntent {
+  const language = detectLanguage(text);
+  for (const p of CATEGORY_PATTERNS) {
+    if (p.en.test(text) || p.fa.test(text)) {
+      return { category: p.category, language, confidence: 0.6, reasoning: `deterministic keyword match (${p.category})` };
+    }
+  }
+  return { category: 'general_conversation', language, confidence: 0.4, reasoning: 'no pattern matched — treated as general conversation' };
+}
+
+/** LLM-assisted classification with the deterministic fallback always as the
+ *  safety net (generateStructured validates whichever path produced data). */
+export async function classifyIntent(router: LlmRouter, text: string, opts: { taskId?: string | null; forceFallback?: boolean } = {}): Promise<{ intent: JarvisIntent; trace: unknown }> {
+  const p = promptFor('jarvis:intent');
+  const { data, trace } = await router.generateStructured(JarvisIntentSchema, {
+    agentId: 'gateway-api',
+    taskType: 'jarvis_intent_classification',
+    system: p.system,
+    prompt: `Classify this user message into exactly one category and detect its language.\nCategories: ${JarvisIntentCategory.options.join(', ')}\nMessage: """${text}"""\nRespond as JSON: {"category":"...","language":"fa|en|other","confidence":0..1,"reasoning":"short"}`,
+    taskId: opts.taskId ?? null,
+    fallback: () => classifyIntentFallback(text),
+    fast: true,
+    promptVersion: p.version,
+    forceFallback: opts.forceFallback,
+  });
+  return { intent: data, trace };
+}
+
+/* ============================ mode routing =============================== */
+
+export type JarvisMode = 'direct_answer' | 'route_to_planner';
+
+/** Categories that are answered straight from the context packet — no tool
+ *  session, no fake execution, just an honest grounded read. Everything else
+ *  goes through the EXISTING deterministic planner/approval pipeline
+ *  unchanged; Jarvis only composes the final reply around its real result. */
+const DIRECT_ANSWER_CATEGORIES: ReadonlySet<JarvisIntentCategory> = new Set(['system_status', 'meta_self_assessment', 'general_conversation']);
+
+export function decideJarvisMode(intent: JarvisIntent): JarvisMode {
+  return DIRECT_ANSWER_CATEGORIES.has(intent.category) ? 'direct_answer' : 'route_to_planner';
+}
+
+/* ============================ self-knowledge ============================= */
+
+/** Honest, explicitly-maintained facts about AOS's own current limitations
+ *  and next step. Grounds meta questions ("why isn't this real Jarvis",
+ *  "what's next") in real, verifiable state instead of invented confidence.
+ *  Update this alongside phase-log/decision-log — it is documentation, not
+ *  a model guess. */
+export const AOS_SELF_KNOWLEDGE = {
+  updatedAt: '2026-07-09',
+  currentPhase: 'Phase AD — Jarvis Intelligence Core & Living Command Home',
+  recentlyFixed: [
+    'The operator/Jarvis command path was pure English regex matching with zero LLM usage and no composed natural-language reply — Phase AD added real intent classification, a ranked context packet and a grounded response composer (bilingual, EN/FA).',
+  ],
+  knownGaps: [
+    'internet-research-service has no real web-search/fetch provider — research answers are LLM knowledge plus a curated fallback, not live search results.',
+    'Personal connectors (calendar, email, finance, presence/social) are honestly not_configured — no external data is ingested yet, only what the user tells AOS directly.',
+    'No CI pipeline enforces typecheck/build/smoke on every change — verification is still manual scripts.',
+    'Rate limiting, the safe-mode flag and the event bus are in-memory — they will not survive a multi-instance production deploy.',
+    'Memory is compact structured records, not a full conversational transcript — Jarvis remembers facts and decisions, not verbatim chat history.',
+  ],
+  highestLeverageNextStep: 'Wire a real search/fetch provider into internet-research-service so research-backed answers (opportunities, best practices) stop being knowledge-only, then add CI so contract drift is caught automatically.',
+} as const;
+
+/* ============================= context packet ============================= */
+
+export const JarvisContextStatus = z.enum(['known', 'not_configured', 'stale', 'unknown']);
+export type JarvisContextStatus = z.infer<typeof JarvisContextStatus>;
+
+/** One fact the caller (gateway) has already fetched from real state. Nothing
+ *  in this module invents or fetches data — it only ranks/compacts what it is
+ *  given, so the packet can never contain fabricated information. */
+export interface JarvisContextFact {
+  label: string;
+  detail: string;
+  status: JarvisContextStatus;
+  /** Higher = more relevant right now (risk/urgency-weighted). */
+  weight: number;
+  href?: string;
+}
+
+export interface JarvisContextInput {
+  actorName: string;
+  isOwner: boolean;
+  scope: 'global' | 'user';
+  facts: JarvisContextFact[];
+}
+
+export interface JarvisContextPacket {
+  generatedAt: string;
+  actorName: string;
+  scope: 'global' | 'user';
+  /** Ranked, deduped, capped — never the full raw fact list. */
+  ranked: JarvisContextFact[];
+  /** Compact text block — what the LLM (or the fallback composer) actually reads. */
+  compactSummary: string;
+  knownCount: number;
+  notConfiguredCount: number;
+}
+
+const MAX_RANKED_FACTS = 14;
+
+/** Pure ranking/compaction — same input ⇒ same output. Caps to a compact,
+ *  ranked packet instead of dumping everything the gateway knows. */
+export function buildJarvisContextPacket(input: JarvisContextInput): JarvisContextPacket {
+  const ranked = [...input.facts]
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, MAX_RANKED_FACTS);
+  const knownCount = ranked.filter((f) => f.status === 'known').length;
+  const notConfiguredCount = ranked.filter((f) => f.status === 'not_configured').length;
+  const lines = ranked.map((f) => `- ${f.label}: ${f.detail}${f.status !== 'known' ? ` [${f.status}]` : ''}`);
+  const compactSummary = `Actor: ${input.actorName}${input.isOwner ? ' (owner)' : ''}. Scope: ${input.scope}.\n${lines.join('\n')}`;
+  return { generatedAt: nowIso(), actorName: input.actorName, scope: input.scope, ranked, compactSummary, knownCount, notConfiguredCount };
+}
+
+/* ============================ response composer ============================ */
+
+export const JarvisResponseSchema = z.object({
+  reply: z.string().min(1),
+  language: JarvisLanguage,
+  suggestedFollowUps: z.array(z.string()).max(4).default([]),
+  groundedIn: z.array(z.string()).default([]),
+});
+export type JarvisResponse = z.infer<typeof JarvisResponseSchema>;
+
+export interface ComposeJarvisOpts {
+  text: string;
+  intent: JarvisIntent;
+  packet: JarvisContextPacket;
+  /** For route_to_planner turns: what the real deterministic pipeline actually did/decided. */
+  planSummary?: string;
+  taskId?: string | null;
+  forceFallback?: boolean;
+}
+
+/** Deterministic bilingual fallback composer — assembles a real, specific
+ *  answer directly from the context packet. Used when no LLM key is
+ *  configured or the model output fails validation. Never generic: it always
+ *  quotes actual ranked facts, never invents them. */
+export function composeJarvisResponseFallback(opts: ComposeJarvisOpts): JarvisResponse {
+  const { intent, packet, planSummary } = opts;
+  const fa = intent.language === 'fa';
+  const top = packet.ranked.slice(0, 5);
+  const factLine = (f: JarvisContextFact): string => `${f.label}: ${f.detail}`;
+
+  if (intent.category === 'meta_self_assessment') {
+    const reply = fa
+      ? `صادقانه بگم: هسته‌ی AOS واقعی و پخته‌ست (۱۹ سرویس مستقل، حافظه و شواهد ساختاریافته)، اما تا همین اواخر لایه‌ی Jarvis صرفاً یک موتور قانون‌محورِ رجکس انگلیسی بود — بدون هیچ فراخوانی LLM، و برای فارسی عملاً کار نمی‌کرد. ${AOS_SELF_KNOWLEDGE.recentlyFixed[0]} شکاف‌های باقی‌مانده: ${AOS_SELF_KNOWLEDGE.knownGaps.slice(0, 3).join(' | ')}. قدم بعدیِ با بیشترین اثر: ${AOS_SELF_KNOWLEDGE.highestLeverageNextStep}`
+      : `Honest answer: the AOS kernel underneath is real and mature (19 independent services, structured memory and evidence), but until this phase the Jarvis layer was a pure English regex command router — zero LLM calls, and it effectively didn't work in Persian. ${AOS_SELF_KNOWLEDGE.recentlyFixed[0]} Remaining gaps: ${AOS_SELF_KNOWLEDGE.knownGaps.slice(0, 3).join(' | ')}. Highest-leverage next step: ${AOS_SELF_KNOWLEDGE.highestLeverageNextStep}`;
+    return JarvisResponseSchema.parse({ reply, language: intent.language, suggestedFollowUps: fa ? ['برای AOS قدم بعدی چیه؟', 'الان وضعیت سیستم من چیه؟'] : ['What is next for AOS?', "What's my system status now?"], groundedIn: ['AOS_SELF_KNOWLEDGE'] });
+  }
+
+  if (intent.category === 'system_status') {
+    const body = top.map(factLine).join(' | ') || (fa ? 'داده‌ی زنده‌ای در دسترس نیست.' : 'no live data available.');
+    const reply = fa ? `وضعیت الان: ${body}` : `Current status: ${body}`;
+    return JarvisResponseSchema.parse({ reply, language: intent.language, suggestedFollowUps: fa ? ['کدوم تاییدها در انتظارن؟'] : ['What approvals are pending?'], groundedIn: top.map((f) => f.label) });
+  }
+
+  if (planSummary) {
+    const reply = fa ? `${planSummary}` : planSummary;
+    return JarvisResponseSchema.parse({ reply, language: intent.language, suggestedFollowUps: [], groundedIn: top.map((f) => f.label) });
+  }
+
+  const notConfigured = packet.ranked.filter((f) => f.status === 'not_configured').slice(0, 2);
+  const reply = fa
+    ? `از اطلاعات واقعیِ موجود: ${top.map(factLine).join(' | ') || 'داده‌ای برای این موضوع ثبت نشده.'}${notConfigured.length ? ` هنوز متصل نیست: ${notConfigured.map((f) => f.label).join('، ')}.` : ''}`
+    : `From what's actually recorded: ${top.map(factLine).join(' | ') || 'no data recorded for this yet.'}${notConfigured.length ? ` Not yet connected: ${notConfigured.map((f) => f.label).join(', ')}.` : ''}`;
+  return JarvisResponseSchema.parse({ reply, language: intent.language, suggestedFollowUps: [], groundedIn: top.map((f) => f.label) });
+}
+
+/** LLM-assisted composition, strictly grounded in the supplied packet text.
+ *  The fallback (schema-validated) is the safety net — never raw text escapes. */
+export async function composeJarvisResponse(router: LlmRouter, opts: ComposeJarvisOpts): Promise<{ data: JarvisResponse; trace: unknown }> {
+  const p = promptFor('jarvis:response');
+  const langInstruction = opts.intent.language === 'fa' ? 'Reply in Persian (Farsi).' : opts.intent.language === 'en' ? 'Reply in English.' : 'Reply in the same language as the user message.';
+  const prompt = [
+    `User message: """${opts.text}"""`,
+    `Intent category: ${opts.intent.category}`,
+    `${langInstruction}`,
+    `Context (the ONLY facts you may use — never invent anything outside this list):`,
+    opts.packet.compactSummary,
+    opts.planSummary ? `What the system actually did for this request: ${opts.planSummary}` : '',
+    `Respond as JSON: {"reply":"...","language":"fa|en|other","suggestedFollowUps":["..."],"groundedIn":["label of each context fact you actually used"]}. Be concise, specific and actionable. Never claim access to data not listed above — say "not configured" instead.`,
+  ].filter(Boolean).join('\n\n');
+  const { data, trace } = await router.generateStructured(JarvisResponseSchema, {
+    agentId: 'gateway-api',
+    taskType: 'jarvis_response_composition',
+    system: p.system,
+    prompt,
+    taskId: opts.taskId ?? null,
+    fallback: () => composeJarvisResponseFallback(opts),
+    promptVersion: p.version,
+    forceFallback: opts.forceFallback,
+  });
+  return { data, trace };
+}
+
+/* ================================ turns ================================== */
+
+export interface JarvisTurn {
+  turnId: string;
+  actorId: string;
+  scope: 'global' | 'user';
+  text: string;
+  intent: JarvisIntent;
+  mode: JarvisMode;
+  reply: string;
+  usedFallback: boolean;
+  createdAt: string;
+}
+
+export function buildJarvisTurn(args: { turnId: string; actorId: string; scope: 'global' | 'user'; text: string; intent: JarvisIntent; mode: JarvisMode; reply: string; usedFallback: boolean }): JarvisTurn {
+  return { ...args, createdAt: nowIso() };
+}
+
+export const JarvisTurnSchema = z.object({
+  turnId: z.string(),
+  actorId: z.string(),
+  scope: z.enum(['global', 'user']),
+  text: z.string(),
+  intent: JarvisIntentSchema,
+  mode: z.enum(['direct_answer', 'route_to_planner']),
+  reply: z.string(),
+  usedFallback: z.boolean(),
+  createdAt: IsoDate,
+});

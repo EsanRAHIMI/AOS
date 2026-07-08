@@ -564,6 +564,18 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
     };
   }
 
+  // Phase AD — generic task creation: hand the goal straight to the
+  // orchestrator as a real kernel task. Bilingual (EN/FA): "create/make a
+  // task that ..." / "یک تسک بساز که ...". Checked last so more specific
+  // branches (service creation, personal goals, etc.) still win.
+  if (/\b(create|make|open)\b.*\btask\b|\btask\b.*\b(to|that|for)\b/.test(t) || /(تسک|وظیفه)[^.!؟]*(بساز|ایجاد کن|ایجاد)/.test(goal) || /(بساز|ایجاد کن)[^.!؟]*(تسک|وظیفه)/.test(goal)) {
+    return {
+      kind: 'runtime_goal',
+      narration: `Creating a kernel task and handing it to the orchestrator: “${goal.trim().slice(0, 120)}”.`,
+      steps: [step('create_task', 'Hand the goal to the orchestrator pipeline', { goal })],
+    };
+  }
+
   return { kind: 'clarify', steps: [], narration: `I heard: “${goal.trim().slice(0, 80)}”. Give me a goal I can plan — a system check, a service operation, a code improvement, research, a new service, or a personal goal like “plan my week”.` };
 }
 

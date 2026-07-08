@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { UniverseZone, type ZoneData } from '@/components/UniverseZone';
 import { BodyMap, type BodyMetric } from '@/components/BodyMap';
 import { LiveEvents } from '@/components/LiveEvents';
+import { JarvisSuggestions } from '@/components/JarvisSuggestions';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,6 +53,18 @@ export default async function CommandUniversePage() {
           {session?.role === 'owner' && <span className="badge ok" style={{ alignSelf: 'center' }}>owner</span>}
         </div>
       </div>
+
+      {/* Phase AD — Jarvis today summary + system health rollup + suggested prompts */}
+      {universe && (
+        <div className="card" style={{ marginBottom: 14, padding: '14px 18px' }}>
+          <div style={{ fontSize: 13, marginBottom: 8 }}>{universe.todaySummary}</div>
+          <div className="m" style={{ fontSize: 11, marginBottom: 10 }}>
+            {universe.systemHealthSummary.servicesRegistered} service(s) registered · {universe.systemHealthSummary.openIncidents} open incident(s) · {universe.systemHealthSummary.pendingApprovals} approval(s) pending · safe mode {universe.systemHealthSummary.safeMode ? 'ON' : 'off'}
+            {universe.systemHealthSummary.activeOperation ? ` · operation: ${universe.systemHealthSummary.activeOperation}` : ''}
+          </div>
+          <JarvisSuggestions prompts={universe.suggestedPrompts} />
+        </div>
+      )}
 
       {/* The universe grid */}
       <div className="uz-grid" style={{ marginBottom: 14 }}>

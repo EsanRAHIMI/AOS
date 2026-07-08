@@ -232,5 +232,14 @@ export const gateway = {
   realityReview: (type: 'daily' | 'weekly') => call<Record<string, unknown>>('/v1/me/reality/review', { method: 'POST', body: JSON.stringify({ type }) }),
   decideNextAction: (id: string, action: 'accept' | 'reject' | 'complete') => call<{ status: string }>(`/v1/me/reality/next-actions/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   // Phase AC+ — Command Universe
-  universe: () => call<{ zones: Array<{ zoneId: string; title: string; status: string; headline: string; items: Array<{ label: string; detail: string; tone: string; href?: string }>; setupHint: string; jarvisCommand: string; href: string; metrics: Array<{ label: string; value: string; tone: string }> }>; actor: { displayName: string }; generatedAt: string }>('/v1/me/universe'),
+  // Phase AD adds: suggestedPrompts, todaySummary, systemHealthSummary, memoryInsights.
+  universe: () => call<{
+    zones: Array<{ zoneId: string; title: string; status: string; headline: string; items: Array<{ label: string; detail: string; tone: string; href?: string }>; setupHint: string; jarvisCommand: string; href: string; metrics: Array<{ label: string; value: string; tone: string }> }>;
+    actor: { displayName: string };
+    generatedAt: string;
+    suggestedPrompts: string[];
+    todaySummary: string;
+    systemHealthSummary: { servicesRegistered: number; openIncidents: number; pendingApprovals: number; safeMode: boolean; activeOperation: string | null };
+    memoryInsights: string[];
+  }>('/v1/me/universe'),
 };

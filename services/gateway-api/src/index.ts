@@ -192,6 +192,18 @@ import {
   type ImprovementWorkflow,
   type ImpactAssessment,
   type MemoryMaintenanceRun,
+  // Phase AD — Jarvis Intelligence Core & Living Command Home
+  llmRouterFromEnv,
+  llmGovernanceFromEnv,
+  classifyIntent,
+  decideJarvisMode,
+  buildJarvisContextPacket,
+  composeJarvisResponse,
+  buildJarvisTurn,
+  AOS_SELF_KNOWLEDGE,
+  type JarvisContextFact,
+  type JarvisIntent,
+  type JarvisTurn,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -269,6 +281,10 @@ async function main(): Promise<void> {
   const voicePermissions = collection<VoicePermission>(COLLECTIONS.VOICE_PERMISSIONS);
   const voiceMemories = collection<VoiceMemory>(COLLECTIONS.VOICE_MEMORIES);
   const evidenceCol = collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS);
+  // Phase AD — Jarvis Intelligence Core
+  const jarvisTurns = collection<JarvisTurn>(COLLECTIONS.JARVIS_TURNS);
+  const jarvisRouter = llmRouterFromEnv();
+  const jarvisGov = llmGovernanceFromEnv();
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -2219,7 +2235,7 @@ async function main(): Promise<void> {
       realityGet('/v1/me/universe', async (actor) => {
         const uid = actor.primaryUserId ?? '';
         const uFilter = { scope: 'user' as const, userId: uid };
-        const [graph, health, life, finance, learning, nbas, briefing, connectors, svcCount, inc, op, activeSession, recentEvents, safe] = await Promise.all([
+        const [graph, health, life, finance, learning, nbas, briefing, connectors, svcCount, inc, op, activeSession, recentEvents, safe, memRecent] = await Promise.all([
           loadGraphInput(actor),
           personalHealthStates.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
           personalLifeItems.find(uFilter, { projection: { _id: 0 } }).limit(100).toArray(),
@@ -2234,15 +2250,17 @@ async function main(): Promise<void> {
           opSessions.find({ status: { $in: ['planning', 'running', 'waiting_approval', 'verifying'] } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(1).toArray(),
           events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(5).toArray(),
           isSafeMode(),
+          scopedMemories.find({ scope: 'user', userId: uid }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(3).toArray(),
         ]);
         const activeOp = op[0] && !['completed', 'failed', 'rolled_back', 'cancelled'].includes(op[0].status) ? op[0] : null;
+        const openIncidentsList = inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
         const zones = buildUniverseZones({
           graph, healthStates: health, lifeItems: life, financeItems: finance,
           learningTracks: learning.map((t) => ({ title: t.title, targetSkill: t.targetSkill, status: t.status })),
           nextActions: nbas, latestBriefing: briefing[0] ?? null,
           kernel: {
             services: svcCount,
-            openIncidents: inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed').length,
+            openIncidents: openIncidentsList.length,
             pendingApprovals: graph.pendingApprovals, safeMode: safe,
             activeOperation: activeOp ? `${activeOp.goal} (${activeOp.status})` : null,
             activeRuntimeGoal: activeSession[0]?.goal ?? null,
@@ -2250,7 +2268,30 @@ async function main(): Promise<void> {
           },
           connectors: connectors.map((c) => ({ connectorType: c.connectorType, status: c.status })),
         });
-        return { zones, actor: { displayName: graph.profile?.displayName || 'Esan' }, generatedAt: nowIso() };
+
+        // Phase AD — Jarvis-suggested prompts + a one-line honest summary,
+        // derived only from the real zones/facts above (attention first, then
+        // setup-ready, then live) — never decorative, never invented.
+        const priorityOrder: Record<string, number> = { attention: 0, setup_needed: 1, live: 2, not_configured: 3 };
+        const suggestedPrompts = [...zones]
+          .sort((a, b) => (priorityOrder[a.status] ?? 9) - (priorityOrder[b.status] ?? 9))
+          .map((z) => z.jarvisCommand)
+          .filter((c, i, arr) => c && arr.indexOf(c) === i)
+          .slice(0, 4);
+        const topAction = nbas[0];
+        const todaySummary = topAction
+          ? `Top priority: ${topAction.title}.${graph.pendingApprovals ? ` ${graph.pendingApprovals} approval(s) waiting.` : ''}${openIncidentsList.length ? ` ${openIncidentsList.length} open incident(s).` : ''}`
+          : `No ranked priorities yet — build your baseline or tell Jarvis a goal.${graph.pendingApprovals ? ` ${graph.pendingApprovals} approval(s) waiting.` : ''}`;
+        const systemHealthSummary = {
+          servicesRegistered: svcCount,
+          openIncidents: openIncidentsList.length,
+          pendingApprovals: graph.pendingApprovals,
+          safeMode: safe,
+          activeOperation: activeOp ? `${activeOp.goal} (${activeOp.status})` : null,
+        };
+        const memoryInsights = memRecent.map((m) => m.content);
+
+        return { zones, actor: { displayName: graph.profile?.displayName || 'Esan' }, generatedAt: nowIso(), suggestedPrompts, todaySummary, systemHealthSummary, memoryInsights };
       });
 
       realityGet('/v1/me/reality/briefings', async (actor) => personalBriefingRuns.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(14).toArray());
@@ -2387,6 +2428,74 @@ async function main(): Promise<void> {
         await evidenceCol.insertOne(ev);
         return { ok: true, summary: `System check: ${summary}`, data: { serviceCount, taskCount, runningTasks, pendingApprovals: apprCount, openIncidents: openInc, safeMode: safeNow }, evidenceIds: [ev.evidenceId] };
       };
+      // --- Phase AD — Jarvis context gathering -----------------------------
+      // Pure fact-fetching: every fact here comes from a REAL query (or the
+      // existing execSystemCheck for the system-status path, which already
+      // writes its own evidence record). Nothing is invented; missing sources
+      // are reported not_configured. shared/jarvis only ranks/compacts what
+      // it is given — it never fetches or guesses on its own.
+      const gatherJarvisFacts = async (authCtx: AuthContext, scopeClass: ReturnType<typeof classifyGoalScope>, intentCategory: string): Promise<JarvisContextFact[]> => {
+        const facts: JarvisContextFact[] = [];
+        const safeNow = await isSafeMode();
+        facts.push({ label: 'safe_mode', detail: safeNow ? 'ON — mutations are blocked' : 'off', status: 'known', weight: safeNow ? 9 : 2 });
+
+        if (intentCategory === 'system_status' || intentCategory === 'general_conversation') {
+          const sys = await execSystemCheck();
+          const d = sys.data as { pendingApprovals?: number; openIncidents?: number } | undefined;
+          facts.push({ label: 'system_check', detail: sys.summary, status: 'known', weight: 10, href: '/operations' });
+          if (d) {
+            facts.push({ label: 'pending_approvals', detail: String(d.pendingApprovals ?? 0), status: 'known', weight: (d.pendingApprovals ?? 0) > 0 ? 8 : 1, href: '/approvals' });
+            facts.push({ label: 'open_incidents', detail: String(d.openIncidents ?? 0), status: 'known', weight: (d.openIncidents ?? 0) > 0 ? 9 : 1, href: '/incidents' });
+          }
+        } else {
+          const [apprCount, incAll] = await Promise.all([
+            approvals.countDocuments({ status: 'pending' }),
+            incidents.find({}, { projection: { _id: 0 } }).limit(50).toArray(),
+          ]);
+          const incOpen = incAll.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
+          facts.push({ label: 'pending_approvals', detail: String(apprCount), status: 'known', weight: apprCount > 0 ? 6 : 1, href: '/approvals' });
+          facts.push({ label: 'open_incidents', detail: incOpen.length ? incOpen.slice(0, 2).map((i) => i.title).join('; ') : '0', status: 'known', weight: incOpen.length ? 7 : 1, href: '/incidents' });
+        }
+
+        if (scopeClass.scope === 'user') {
+          try {
+            const gi = await loadGraphInput(authCtx);
+            const graph = buildPersonalGraph(gi);
+            facts.push({ label: 'personal_missing_data', detail: graph.missingData.length ? graph.missingData.slice(0, 3).join('; ') : 'nothing critical', status: graph.missingData.length ? 'not_configured' : 'known', weight: graph.missingData.length ? 6 : 2, href: '/me' });
+            const ranked = scoreNextActions(gi, userStamp(authCtx));
+            const topAction = ranked[0];
+            if (topAction) facts.push({ label: 'top_next_action', detail: `${topAction.title} — ${topAction.reason}`, status: 'known', weight: 9, href: '/me' });
+            facts.push({ label: 'calendar_connector', detail: gi.activeConsents.includes('calendar') ? 'connected' : 'not_configured', status: gi.activeConsents.includes('calendar') ? 'known' : 'not_configured', weight: 3 });
+            facts.push({ label: 'email_connector', detail: gi.activeConsents.includes('email') ? 'connected' : 'not_configured', status: gi.activeConsents.includes('email') ? 'known' : 'not_configured', weight: 3 });
+          } catch { /* keep going with global facts only — a turn never hard-fails on this */ }
+        }
+
+        if (intentCategory === 'meta_self_assessment' || intentCategory === 'general_conversation') {
+          facts.push({ label: 'aos_current_phase', detail: AOS_SELF_KNOWLEDGE.currentPhase, status: 'known', weight: 5 });
+          for (const g of AOS_SELF_KNOWLEDGE.knownGaps.slice(0, 4)) facts.push({ label: 'known_gap', detail: g, status: 'known', weight: 5 });
+          facts.push({ label: 'highest_leverage_next_step', detail: AOS_SELF_KNOWLEDGE.highestLeverageNextStep, status: 'known', weight: 6 });
+        }
+        return facts;
+      };
+
+      /** Compose the grounded reply, persist the turn (Jarvis's own interaction
+       *  memory) and emit an event — shared by the direct-answer path, the
+       *  honest clarify-fallback, and the post-session reply for routed goals. */
+      const composeAndRecordJarvisTurn = async (args: { text: string; intent: JarvisIntent; authCtx: AuthContext; scopeClass: ReturnType<typeof classifyGoalScope>; mode: 'direct_answer' | 'route_to_planner'; planSummary?: string; forceFallback: boolean }): Promise<{ reply: string; language: string; suggestedFollowUps: string[] }> => {
+        const facts = await gatherJarvisFacts(args.authCtx, args.scopeClass, args.intent.category);
+        const packet = buildJarvisContextPacket({
+          actorName: args.authCtx.primaryUserId === ESAN_USER_ID ? 'Esan' : args.authCtx.actorId,
+          isOwner: args.authCtx.isOwner,
+          scope: args.scopeClass.scope === 'user' ? 'user' : 'global',
+          facts,
+        });
+        const { data: response } = await composeJarvisResponse(jarvisRouter, { text: args.text, intent: args.intent, packet, planSummary: args.planSummary, forceFallback: args.forceFallback });
+        const turn = buildJarvisTurn({ turnId: genId('jturn'), actorId: args.authCtx.actorId, scope: args.scopeClass.scope === 'user' ? 'user' : 'global', text: args.text, intent: args.intent, mode: args.mode, reply: response.reply, usedFallback: jarvisRouter.activeProvider === 'mock' || args.forceFallback });
+        await jarvisTurns.insertOne(turn);
+        await ctx.publisher.publish({ type: EVENT_TYPES.JARVIS_TURN_ANSWERED, taskId: null, payload: { turnId: turn.turnId, category: args.intent.category, language: args.intent.language, message: `Jarvis (${args.intent.category}): ${response.reply.slice(0, 140)}` } });
+        return { reply: response.reply, language: response.language, suggestedFollowUps: response.suggestedFollowUps };
+      };
+
       const writeOpMemory = async (userId: string, kind: OperatorRuntimeMemory['kind'], content: string, sessionId: string | null, toolId: string | null): Promise<string> => {
         const mem: OperatorRuntimeMemory = { memoryId: genId('omem'), userId, kind, content, sourceSessionId: sessionId, sourceToolId: toolId, createdAt: nowIso() };
         await opMemories.insertOne(mem);
@@ -2971,15 +3080,37 @@ async function main(): Promise<void> {
           const answer = buildCapabilityAnswer(tools);
           return success({ kind: 'capabilities', ...answer });
         }
+
+        // Phase AD — Jarvis Intelligence Core: classify intent + language
+        // BEFORE any tool routing. The deterministic planner below still owns
+        // every actual tool execution and approval gate — the LLM only ever
+        // decides how to talk about real state and results, never what to run.
         const safe = await isSafeMode();
-        const planned = planForGoal(text, { safeMode: safe, role });
-        if (planned.kind === 'clarify') return success({ kind: 'clarify', reply: planned.narration });
+        const forceFallback = safe && jarvisGov.safeModeFallback;
+        const { intent } = await classifyIntent(jarvisRouter, text, { forceFallback });
+        const mode = decideJarvisMode(intent);
 
         // Phase AA — the operator is scope-aware: it knows who is asking, the
         // active tenant, and whether this is global software evolution or a
         // scoped human operation. Scopes are never mixed.
         const authCtx = legacyRoleToAuthContext(role);
         const scopeClass = classifyGoalScope(text);
+        const scopeContext = { actor: authCtx.primaryUserId === ESAN_USER_ID ? 'Esan' : authCtx.actorId, scope: scopeClass.scope, mode: scopeClass.mode, tenant: authCtx.activeTenantId ?? null, reason: scopeClass.reason };
+
+        if (mode === 'direct_answer') {
+          const answer = await composeAndRecordJarvisTurn({ text, intent, authCtx, scopeClass, mode, forceFallback });
+          return success({ kind: 'answer', reply: answer.reply, language: answer.language, suggestedFollowUps: answer.suggestedFollowUps, intentCategory: intent.category, scopeContext });
+        }
+
+        const planned = planForGoal(text, { safeMode: safe, role });
+        if (planned.kind === 'clarify') {
+          // Even when the deterministic planner has no matching tool sequence
+          // (e.g. finance/calendar/email — no connector exists yet), Jarvis
+          // still answers honestly from real context instead of a dead end.
+          const answer = await composeAndRecordJarvisTurn({ text, intent, authCtx, scopeClass, mode: 'direct_answer', forceFallback });
+          return success({ kind: 'answer', reply: answer.reply, language: answer.language, suggestedFollowUps: answer.suggestedFollowUps, intentCategory: intent.category, scopeContext });
+        }
+
         const session: OperatorRuntimeSession = {
           runtimeSessionId: genId('osess'), userId: role, goal: text, status: 'planning', currentStep: 0,
           plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], context: { scopeMode: scopeClass.mode }, evidenceIds: [],
@@ -2993,10 +3124,12 @@ async function main(): Promise<void> {
         await opSessions.insertOne(session);
         await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_STARTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, goal: text.slice(0, 120), scope: scopeClass.scope, message: `Operator session started (${scopeClass.mode}): ${planned.narration}` } });
         const done = await runLoop(session, role, tools);
-        return success({
-          kind: 'session', narration: planned.narration, session: done,
-          scopeContext: { actor: authCtx.primaryUserId === ESAN_USER_ID ? 'Esan' : authCtx.actorId, scope: scopeClass.scope, mode: scopeClass.mode, tenant: authCtx.activeTenantId ?? null, reason: scopeClass.reason },
-        });
+
+        // Compose a grounded natural-language reply around the REAL pipeline
+        // result instead of returning only the mechanical narration string.
+        const planSummary = done.reportSummary || done.observations[done.observations.length - 1] || planned.narration;
+        const answer = await composeAndRecordJarvisTurn({ text, intent, authCtx, scopeClass, mode, planSummary, forceFallback });
+        return success({ kind: 'session', narration: planned.narration, reply: answer.reply, language: answer.language, suggestedFollowUps: answer.suggestedFollowUps, session: done, scopeContext });
       });
 
       app.post<{ Params: { id: string }; Body: { action?: string } }>('/v1/operator/permissions/:id/decision', async (req, reply) => {

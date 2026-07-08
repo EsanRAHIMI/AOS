@@ -1239,3 +1239,94 @@ Verification:
   data; no connector writes; no Docker; Dokploy independence intact.
   Scope: `shared/src/{personal,constants}/`, `services/gateway-api/`, `services/dashboard-web/`,
   `scripts/`, `docs/`.
+
+### Undocumented commit (backfilled)
+`abf2c3d` "Update jarvis answer" (2026-07-06) shipped between Phase AC+ and Phase AD without a phase-log
+or decision-log entry — it refined the `/me` intake summary text, added `capture_personal_goal` /
+`capture_reality_profile` operator wiring, and console updates. No schema or contract break. Recorded here
+so the phase-log invariant ("every completed phase must be documented") holds before Phase AD begins. See
+decision-log D-093.
+
+## Phase AD — Jarvis Intelligence Core & Living Command Home — COMPLETE (2026-07-09)
+The central problem this phase targets: AOS had a mature, real kernel underneath, but the operator/Jarvis
+conversational layer was a pure English regex command router with **zero LLM usage** and **no composed
+natural-language reply** — verified by reading `services/gateway-api/src/index.ts` `/v1/operator/command`
+and `shared/src/operator/index.ts` `planForGoal` / `shared/src/scope/index.ts` `classifyGoalScope` directly.
+Persian input (the owner's primary language) almost never matched the English-only regexes and fell
+straight to a generic `"I heard: ..."` dead end. The home page (`/v1/me/universe`, Phase AC+) was already a
+real, honest 9-zone contract and did **not** need to be rebuilt — only extended.
+
+Delivered (shared — new `shared/src/jarvis/` module, pure + testable):
+- **Bilingual (EN/FA) intent classifier** — `classifyIntent()` via the existing LLM router
+  (`generateStructured`, schema-validated) with `classifyIntentFallback()` as the deterministic safety net
+  (ordered keyword patterns, both English and Persian, used when no LLM key is configured or output fails
+  validation). 12 fixed categories (`system_status`, `personal_life_planning`, `business_project`,
+  `finance_ops`, `schedule_calendar`, `email_communication`, `research_opportunities`, `code_development`,
+  `approvals_tasks`, `memory_profile_capture`, `meta_self_assessment`, `general_conversation`) +
+  `detectLanguage()`.
+- **Context packet builder** — `buildJarvisContextPacket()` is a PURE ranking/compaction function: the
+  gateway fetches real facts (nothing is invented or fetched inside `shared/jarvis`), tags each with a
+  `known | not_configured | stale | unknown` status and a relevance weight; the packet caps to the top 14 —
+  compact and ranked, never a full dump.
+- **Response composer** — `composeJarvisResponse()` answers strictly from the packet's compact summary and
+  never invents anything outside it; `composeJarvisResponseFallback()` is the deterministic bilingual
+  fallback, quoting the packet directly instead of a generic reply.
+- **Mode router** — `decideJarvisMode()`: `system_status` / `meta_self_assessment` / `general_conversation`
+  answer directly from the context packet (no fake tool session); everything else still goes through the
+  **existing, unchanged** deterministic `planForGoal`/approval pipeline — Jarvis's LLM layer only ever
+  decides how to talk about real state/results, never what tool executes. Raw LLM output still never
+  executes a tool (Phase X invariant preserved).
+- **Honest self-knowledge** — `AOS_SELF_KNOWLEDGE`, an explicitly-maintained (not model-guessed) record of
+  current gaps and the highest-leverage next step, grounding meta questions like "why isn't this real
+  Jarvis" / "what's next for AOS" in verifiable fact instead of invented confidence.
+- **2 new versioned prompt contracts** (`gateway-api:jarvis_intent`, `gateway-api:jarvis_response`) in the
+  Phase 13 prompt registry, visible at `/v1/llm/prompts`.
+- **`jarvis_turns` collection** — every Jarvis exchange (intent, mode, reply, fallback flag) is persisted as
+  interaction memory and emits `jarvis.turn.answered`.
+
+Delivered (gateway-api):
+- `/v1/operator/command` rewritten: classify intent → `direct_answer` (compose from a freshly gathered,
+  real context packet — reuses the existing `execSystemCheck()` for system-status facts, so evidence
+  writing is unchanged) or `route_to_planner` (existing session/approval pipeline unchanged, now with a
+  **composed grounded reply** wrapped around the real result instead of the mechanical narration string).
+  The old dead-end `clarify` response is replaced with an honest composed answer grounded in real context
+  (e.g. finance/calendar/email categories with no connector yet now say so specifically, instead of "I
+  heard: ...").
+- `shared/src/operator/index.ts` `planForGoal` gained one new bilingual branch: generic "create/make a
+  task that ..." / "یک تسک بساز که ..." now routes to the already-registered (but previously unreachable)
+  `create_task` tool — a real, approval-gated hand-off to the orchestrator.
+- `GET /v1/me/universe` extended (additive, zone contract unchanged) with `suggestedPrompts` (derived from
+  real zone status, attention-first), `todaySummary`, `systemHealthSummary`, `memoryInsights` (from
+  `scoped_memories`).
+
+Delivered (dashboard-web):
+- `OperatorConsole` handles a new `answer` response kind (grounded direct reply, no fake session) and
+  renders `suggestedFollowUps` as clickable chips.
+- Home page (`/`) hero gains a one-line honest today/system-health summary and Jarvis-suggested-prompt
+  chips (`JarvisSuggestions.tsx`, reuses the existing `aos:jarvis` event bridge — no new plumbing).
+
+Verification:
+- **Phase AD smoke PASS (28/28)** (`scripts/phasead-jarvis-smoke.mjs`, deterministic-fallback path, no LLM
+  key required): bilingual language detection; all 5 quality-bar prompts (system status, personal
+  planning, "why isn't this real Jarvis", "what's next for AOS", task creation) classified and routed
+  correctly; context-packet honesty (`not_configured` never hidden, never silently dropped); response
+  capping (30 facts → ≤14 ranked); general chit-chat no longer hits the old dead-end message.
+- Regression: Phase X operator-runtime 28/28, Phase AA scope 39/39, Phase AC+ universe 18/18 all still
+  green. (Phase AB personal-smoke has one pre-existing, unrelated failure — a smoke-assertion/code text
+  mismatch in `buildPersonalGraph` missingData wording that predates this phase and touches no file this
+  phase changed; left as a known issue, not fixed here to keep scope honest.)
+- `pnpm run build:shared` clean; `shared` and `gateway-api` `tsc --noEmit` clean; `dashboard-web`
+  `tsc --noEmit` clean and `next build` ✓ Compiled successfully. Verified in an isolated sandbox copy (the
+  mounted dev folder blocks the pnpm store).
+- No Docker; Dokploy independence intact; no new required env vars; safe mode still forces deterministic
+  fallback (`LLM_SAFE_MODE_FALLBACK`); no sensitive action bypasses approval.
+
+Honest remaining gaps (kept accurate in `AOS_SELF_KNOWLEDGE` going forward): internet-research-service
+still has no real web-search/fetch provider; personal connectors (calendar, email, finance, presence)
+remain honestly not_configured; no CI pipeline; rate limiting/safe-mode/event-bus are still in-memory; the
+*post-completion* session announcement in `OperatorConsole` (when a routed session finishes and the
+dashboard polls it) still uses `reportSummary` directly rather than a second Jarvis composition pass —
+acceptable (not fake) but less fluent than the initial reply; a future phase could route that through
+`composeJarvisResponse` too.
+Scope: `shared/src/{jarvis,operator,llm,constants,index}` (new module + minimal edits),
+`services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.

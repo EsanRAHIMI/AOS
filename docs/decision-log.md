@@ -2,6 +2,46 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-09 — Phase AD Jarvis Intelligence Core
+
+### D-095 Backfill: the Jul 6 "Update jarvis answer" commit
+`abf2c3d` shipped between Phase AC+ and Phase AD without a phase-log/decision-log entry, breaking the
+project's own documentation invariant for the first time. Backfilled in phase-log.md rather than silently
+skipped, and treated as a reminder: every commit that touches `shared/` or a service's routes gets a log
+entry BEFORE the next phase starts, not after.
+
+### D-094 LLM decides HOW to talk, never WHAT to execute
+Phase AD adds real LLM usage (intent classification + response composition) to the operator/Jarvis path for
+the first time, but the existing Phase X invariant — raw model output never executes a tool — is
+unconditionally preserved. `classifyIntent`/`composeJarvisResponse` only ever produce schema-validated
+structured data (same `generateStructured` pattern as capability-gap analysis and strategic planning); the
+deterministic `planForGoal`/`classifyGoalScope`/approval pipeline is untouched and remains the only path
+from a decision to an actual mutating action. The fix for "Jarvis feels like a weak chatbot" did not
+require weakening any existing safety boundary.
+
+### D-093 Direct-answer mode for read-only/meta intents, route-to-planner for everything else
+Rather than replacing the deterministic planner with an LLM agent loop (higher risk, harder to audit),
+Phase AD classifies intent first and only bypasses the planner for `system_status`, `meta_self_assessment`
+and `general_conversation` — categories that are pure reads or self-knowledge, answered directly from a
+freshly gathered context packet with no session/approval machinery needed. Every other category still goes
+through the exact same tool pipeline as before; Jarvis only wraps a grounded natural-language reply around
+the real result instead of the previous mechanical narration string. This kept the change additive instead
+of a rewrite: zero existing tool-execution code paths were removed.
+
+### D-093a Context packets are built from facts the caller supplies, not fetched internally
+`shared/src/jarvis` stays pure and testable: `buildJarvisContextPacket()` only ranks/compacts a
+`JarvisContextFact[]` array the gateway already fetched (reusing `execSystemCheck()` for system-status facts
+so the existing evidence-writing behavior is unchanged). This mirrors the existing pattern in
+`shared/src/personal` (`buildUniverseZones` is pure; the gateway feeds it real data) and keeps the smoke
+suite able to test intelligence logic without a database.
+
+### D-093b The regex planner gets one new branch, not a rewrite
+Quality-bar prompt E ("create a task that solves the Jarvis brain problem") exposed that the `create_task`
+tool was registered in the operator tool registry but `planForGoal` never actually routed to it — no
+regex branch existed for generic task creation. Added one bilingual (EN/FA) branch, checked last (after
+every more specific branch) so it only catches leftover "create/make a task ..." phrasing. Minimal,
+additive, and the existing `create_task` executor (already present) required no changes.
+
 ## 2026-07-05 — Phase AC+ command universe
 
 ### D-092 One aggregation contract for the whole world view

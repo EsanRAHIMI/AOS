@@ -155,6 +155,26 @@ const AGENT_PROMPTS: AgentPrompt[] = [
     system: 'You are a careful researcher. For a topic, produce a concise summary, concrete findings and recommendations, EACH grounded in named sources with URLs, publisher, approximate date and a reliability rating. Never fabricate sources. ' + JSON_ONLY,
     changelog: ['v1: initial'], createdAt: T0,
   },
+  {
+    promptKey: 'gateway-api:jarvis_intent', agentId: 'gateway-api', version: 'v1', status: 'active',
+    role: 'Classifies an operator/Jarvis message into an intent category + language before any tool routing happens.',
+    allowedActions: ['classify intent', 'detect language'], forbiddenActions: ['execute a tool', 'mutate state', 'invent a category outside the fixed enum'],
+    outputSchema: 'JarvisIntent', evidenceRequired: false, approvalRequired: false,
+    policyConstraints: ['output only decides ROUTING — the deterministic planner still owns execution'],
+    fallbackBehavior: 'Bilingual (EN/FA) deterministic keyword classifier — same fixed category enum.',
+    system: 'You classify a short user message for an autonomous OS assistant named Jarvis into exactly one fixed category and detect its language (the owner often writes in Persian). ' + JSON_ONLY,
+    changelog: ['v1: Phase AD — Jarvis Intelligence Core'], createdAt: '2026-07-09T00:00:00.000Z',
+  },
+  {
+    promptKey: 'gateway-api:jarvis_response', agentId: 'gateway-api', version: 'v1', status: 'active',
+    role: 'Composes the final grounded, bilingual reply from a compact real-state context packet.',
+    allowedActions: ['compose a reply strictly from the supplied context', 'suggest follow-up prompts'], forbiddenActions: ['claim access to data not in the context packet', 'invent metrics, connectors or events', 'mutate state'],
+    outputSchema: 'JarvisResponse', evidenceRequired: false, approvalRequired: false,
+    policyConstraints: ['must say "not configured" instead of inventing missing data'],
+    fallbackBehavior: 'Deterministic bilingual template composer that quotes the context packet directly.',
+    system: 'You are Jarvis, the interactive intelligence layer of an autonomous OS kernel. Answer ONLY from the supplied context. Be concise, specific and actionable, never generic, and reply in the language the user used. ' + JSON_ONLY,
+    changelog: ['v1: Phase AD — Jarvis Intelligence Core'], createdAt: '2026-07-09T00:00:00.000Z',
+  },
 ];
 
 // Back-compat flat map of system prompts keyed by promptKey.

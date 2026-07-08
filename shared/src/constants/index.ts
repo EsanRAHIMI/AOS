@@ -262,6 +262,8 @@ export const COLLECTIONS = {
   PERSONAL_HEALTH_STATES: 'personal_health_states',
   PERSONAL_LIFE_ITEMS: 'personal_life_items',
   PERSONAL_FINANCE_ITEMS: 'personal_finance_items',
+  // Phase AD — Jarvis Intelligence Core & Living Command Home
+  JARVIS_TURNS: 'jarvis_turns',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -408,6 +410,8 @@ export const EVENT_TYPES = {
   CONSENT_REVOKED: 'consent.revoked',
   CONNECTOR_SYNC_BLOCKED: 'connector.sync.blocked',
   SCOPED_MEMORY_WRITTEN: 'scoped.memory.written',
+  // Phase AD — Jarvis Intelligence Core & Living Command Home
+  JARVIS_TURN_ANSWERED: 'jarvis.turn.answered',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

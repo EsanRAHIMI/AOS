@@ -59,3 +59,5 @@ export * from './operator/index.js';
 export * from './workspace/index.js';
 export * from './scope/index.js';
 export * from './personal/index.js';
+// Phase AD — Jarvis Intelligence Core & Living Command Home
+export * from './jarvis/index.js';
