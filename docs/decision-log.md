@@ -2,6 +2,79 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-09 — Phase AE.1 Jarvis Priority & Memory Correction
+
+### D-103 Recency is the supersession mechanism — no deactivation write needed
+`pickActivePriorityFact()` always picks the most recent `priority`/`decision` fact from a
+newest-first-sorted list. When the owner restates a priority, the OLD fact is never mutated or marked
+inactive — it simply stops being picked once a newer one exists. This was chosen over an explicit
+deactivation write (which would require the extraction step to know about and update prior records) because
+it's simpler, cannot drift out of sync, and is trivially testable (confirmed in
+`scripts/phaseae1-jarvis-priority-memory-smoke.mjs`: a restated priority supersedes the old one with zero
+extra writes). The `active` field still exists on `JarvisMemoryFact` for a future explicit "forget X" command,
+but nothing sets it to `false` yet — documented honestly as a known gap, not implemented speculatively.
+
+### D-102 A correction gate, not a second LLM call
+Phase AE's `composeJarvisResponse()` is grounded by PROMPT INSTRUCTION, not by construction — a real
+conversation proved a model can still ignore a present, high-weight `user_priority` fact and lean on louder
+system-health text instead. Rather than adding a retry-with-different-prompt loop (non-deterministic, harder
+to test, another LLM call in the hot path), `answerIgnoresStatedPriority()` is a pure, cheap check, and the
+correction is the EXISTING deterministic fallback (`composeJarvisResponseFallback`), which structurally
+cannot skip a present `user_priority` fact. Same philosophy as the rest of Jarvis: prefer a deterministic,
+testable safety net over a smarter-but-unpredictable second model call.
+
+### D-101 An explicit stated priority is injected as its own weight class, above system health
+`gatherJarvisFacts()` now unconditionally queries `jarvis_memory_facts` and injects `user_priority` (weight
+20), `user_blocker` (weight 12), `user_decision` (weight 11) — all deliberately above the system-health
+ceiling (~10). This was the actual root cause of the failing conversation: extraction and persistence
+already worked (Phase AE), but nothing ever read the collection back into context, so an explicitly-stated
+priority was structurally invisible to every future answer regardless of how it ranked. Unconditional
+retrieval (not gated by intent category) was chosen over per-category logic because the failing conversation
+showed intent classification itself is an unreliable gate for this — Persian phrasing regularly falls
+through to `general_conversation` or `clarify`, and the fix must not depend on getting classification right.
+
+### D-100 Priority/blocker/next-action are structurally separated in the response, not just prose-ordered
+`JarvisResponseSchema` gained `primaryPriority` / `activeBlockers` / `nextAction` fields alongside the
+existing `reply` string. `composeJarvisResponseFallback` populates all four consistently from the same
+underlying facts, so a caller (briefing endpoint, quality scoring, a future dashboard) can programmatically
+tell "what the owner said matters" from "what's technically broken" instead of re-parsing prose. Additive
+only — `reply`/`language`/`suggestedFollowUps`/`groundedIn` are unchanged, so nothing that already consumed
+`JarvisResponse` needed to change.
+
+## 2026-07-09 — Phase AE Jarvis Memory, Daily Brain & Real Context Upgrade
+
+### D-099 Quality scoring is pure and never LLM-graded
+`scoreJarvisAnswer()` is a deterministic function with zero LLM calls — it grades the ALREADY-COMPOSED
+reply against the context packet it claims to be grounded in, using structural checks (do the claimed
+`groundedIn` labels exist, does the reply contain generic dead-end phrasing, does the declared language
+match the detected input language). This means LLM-composed and fallback-composed answers are graded by
+the exact same bar, the score is reproducible for the same inputs, and scoring itself can never become
+another thing that "sounds right but might be lying" — the failure mode this whole project exists to avoid.
+
+### D-098 Completion status is passed through verbatim, never summarized by the LLM
+`composeTaskCompletionSummary()` gives the LLM the session's real `status` (`completed`/`failed`/
+`cancelled`) as an explicit instruction ("report this status honestly, never as a success if it is not"),
+and the deterministic fallback template branches on the literal status field, not on sentiment inferred
+from the observations. A failed session cannot become "mostly done" or "completed with minor issues" —
+either wording would be a fabricated success and this project's core discipline forbids that class of bug
+structurally, not just by prompt instruction.
+
+### D-097 Memory extraction is conservative by design — empty is an honest answer
+`extractMemoryFacts()`/`extractMemoryFactsFallback()` only fire on clearly declarative phrasing ("I've
+decided…", "blocked by…", "تصمیم گرفتم…") and cap at 6 facts per message. Most turns legitimately produce
+zero extracted facts, and that's treated as correct behavior, not a bug to work around — the alternative
+(aggressively inferring facts from ambiguous phrasing) would silently pollute the daily brain with
+low-confidence "memories" the owner never actually stated, undermining every downstream consumer
+(prioritization, decisions/blockers summary, briefings) that trusts this collection is fact, not guesswork.
+
+### D-096 The daily brain packet composes from real records only, gateway-fetched
+Same pattern as Phase AD's context packet (D-093a) and Phase AB's personal engines (D-090): `daily-brain.ts`
+never fetches anything itself. The gateway assembles a `DailyBrainInput` from real collections (kernel
+`tasks`, `personalProjects`, `decisionMemories`, `incidents`, `personalRisks`, `jarvis_memory_facts`,
+`nextBestActions`, safe-mode state) and `buildDailyBrainPacket()` only ranks/summarizes what it's given.
+This keeps the module pure and unit-testable without a database (30/30 smoke checks run with zero DB
+dependency) and keeps the "no fake success" discipline enforced structurally rather than by convention.
+
 ## 2026-07-09 — Phase AD Jarvis Intelligence Core
 
 ### D-095 Backfill: the Jul 6 "Update jarvis answer" commit

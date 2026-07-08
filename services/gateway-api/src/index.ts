@@ -201,9 +201,24 @@ import {
   composeJarvisResponse,
   buildJarvisTurn,
   AOS_SELF_KNOWLEDGE,
+  detectLanguage,
   type JarvisContextFact,
   type JarvisIntent,
   type JarvisTurn,
+  // Phase AE — Jarvis Memory, Daily Brain & Real Context Upgrade
+  extractMemoryFacts,
+  buildMemoryFacts,
+  type JarvisMemoryFact,
+  buildDailyBrainPacket,
+  composeDailyBriefing,
+  type DailyBrainInput,
+  scoreJarvisAnswer,
+  type JarvisAnswerScore,
+  composeTaskCompletionSummary,
+  // Phase AE.1 — Jarvis Priority & Memory Correction
+  pickActivePriorityFact,
+  composeJarvisResponseFallback,
+  answerIgnoresStatedPriority,
 } from '@factory/shared';
 import { createFactoryService } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -285,6 +300,10 @@ async function main(): Promise<void> {
   const jarvisTurns = collection<JarvisTurn>(COLLECTIONS.JARVIS_TURNS);
   const jarvisRouter = llmRouterFromEnv();
   const jarvisGov = llmGovernanceFromEnv();
+  // Phase AE — Jarvis Memory, Daily Brain & Real Context Upgrade
+  const jarvisMemoryFacts = collection<JarvisMemoryFact>(COLLECTIONS.JARVIS_MEMORY_FACTS);
+  const jarvisAnswerScores = collection<JarvisAnswerScore>(COLLECTIONS.JARVIS_ANSWER_SCORES);
+  const jarvisBriefings = collection<{ briefingId: string; actorId: string; scope: 'global' | 'user'; headline: string; narrative: string; topPriorities: string[]; decisions: string[]; blockers: string[]; suggestedFollowUps: string[]; language: string; createdAt: string }>(COLLECTIONS.JARVIS_BRIEFINGS);
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
@@ -2294,6 +2313,75 @@ async function main(): Promise<void> {
         return { zones, actor: { displayName: graph.profile?.displayName || 'Esan' }, generatedAt: nowIso(), suggestedPrompts, todaySummary, systemHealthSummary, memoryInsights };
       });
 
+      // Phase AE item 7 — the daily command briefing: ranked priorities across
+      // kernel tasks + personal projects + next-best-actions, recent decisions,
+      // active blockers, composed into one grounded narrative. Real records
+      // only (same discipline as /v1/me/universe) — nothing here is invented.
+      realityGet('/v1/jarvis/briefing', async (actor) => {
+        const uid = actor.primaryUserId ?? '';
+        const uFilter = { scope: 'user' as const, userId: uid };
+        const [graph, activeTasks, activeProjects, recentDecisions, recentMemoryFacts, nbas, openIncidentsRaw, safe] = await Promise.all([
+          loadGraphInput(actor),
+          tasks.find({ status: { $in: ['queued', 'planning', 'awaiting_approval', 'in_progress', 'blocked'] } }, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(20).toArray(),
+          personalProjects.find({ ...uFilter, status: 'active' }, { projection: { _id: 0 } }).limit(20).toArray(),
+          decisionMemories.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray(),
+          jarvisMemoryFacts.find({ actorId: actor.actorId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray(),
+          nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
+          incidents.find({}, { projection: { _id: 0 } }).limit(100).toArray(),
+          isSafeMode(),
+        ]);
+        const openIncidentsList = openIncidentsRaw.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
+        const brainInput: DailyBrainInput = {
+          actorName: graph.profile?.displayName || 'Esan',
+          scope: 'user',
+          activeTasks: activeTasks.map((t) => ({ taskId: t.taskId, goal: t.goal, status: t.status, priority: t.priority, createdAt: t.createdAt })),
+          activeProjects: activeProjects.map((p) => ({ projectId: p.projectId, title: p.title, incomePotential: p.incomePotential, status: p.status })),
+          pendingApprovals: graph.pendingApprovals,
+          openIncidents: openIncidentsList.map((i) => ({ incidentId: i.incidentId, title: i.title, severity: i.severity })),
+          personalRisks: (await personalRisks.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray()).map((r) => ({ riskId: r.riskId, title: r.title, severity: r.severity, mitigation: r.mitigation })),
+          recentDecisions: recentDecisions.map((d) => ({ decisionId: d.decisionId, goal: d.goal, selectedReason: d.selectedReason, createdAt: d.createdAt })),
+          recentMemoryFacts: recentMemoryFacts.map((f) => ({ kind: f.kind, content: f.content, createdAt: f.createdAt })),
+          nextBestActions: nbas.map((a) => ({ title: a.title, reason: a.reason, priorityScore: a.priorityScore })),
+          safeMode: safe,
+        };
+        const packet = buildDailyBrainPacket(brainInput);
+        const lang = detectLanguage(`${brainInput.activeTasks.map((t) => t.goal).join(' ')} ${recentMemoryFacts.map((f) => f.content).join(' ')}`);
+        const forceFallback = safe && jarvisGov.safeModeFallback;
+        const { data: briefing } = await composeDailyBriefing(jarvisRouter, { packet, language: lang, taskId: null, forceFallback });
+        const record = {
+          briefingId: genId('jbrief'), actorId: actor.actorId, scope: 'user' as const,
+          headline: briefing.headline, narrative: briefing.narrative, topPriorities: briefing.topPriorities,
+          decisions: briefing.decisions, blockers: briefing.blockers, suggestedFollowUps: briefing.suggestedFollowUps,
+          language: briefing.language, createdAt: nowIso(),
+        };
+        await jarvisBriefings.insertOne(record);
+
+        // Phase AE.1 — structured sections so the primary priority can never
+        // be silently displaced by prioritizedItems (which ranks kernel
+        // tasks/projects/actions, NOT explicit memory facts). An explicit,
+        // recently-stated priority/decision memory fact always wins here,
+        // exactly like the direct-answer path in gatherJarvisFacts.
+        const priorityFact = pickActivePriorityFact(recentMemoryFacts);
+        const primaryPriority = priorityFact?.content || packet.prioritizedItems[0]?.label || briefing.topPriorities[0] || '';
+        const systemWarnings = openIncidentsList.map((i) => `${i.title} (${i.severity})`);
+        const recommendedNextActions = briefing.suggestedFollowUps.length ? briefing.suggestedFollowUps : packet.prioritizedItems.slice(0, 3).map((p) => p.label);
+        const memoryFactsUsed = recentMemoryFacts.slice(0, 10).map((f) => ({ kind: f.kind, content: f.content, importance: f.importance, createdAt: f.createdAt }));
+        const confidence = priorityFact ? priorityFact.confidence : packet.prioritizedItems.length ? 0.5 : 0.3;
+
+        return {
+          ...record,
+          primaryPriority,
+          activeBlockers: packet.blockers,
+          systemWarnings,
+          recommendedNextActions,
+          memoryFactsUsed,
+          confidence,
+          dataFreshness: packet.generatedAt,
+          prioritizedItems: packet.prioritizedItems,
+          generatedAt: packet.generatedAt,
+        };
+      });
+
       realityGet('/v1/me/reality/briefings', async (actor) => personalBriefingRuns.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(14).toArray());
       realityGet('/v1/me/reality/strategies', async (actor) => strategyReviewRuns.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(8).toArray());
       realityGet('/v1/me/reality/resume', async (actor) => ({
@@ -2439,6 +2527,26 @@ async function main(): Promise<void> {
         const safeNow = await isSafeMode();
         facts.push({ label: 'safe_mode', detail: safeNow ? 'ON — mutations are blocked' : 'off', status: 'known', weight: safeNow ? 9 : 2 });
 
+        // Phase AE.1 — ALWAYS retrieve the owner's own stated priority/decision/
+        // blocker memory FIRST, regardless of intent category. This is the fix
+        // for the root bug found in the real conversation: memory facts were
+        // extracted and persisted but never read back into context, so every
+        // answer fell back to raw system-health facts. Weights here (20/12/11)
+        // are deliberately higher than anything system health can produce below
+        // (max ~10) — an explicit stated priority must outrank a routine
+        // unhealthy-service warning, never the other way around.
+        try {
+          const recentMemFacts = await jarvisMemoryFacts.find({ actorId: authCtx.actorId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray();
+          const priorityFact = pickActivePriorityFact(recentMemFacts);
+          if (priorityFact) facts.push({ label: 'user_priority', detail: priorityFact.content, status: 'known', weight: 20, href: '/me' });
+          for (const bf of recentMemFacts.filter((f) => f.kind === 'blocker').slice(0, 3)) {
+            facts.push({ label: 'user_blocker', detail: bf.content, status: 'known', weight: 12 });
+          }
+          for (const df of recentMemFacts.filter((f) => f.kind === 'decision' && f.factId !== priorityFact?.factId).slice(0, 2)) {
+            facts.push({ label: 'user_decision', detail: df.content, status: 'known', weight: 11 });
+          }
+        } catch { /* memory retrieval is best-effort — a turn never hard-fails on this */ }
+
         if (intentCategory === 'system_status' || intentCategory === 'general_conversation') {
           const sys = await execSystemCheck();
           const d = sys.data as { pendingApprovals?: number; openIncidents?: number } | undefined;
@@ -2489,10 +2597,55 @@ async function main(): Promise<void> {
           scope: args.scopeClass.scope === 'user' ? 'user' : 'global',
           facts,
         });
-        const { data: response } = await composeJarvisResponse(jarvisRouter, { text: args.text, intent: args.intent, packet, planSummary: args.planSummary, forceFallback: args.forceFallback });
-        const turn = buildJarvisTurn({ turnId: genId('jturn'), actorId: args.authCtx.actorId, scope: args.scopeClass.scope === 'user' ? 'user' : 'global', text: args.text, intent: args.intent, mode: args.mode, reply: response.reply, usedFallback: jarvisRouter.activeProvider === 'mock' || args.forceFallback });
+        const { data: composed } = await composeJarvisResponse(jarvisRouter, { text: args.text, intent: args.intent, packet, planSummary: args.planSummary, forceFallback: args.forceFallback });
+
+        // Phase AE.1 — correction gate: the packet may carry a real, recent
+        // `user_priority` fact (weight 20 — see gatherJarvisFacts), but an
+        // LLM-composed reply is only grounded by INSTRUCTION, not by
+        // construction, so it can still ignore it (the exact failure a real
+        // conversation exposed). The deterministic fallback CANNOT skip a
+        // present user_priority fact (see composeJarvisResponseFallback), so
+        // it is the correction template — never a second LLM call, never
+        // unpredictable.
+        let response = composed;
+        let corrected = false;
+        if (answerIgnoresStatedPriority(composed, packet)) {
+          response = composeJarvisResponseFallback({ text: args.text, intent: args.intent, packet, planSummary: args.planSummary });
+          corrected = true;
+        }
+
+        const turn = buildJarvisTurn({ turnId: genId('jturn'), actorId: args.authCtx.actorId, scope: args.scopeClass.scope === 'user' ? 'user' : 'global', text: args.text, intent: args.intent, mode: args.mode, reply: response.reply, usedFallback: jarvisRouter.activeProvider === 'mock' || args.forceFallback || corrected });
         await jarvisTurns.insertOne(turn);
         await ctx.publisher.publish({ type: EVENT_TYPES.JARVIS_TURN_ANSWERED, taskId: null, payload: { turnId: turn.turnId, category: args.intent.category, language: args.intent.language, message: `Jarvis (${args.intent.category}): ${response.reply.slice(0, 140)}` } });
+
+        // Phase AE item 1 — memory ingestion: extract durable facts (projects,
+        // priorities, decisions, blockers, preferences) from the owner's OWN
+        // message text, not from Jarvis's reply. Never blocks the turn.
+        try {
+          const { result: extraction, usedFallback: memUsedFallback } = await extractMemoryFacts(jarvisRouter, args.text, { forceFallback: args.forceFallback, taskId: null });
+          if (extraction.facts.length) {
+            const memFacts = buildMemoryFacts({ turnId: turn.turnId, actorId: args.authCtx.actorId, scope: args.scopeClass.scope === 'user' ? 'user' : 'global', result: extraction, usedLlm: !memUsedFallback });
+            if (memFacts.length) await jarvisMemoryFacts.insertMany(memFacts);
+          }
+        } catch { /* memory extraction is best-effort; never blocks the reply */ }
+
+        // Phase AE item 5 — score this answer against the context it claims
+        // to be grounded in. Stored for later inspection, never blocks the turn.
+        try {
+          const score = scoreJarvisAnswer({
+            turnId: turn.turnId,
+            replyText: response.reply,
+            replyLanguage: response.language,
+            groundedIn: response.groundedIn ?? [],
+            suggestedFollowUpsCount: response.suggestedFollowUps.length,
+            intentLanguage: args.intent.language,
+            intentCategory: args.intent.category,
+            packetLabels: facts.map((f) => f.label),
+            packetHasNotConfigured: facts.some((f) => f.status === 'not_configured'),
+          });
+          await jarvisAnswerScores.insertOne(score);
+        } catch { /* scoring is best-effort; never blocks the reply */ }
+
         return { reply: response.reply, language: response.language, suggestedFollowUps: response.suggestedFollowUps };
       };
 
@@ -3014,6 +3167,29 @@ async function main(): Promise<void> {
             session.memoryIds.push(mid);
             await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, message: `Operator session completed: ${session.goal.slice(0, 80)}`, level: 'success' } });
           }
+        }
+        // Phase AE item 6 — post-task completion summary composer. Replaces the
+        // raw mechanical reportSummary with a grounded, bilingual Jarvis reply
+        // for whichever surface displays session outcomes. Best-effort: a
+        // failure here must never block persisting the session's real status.
+        if (session.status === 'completed' || session.status === 'failed') {
+          try {
+            const lang = detectLanguage(session.goal);
+            const forceFallback = (await isSafeMode()) && jarvisGov.safeModeFallback;
+            const { data: completion } = await composeTaskCompletionSummary(jarvisRouter, {
+              goal: session.goal,
+              status: session.status,
+              observations: session.observations,
+              reportSummary: session.reportSummary,
+              evidenceCount: session.evidenceIds.length,
+              language: lang,
+              taskId: null,
+              forceFallback,
+            });
+            session.context.jarvisSummary = completion.reply;
+            session.context.jarvisSummaryLanguage = completion.language;
+            session.context.jarvisSummaryFollowUps = completion.suggestedFollowUps;
+          } catch { /* completion summary is best-effort; never blocks session persistence */ }
         }
         await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: session }, { upsert: true });
         return session;

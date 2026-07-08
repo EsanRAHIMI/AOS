@@ -74,7 +74,10 @@ const CATEGORY_PATTERNS: CategoryPattern[] = [
   { category: 'email_communication', en: /\bemail\b|inbox|send .*(message|email)/i, fa: /ایمیل|پیام بفرست|ارسال ایمیل/i },
   { category: 'memory_profile_capture', en: /my goal is|remember that|my role is|my focus is|i want to|i need to/i, fa: /هدف من|یادت باشه|نقش من|تمرکز من|می‌خوام|میخوام/i },
   { category: 'business_project', en: /\bproject\b|\bventure\b|\bbusiness\b/i, fa: /پروژه|کسب.?وکار|ونچر/i },
-  { category: 'personal_life_planning', en: /\b(my|me)\b.*(day|week|schedule|priorit|goals?)|what should i do|plan my (day|week)|most important (thing|task)/i, fa: /امروز چیکار|کار مهم امروز|برنامه امروز|اولویت|چیکار باید|مهم‌ترین کار/i },
+  // Phase AE.1 — added تصمیم/بلاکر/مانع so "چه تصمیم‌ها و بلاکرهای مهمی الان
+  // دارم؟" classifies as a real category instead of falling through to
+  // general_conversation (which pulled in raw system-health facts).
+  { category: 'personal_life_planning', en: /\b(my|me)\b.*(day|week|schedule|priorit|goals?)|what should i do|plan my (day|week)|most important (thing|task)|decisions? (and|or) blockers?|what.*blockers?.*(do i|i) have/i, fa: /امروز چیکار|کار مهم امروز|برنامه امروز|اولویت|چیکار باید|مهم‌ترین کار|تصمیم(‌ها)?|بلاکر(ها)?|مانع/i },
 ];
 
 /** Deterministic bilingual fallback — used when no LLM key is configured or
@@ -203,6 +206,13 @@ export const JarvisResponseSchema = z.object({
   language: JarvisLanguage,
   suggestedFollowUps: z.array(z.string()).max(4).default([]),
   groundedIn: z.array(z.string()).default([]),
+  /** Phase AE.1 — structured split so a caller (briefing, dashboard, quality
+   *  scoring) can distinguish "what the owner said matters" from "what's
+   *  technically broken" without re-parsing `reply` prose. Empty string/array
+   *  when no explicit priority/blocker/next-step applies to this turn. */
+  primaryPriority: z.string().default(''),
+  activeBlockers: z.array(z.string()).default([]),
+  nextAction: z.string().default(''),
 });
 export type JarvisResponse = z.infer<typeof JarvisResponseSchema>;
 
@@ -225,6 +235,33 @@ export function composeJarvisResponseFallback(opts: ComposeJarvisOpts): JarvisRe
   const fa = intent.language === 'fa';
   const top = packet.ranked.slice(0, 5);
   const factLine = (f: JarvisContextFact): string => `${f.label}: ${f.detail}`;
+
+  // Phase AE.1 — an explicit, recently-stated user priority (label
+  // 'user_priority', injected by the gateway from real jarvis_memory_facts —
+  // see gatherJarvisFacts) always outranks generic system-health chatter and
+  // canned meta self-assessment text. Only a pure system-status check is
+  // exempt (the owner explicitly asked for health, not strategy) — every
+  // other category leads with what the owner actually said matters right
+  // now, with technical blockers and system warnings named separately so
+  // they never get mistaken for the primary priority.
+  const priorityFact = packet.ranked.find((f) => f.label === 'user_priority');
+  if (priorityFact && intent.category !== 'system_status') {
+    const blockerFacts = packet.ranked.filter((f) => (f.label === 'user_blocker' || f.label === 'open_incidents' || f.label === 'system_check') && f.detail && f.detail !== '0');
+    const nextFact = packet.ranked.find((f) => f.label === 'top_next_action' || f.label === 'user_decision' || f.label === 'highest_leverage_next_step');
+    const blockerLine = blockerFacts.length ? blockerFacts.map(factLine).join('؛ ') : '';
+    const reply = fa
+      ? `اولویت فعلی شما: ${priorityFact.detail}.${blockerLine ? ` بلاکر(های) فنی فعلی: ${blockerLine} — این‌ها جایگزین اولویت اصلی شما نیستند، فقط باید در کنارش بررسی شوند.` : ''}${nextFact ? ` قدم بعدی پیشنهادی: ${nextFact.detail}.` : ''}`
+      : `Your current priority: ${priorityFact.detail}.${blockerLine ? ` Active technical blocker(s): ${blockerLine} — these don't replace your main priority, they need attention alongside it.` : ''}${nextFact ? ` Suggested next step: ${nextFact.detail}.` : ''}`;
+    return JarvisResponseSchema.parse({
+      reply,
+      language: intent.language,
+      suggestedFollowUps: fa ? ['بلاکرهای فعلی رو بررسی کنیم؟', 'الان وضعیت سیستم چیه؟'] : ['Should we tackle the blockers now?', "What's the system status now?"],
+      groundedIn: ['user_priority', ...blockerFacts.map((f) => f.label), ...(nextFact ? [nextFact.label] : [])],
+      primaryPriority: priorityFact.detail,
+      activeBlockers: blockerFacts.map((f) => f.detail),
+      nextAction: nextFact?.detail ?? '',
+    });
+  }
 
   if (intent.category === 'meta_self_assessment') {
     const reply = fa
@@ -249,6 +286,22 @@ export function composeJarvisResponseFallback(opts: ComposeJarvisOpts): JarvisRe
     ? `از اطلاعات واقعیِ موجود: ${top.map(factLine).join(' | ') || 'داده‌ای برای این موضوع ثبت نشده.'}${notConfigured.length ? ` هنوز متصل نیست: ${notConfigured.map((f) => f.label).join('، ')}.` : ''}`
     : `From what's actually recorded: ${top.map(factLine).join(' | ') || 'no data recorded for this yet.'}${notConfigured.length ? ` Not yet connected: ${notConfigured.map((f) => f.label).join(', ')}.` : ''}`;
   return JarvisResponseSchema.parse({ reply, language: intent.language, suggestedFollowUps: [], groundedIn: top.map((f) => f.label) });
+}
+
+/** Phase AE.1 — correction gate. The LLM-composed reply is grounded by
+ *  instruction, not by construction (unlike the fallback above), so a model
+ *  can still technically ignore the packet's explicit `user_priority` fact
+ *  and lean on louder system-health text instead — exactly the failure mode
+ *  a real conversation exposed. Pure and cheap: true means the caller should
+ *  discard the LLM reply and use `composeJarvisResponseFallback` instead,
+ *  which structurally cannot skip a present `user_priority` fact. */
+export function answerIgnoresStatedPriority(response: { reply: string; groundedIn: string[] }, packet: JarvisContextPacket): boolean {
+  const priorityFact = packet.ranked.find((f) => f.label === 'user_priority');
+  if (!priorityFact) return false;
+  if (response.groundedIn.includes('user_priority')) return false;
+  const snippet = priorityFact.detail.trim().slice(0, 12);
+  if (snippet && response.reply.includes(snippet)) return false;
+  return true;
 }
 
 /** LLM-assisted composition, strictly grounded in the supplied packet text.
@@ -307,3 +360,8 @@ export const JarvisTurnSchema = z.object({
   usedFallback: z.boolean(),
   createdAt: IsoDate,
 });
+
+// Phase AE — Jarvis Memory, Daily Brain & Real Context Upgrade
+export * from './memory.js';
+export * from './daily-brain.js';
+export * from './quality.js';

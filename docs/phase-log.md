@@ -1330,3 +1330,165 @@ acceptable (not fake) but less fluent than the initial reply; a future phase cou
 `composeJarvisResponse` too.
 Scope: `shared/src/{jarvis,operator,llm,constants,index}` (new module + minimal edits),
 `services/gateway-api/`, `services/dashboard-web/`, `scripts/`, `docs/`.
+
+## Phase AE — Jarvis Memory, Daily Brain & Real Context Upgrade — COMPLETE (2026-07-09)
+Phase AD gave Jarvis a real conversational runtime, but its context was still request-scoped — it answered
+from system state gathered fresh per message, with no memory of what the owner had said before and no
+notion of "what does the owner's whole current reality look like right now." This phase closes that gap
+without touching the UI (explicit constraint: "Do not redesign UI. Make the brain useful first.").
+
+Delivered (shared — 3 new pure modules under `shared/src/jarvis/`, zero import-cycle risk by design —
+structural typing used instead of importing from `./index.ts`, mirroring the existing `llm/index.ts` +
+`llm/prompts.ts` split):
+- **`memory.ts` (item 1 — memory ingestion)**: `extractMemoryFacts()` (LLM-assisted, `generateStructured`,
+  schema-validated) with `extractMemoryFactsFallback()` as the deterministic bilingual (EN/FA) safety net —
+  ordered regex patterns for `project | priority | decision | blocker | preference | fact`, conservative by
+  design (only fires on clear phrasing, e.g. "I've decided…" / "تصمیم گرفتم…"; empty list is a valid, honest
+  result for most turns). `buildMemoryFacts()` builds persistable, schema-valid records quoting the real
+  sentence — never invented.
+- **`daily-brain.ts` (items 2–4, 7)**: `rankPriorities()` combines active kernel tasks, active personal
+  projects, and already-ranked next-best-actions into one deterministic weighted list (task priority ×
+  status boost, project income potential, action priority score). `summarizeDecisionsAndBlockers()` pulls
+  real recent decisions (kernel `decisionMemories` + extracted `decision` facts) and real active blockers
+  (critical/high incidents, high/critical personal risks, extracted `blocker` facts) — nothing invented.
+  `buildDailyBrainPacket()` composes both into one compact, grounded packet. `composeDailyBriefing()` /
+  `composeDailyBriefingFallback()` turn the packet into a bilingual narrative briefing (item 7 support),
+  same LLM+deterministic-fallback discipline as every other Jarvis composer.
+- **`quality.ts` (items 5–6)**: `scoreJarvisAnswer()` — a PURE, deterministic scorer (never calls an LLM,
+  so it grades LLM and fallback answers by the identical bar) grading groundedness (do claimed `groundedIn`
+  labels actually exist in the packet), specificity (length + absence of generic dead-end phrasing),
+  honesty (does the reply surface `not_configured` items it plausibly should), language match, and
+  actionability, combined into one weighted `overall` score with a list of concrete `issues`.
+  `composeTaskCompletionSummary()` / `composeTaskCompletionFallback()` close the Phase AD gap where a
+  finished operator session was announced with the raw mechanical `reportSummary` — status is passed
+  through verbatim to both the LLM prompt and the fallback template, so a failed/cancelled session is
+  structurally never reported as a success.
+- 3 new versioned prompt contracts (`gateway-api:jarvis_memory_extraction`, `gateway-api:jarvis_briefing`,
+  `gateway-api:jarvis_completion`) in the Phase 13 prompt registry.
+- 3 new collections (`jarvis_memory_facts`, `jarvis_answer_scores`, `jarvis_briefings`) and 3 new event
+  types (`jarvis.memory.extracted`, `jarvis.briefing.generated`, `jarvis.session.summarized`).
+
+Delivered (gateway-api):
+- `composeAndRecordJarvisTurn()` (the single choke point every Jarvis reply already passes through) now
+  also, best-effort and never blocking the reply: extracts memory facts from the owner's own message text
+  and persists them to `jarvis_memory_facts`; scores the composed answer against the real context packet it
+  was built from and persists the score to `jarvis_answer_scores`.
+- `runLoop()`'s terminal-state branch (reached by every path that sets a session to `completed` or
+  `failed`, including early critical-failure breaks) now composes a grounded completion summary via
+  `composeTaskCompletionSummary()` and stores it on `session.context.jarvisSummary` (+ language +
+  follow-ups) — wrapped in try/catch so a composition failure can never block persisting the session's real
+  status.
+- New `GET /v1/jarvis/briefing` endpoint (same `realityGet` scope-enforced pattern as `/v1/me/universe`):
+  gathers real active kernel tasks, active personal projects, pending approvals, open incidents, personal
+  risks, recent decision memories, recently extracted Jarvis memory facts, ranked next-best-actions, and
+  safe-mode state into a `DailyBrainInput`, builds the packet, composes the briefing, persists it to
+  `jarvis_briefings`, and returns it together with the ranked priority list.
+
+Not delivered (by explicit instruction — "Dashboard integration only after backend quality is proven"):
+no `services/dashboard-web/*` files were touched this phase. The new briefing endpoint, memory facts, and
+answer scores are not yet surfaced anywhere in the UI.
+
+Verification:
+- **Phase AE smoke PASS (30/30)** (`scripts/phaseae-jarvis-brain-smoke.mjs`, deterministic-fallback path,
+  no LLM key required): bilingual memory-fact extraction (including a real bug found and fixed — the
+  decision-pattern regex didn't match the common contraction "I've decided", only "I decided"/"I have
+  decided"); priority ranking (paused projects correctly excluded, sort order correct); decisions/blockers
+  summary pulls from every real source (kernel decisions, incidents, risks, extracted facts); daily brief
+  fallback composer is grounded and bilingual; quality scorer correctly rewards a grounded/specific/
+  actionable answer and correctly penalizes a generic/mislabeled/language-mismatched/dishonest one with
+  concrete issue strings; completion summary composer never softens a failed session in either language.
+- Regression: Phase X operator-runtime 28/28, Phase AA scope 39/39, Phase AC+ universe 18/18, Phase AD
+  Jarvis 28/28 all still green. (Phase AB personal-smoke still has the same one pre-existing, unrelated
+  failure documented in the Phase AD entry above — untouched by this phase.)
+- `shared` `tsc --noEmit` clean; `gateway-api` `tsc --noEmit` clean; `dashboard-web` `tsc --noEmit` clean
+  (unchanged, as required — no dashboard files were edited).
+- No Docker; Dokploy independence intact; no new required env vars; safe mode still forces deterministic
+  fallback (`LLM_SAFE_MODE_FALLBACK`) end-to-end into memory extraction, scoring, briefings, and completion
+  summaries; no sensitive action bypasses approval (this phase adds zero new mutating tools).
+
+Honest remaining gaps: the new briefing endpoint, memory facts, and answer scores have no UI surface yet —
+that is the natural next phase once the owner wants to see them. `jarvis_answer_scores` are recorded but
+nothing yet acts on a low score (no auto-retry/escalation loop). Memory-fact extraction is deliberately
+conservative (regex/LLM only fire on clear phrasing) so recall is intentionally incomplete rather than
+guessing. `AOS_SELF_KNOWLEDGE` (Phase AD) has not yet been updated to mention the daily brain existing —
+left for the phase that wires it into `meta_self_assessment` answers.
+Scope: `shared/src/jarvis/{memory,daily-brain,quality,index}.ts`, `shared/src/{llm/prompts,constants}.ts`,
+`services/gateway-api/src/index.ts`, `scripts/`, `docs/`.
+
+## Phase AE.1 — Jarvis Priority & Memory Correction — COMPLETE (2026-07-09)
+A real user conversation (recorded verbatim below) proved Phase AE's "memory ingestion" was write-only:
+Jarvis extracted and stored priority facts correctly but never read them back, so an explicit, repeated
+owner instruction ("یادت باشه اولویت من الان درست کردن مغز Jarvis و صفحه اول AOS است") was completely
+ignored across five follow-up turns — every answer instead repeated raw service-health facts
+(service-registry / file-asset-service unhealthy). This phase is the honest correction, not a prompt tweak.
+
+Root cause (four distinct bugs, all confirmed by reading the actual code before any change):
+1. **Retrieval gap** — `gatherJarvisFacts()` (gateway-api) never queried `jarvis_memory_facts` at all.
+   Extraction (`extractMemoryFacts`) and persistence worked; nothing read the collection back into context.
+2. **Extraction gap** — the FA priority regex (`اولویت( من)? اینه|مهم‌ترین کار`) didn't match the owner's
+   actual phrasing ("اولویت من الان ... است"), and didn't recognize "یادت باشه ..." at all.
+3. **Ranking gap** — `open_incidents` could reach weight 9 in `gatherJarvisFacts` with no memory-fact weight
+   class to outrank it, so once retrieval was fixed, health facts would still have dominated without an
+   explicit, higher weight class for stated priority/decision/blocker facts.
+4. **Composition gap** — `composeJarvisResponseFallback`'s `meta_self_assessment` branch ignored the context
+   packet entirely (hardcoded `AOS_SELF_KNOWLEDGE` text), so even a correctly-ranked packet couldn't reach
+   the reply for that category; and the LLM path (`composeJarvisResponse`) is grounded by prompt instruction
+   only, not by construction, so it could still ignore a present priority fact.
+
+Delivered (shared — `shared/src/jarvis/memory.ts`, `shared/src/jarvis/index.ts`):
+- Broadened bilingual priority-extraction patterns (FA: `یادت باشه`, `اولویت( من)?( الان)?`, `تمرکز(م| من)?`;
+  EN: `remember that`, `my focus is`, kept existing `priority is`/`focus on`).
+- `JarvisMemoryFactSchema` gained `importance` (deterministic by kind — priority 0.95, decision 0.9, blocker
+  0.85, project/preference/fact lower), `language`, and `active` fields (item 1's full spec: type, text,
+  source, confidence, language, createdAt, importance, active status).
+- `pickActivePriorityFact()` — the single most recent active priority/decision fact; recency IS the
+  supersession mechanism (D-103), verified in the smoke test with a restated priority.
+- `composeJarvisResponseFallback()` now leads with a `user_priority` fact (when present, for every category
+  except `system_status`) in a reply that explicitly separates **primary priority**, **technical
+  blocker(s)**, and **suggested next step** — never merging them into one undifferentiated fact dump.
+- `JarvisResponseSchema` gained structured `primaryPriority` / `activeBlockers` / `nextAction` fields
+  (additive — existing `reply`/`groundedIn`/etc. unchanged).
+- `answerIgnoresStatedPriority()` — a pure correction-gate check used by the gateway (item 6).
+- CATEGORY_PATTERNS: added `تصمیم`/`بلاکر`/`مانع` to `personal_life_planning` so "چه تصمیم‌ها و بلاکرهای
+  مهمی الان دارم؟" gets real classification instead of falling to `general_conversation`.
+
+Delivered (gateway-api):
+- `gatherJarvisFacts()` now unconditionally queries recent `jarvis_memory_facts` (regardless of intent
+  category — classification alone is not a reliable gate, see D-101) and injects `user_priority` (weight 20),
+  `user_blocker` (weight 12), `user_decision` (weight 11) — all above the system-health ceiling (~10).
+- `composeAndRecordJarvisTurn()` now runs the LLM-composed reply through `answerIgnoresStatedPriority()` and,
+  if it ignored a present priority fact, discards it and uses `composeJarvisResponseFallback()` as the
+  deterministic correction template (item 6) — no second LLM call, fully testable.
+- `GET /v1/jarvis/briefing` response restructured (item 7 correction) with explicit `primaryPriority`,
+  `activeBlockers`, `systemWarnings`, `recommendedNextActions`, `memoryFactsUsed`, `confidence`,
+  `dataFreshness` fields — `primaryPriority` is sourced from `pickActivePriorityFact()` first, falling back
+  to the ranked packet only when no explicit memory fact exists.
+
+Not delivered (deliberately out of scope, to keep this a minimal correct fix): Persian branches were not
+added to `planForGoal()` for personal-planning goals — Persian priority/planning questions still fall through
+to `clarify` → the (now fixed) direct-answer path, which is where this bug actually lived and is now
+verified correct; giving them real `route_to_planner` sessions is a separate, larger phase. `AOS_SELF_KNOWLEDGE`
+was not edited. No dashboard files were touched.
+
+Verification:
+- **Phase AE.1 smoke PASS (26/26)** (`scripts/phaseae1-jarvis-priority-memory-smoke.mjs`): replays the exact
+  five-turn Persian conversation end-to-end through the real pure functions chained the same way the gateway
+  wires them (extract → build fact → pick active priority → inject into context facts, including the exact
+  noisy `service-registry`/`file-asset-service unhealthy` facts from the real conversation → build packet →
+  classify intent → compose reply). All five turns now correctly name the Jarvis-brain/home-page priority as
+  primary and the unhealthy services as a secondary blocker, never the reverse. Also covers: the
+  `system_status` exemption (a pure health question keeps the status-report format, not the priority
+  template), the correction-gate function directly, and priority supersession on restatement.
+- Regression: Phase X 28/28, Phase AA 39/39, Phase AC+ 18/18, Phase AD 28/28, Phase AE 30/30 all still green
+  (Phase AB's one pre-existing unrelated failure is unchanged).
+- `shared` `tsc` clean; `gateway-api` `tsc --noEmit` clean. `dashboard-web` `tsc --noEmit` was attempted but
+  blocked by a pre-existing, corrupted `.next/dev/types/routes.d.ts` build artifact (truncated mid-file,
+  write-protected on the mounted dev folder, dated before this phase) — unrelated to this phase since zero
+  dashboard-web source files were touched; recorded honestly rather than silently claimed clean.
+
+Honest remaining gaps: `planForGoal` still has no Persian personal-planning branches (documented above);
+the correction gate only fires when a `user_priority` fact conflicts with the LLM reply — it does not yet
+catch every dishonesty pattern `scoreJarvisAnswer` can detect (e.g. a hidden `not_configured` item does not
+trigger regeneration, only get logged as a quality issue); `active` on `JarvisMemoryFact` has no write path
+yet (no explicit "forget X" command).
+Scope: `shared/src/jarvis/{memory,index}.ts`, `services/gateway-api/src/index.ts`, `scripts/`, `docs/`.
