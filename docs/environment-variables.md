@@ -33,7 +33,7 @@ fail fast with a readable error. Real secrets are never committed.
 | `LLM_MAX_COST_PER_TASK_USD` | per-task budget gate |
 | `LLM_SAFE_MODE_FALLBACK` | force deterministic fallback |
 | `VOICE_*` | realtime voice model/session settings |
-| `TAVILY_API_KEY` | Phase AG — real web search grounding for `internet-research-service` (`shared/src/research`). Optional: unset falls back to LLM-recall/curated knowledge, honestly marked via `sourceMode: 'llm_only' \| 'curated_fallback'` on every research record, never silently upgraded to "real". |
+| `TAVILY_API_KEY` | Phase AG — real web search grounding for `internet-research-service` (`shared/src/research`). **Must be set on `internet-research-service` itself** — that is the only process that calls Tavily; read once at boot, so the service needs a **restart** after the key is set or changed. Optional elsewhere: unset falls back to LLM-recall/curated knowledge, honestly marked via `sourceMode: 'llm_only' \| 'curated_fallback'` on every research record, never silently upgraded to "real". Setting it on `gateway-api` too is optional — it only makes `GET /v1/system/integrations`'s `research.configured` flag accurate; gateway-api never calls Tavily directly, it always delegates to `internet-research-service` (Phase AG.1 — see decision-log D-136). |
 
 ## Delivery and Operations
 

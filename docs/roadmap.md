@@ -285,6 +285,10 @@ Phase 10 candidates:
 1. New `/` home: 9-zone living operating surface (health/daily/life/finance/ventures/growth/
    opportunities/systems/presence) on ONE scope-enforced contract (/v1/me/universe) — DONE.
 2. Abstract SVG body map (real metrics only; dormant setup-ready nodes) — DONE.
+   *(Superseded twice on 2026-07-10: Phase AH replaced the stickman with an anatomical silhouette;
+   Phase AH.2 rebuilt it into the Health Intelligence Surface — 14 anatomical regions + 6 systemic
+   layers, graded severity, chip rails, layer strip, and compact/full variants — see
+   `docs/phase-log.md` Phases AH / AH.2.)*
 3. Finance structure (income/expense/bill/installment/obligation/investment) with monthly-normalized
    real math; life/family/home structure; 3 new ingestion kinds — DONE.
 4. Jarvis bridge: every zone summons the console with a contextual command; console deep-links back —
@@ -338,6 +342,29 @@ LLM's echo); new `sourceMode: 'search_api' | 'llm_only' | 'curated_fallback'` fi
 separately from the existing `mode`, surfaced as its own badge in the `/research` dashboard pages.
 23/23 new smoke + 183/183 cumulative regression. See `phase-log.md`; decisions D-132 through D-135.
 
+## Phase AG.1 — Research Fabric Wired Into Jarvis/Operator — DONE (2026-07-09)
+Bug fix, not a redesign: Phase AG built a real Tavily-backed research fabric, but neither
+Jarvis-reachable tool actually called it. `find_opportunities` carried a hardcoded
+"research provider is not_configured" string regardless of real config; `research_topic` fired an
+async fire-and-forget kernel task that replied "Research task started" with no grounded answer in
+the same turn. Both now call `internet-research-service` synchronously via a new `dispatchResearch()`
+helper in gateway-api and return real findings + `sourceMode` + sources in the same reply; the
+goal→tool matcher was also broadened so open topic questions ("find current X trends...") reach
+research without requiring the literal word "research". 13/13 new smoke
+(`phaseag1-jarvis-research-routing-smoke.mjs`) + all prior suites unchanged. See `phase-log.md`;
+decisions D-136 through D-139.
+
+## Phase AG.2 — internet-research-service Reachability — DONE (2026-07-09)
+Immediate follow-up bug: AG.1's synchronous wiring surfaced that `internet-research-service` was
+never in `scripts/local-services.mjs` — the source of truth for `pnpm dev:all`/`pnpm sync:env` — so
+in local dev nothing ever listened on its port and gateway-api got a generic "fetch failed"
+regardless of Tavily config. Fixed by adding it to the local service catalog (also added
+`code-operator-agent`, found missing from `README-SETUP.md` in the same pass) and replacing the
+generic error text with pure, unit-tested classification (`service_unreachable` vs `service_error`
+vs `provider_not_configured` vs real success) in `shared/src/research`. 21/21 new smoke
+(`phaseag2-research-reachability-smoke.mjs`) + all prior suites unchanged. See `phase-log.md`;
+decisions D-140, D-141.
+
 ## Carried-forward directions (not yet scheduled or phase-lettered)
 
 These themes from the earlier AA–AE "NEXT" planning are still real and still
@@ -357,6 +384,9 @@ those same letters. Assign a fresh phase name only when work actually starts.
    source-URL integrity guaranteed structurally, honest `sourceMode` tracking. See `docs/phase-log.md`.
 6. Still open: research sources aren't yet fed into daily briefing/opportunity scoring/reports; no
    watch-topics scheduler; only one provider (Tavily) is wired though the interface supports more.
+   ~~Jarvis/operator tools not actually calling the research fabric~~ — **DONE, Phase AG.1**
+   (2026-07-09): `find_opportunities`/`research_topic` now dispatch real synchronous research. See
+   `docs/phase-log.md`.
 
 **Multi-user operating layer**
 7. Onboard real second users/tenants on top of the Phase AA scope/RBAC skeleton (today only Esan is seeded as owner).

@@ -30,7 +30,7 @@ export default async function HealthDomainPage() {
   return (
     <DomainRoom
       zone={zone}
-      visual={<BodyMap metrics={bodyMetrics} />}
+      visual={<BodyMap metrics={bodyMetrics} variant="full" />}
       items={items}
       itemsLabel="All health reports"
       deeperLinks={DEEPER_LINKS.health}

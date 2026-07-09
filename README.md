@@ -8,7 +8,7 @@
 |---|---|
 | **Services** | 19 independent services · one Dokploy app each |
 | **Operator tools** | 50+ live tools across 15+ categories |
-| **Development phase** | Phase AG complete (Living Command Universe, Realtime Operator Runtime, Dedicated Domain Rooms & Real Research Fabric) |
+| **Development phase** | Phase AG.2 complete (Living Command Universe, Realtime Operator Runtime, Dedicated Domain Rooms, Real Research Fabric, Jarvis Research Wiring & Local Reachability Fix) |
 | **Runtime** | Node.js 22+ · pnpm 9 · TypeScript 5.9 |
 | **Data** | MongoDB Atlas · AWS S3 · SSE Event Bus |
 
@@ -416,11 +416,16 @@ Full deploy and env guide: [`README-SETUP.md`](README-SETUP.md)
 | AF.1–AF.4.4 | Domain Canvas (9 real renderers) · domain actions · realtime block runtime · persistent live-state · grouped Live Activity feed | ✅ |
 | AF.5 | Dedicated per-domain rooms (`/health` … `/presence`) — every zone's "Open" link leads somewhere real | ✅ |
 | AG | Real Research & Intelligence Fabric — real web search (Tavily) grounds `internet-research-service`, honest `sourceMode` tracking | ✅ |
+| AG.1 | Research Fabric Wired Into Jarvis/Operator — `find_opportunities`/`research_topic` now dispatch real synchronous research instead of a stale hardcoded string / fire-and-forget task | ✅ |
+| AG.2 | internet-research-service Reachability — service was missing from the local dev catalog (`pnpm dev:all`/`sync:env` never started it); added, plus honest `service_unreachable`/`service_error`/`provider_not_configured` error classification | ✅ |
 
-**Latest verification (Phase AG, 2026-07-09):** 183/183 cumulative regression smoke (160 prior + 23
-new) · `shared`/`gateway-api`/`internet-research-service`/`dashboard-web` `tsc`/`tsc --noEmit` clean
-· `next build` still unverified in this sandbox (missing `@next/swc-linux-arm64` binary — see
-`docs/decision-log.md` D-124). Full phase-by-phase detail: `docs/phase-log.md`.
+**Latest verification (Phase AG.2, 2026-07-09):** 21/21 new smoke
+(`phaseag2-research-reachability-smoke.mjs`) · prior suites unchanged (183/183 Phase AG total) ·
+`shared`/`gateway-api`/`internet-research-service` `tsc`/`tsc --noEmit` clean · `next build` still
+unverified in this sandbox (missing `@next/swc-linux-arm64` binary — see `docs/decision-log.md`
+D-124). Live end-to-end reachability against a real running service was not exercised in this
+sandbox (no persistent processes here) — see the manual verification commands in
+`docs/phase-log.md`'s Phase AG.2 entry. Full phase-by-phase detail: `docs/phase-log.md`.
 
 Per-phase details: [`docs/phase-log.md`](docs/phase-log.md)
 

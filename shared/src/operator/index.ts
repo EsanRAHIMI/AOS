@@ -262,7 +262,7 @@ const specs: ToolSpec[] = [
   { toolId: 'repair_service', name: 'Repair service', description: 'Diagnose → repair-plan → approval flow for a failing service.', category: 'repair', risk: 'high', requiresApproval: true, serviceOwner: 'gateway-api', endpoint: '/v1/repair-plans/:id/decision', executionPath: 'operation_plan', rollbackAvailable: true, evidenceRequired: true, input: { serviceId: 'string' } },
 
   /* ---------------------------- intelligence ---------------------------- */
-  { toolId: 'research_topic', name: 'Research topic', description: 'Research → plan → review → QA → report pipeline.', category: 'learning', risk: 'low', serviceOwner: 'internet-research-service', executionPath: 'kernel_task', input: { goal: 'string' }, examples: ['research current Fastify best practices'] },
+  { toolId: 'research_topic', name: 'Research topic', description: 'Live research on any topic via internet-research-service, awaited in this reply — Tavily web search when TAVILY_API_KEY is configured there, honest LLM-recall/curated fallback otherwise; sourceMode always reported, never fabricated URLs.', category: 'learning', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/.factory/task (internet-research-service)', executionPath: 'gateway_internal', input: { goal: 'string' }, examples: ['research current Fastify best practices', 'find current AI lighting design trends in Dubai luxury interiors'] },
   { toolId: 'analyze_history', name: 'Analyze system history', description: 'Learning pipeline over real history: reliability, patterns, recommendations.', category: 'learning', risk: 'low', serviceOwner: 'memory-agent', executionPath: 'kernel_task', examples: ['analyze history and recommend improvements'] },
   { toolId: 'run_security_check', name: 'Run security check', description: 'Production security check: env, secrets, tokens, session, safe mode.', category: 'security', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/security/check', executionPath: 'gateway_internal', evidenceRequired: true },
   { toolId: 'generate_report', name: 'Generate report', description: 'Human-readable report via the report pipeline.', category: 'report', risk: 'low', serviceOwner: 'report-agent', executionPath: 'kernel_task' },
@@ -304,7 +304,7 @@ const specs: ToolSpec[] = [
   { toolId: 'run_full_daily_briefing', name: 'Daily briefing (full)', description: 'Full briefing run: top-3 priorities, risks, income/growth/AOS actions, approvals, missing data — stored and scoped.', category: 'report', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/review', executionPath: 'gateway_internal', evidenceRequired: true, examples: ['run my daily briefing'] },
   { toolId: 'run_weekly_strategy', name: 'Weekly strategy review', description: 'Goals vs actions vs opportunities; ranked weekly plan; what AOS should build; what needs approval.', category: 'report', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/review', executionPath: 'gateway_internal', evidenceRequired: true, examples: ['weekly strategy review'] },
   { toolId: 'analyze_resume', name: 'Analyze resume', description: 'Only provided/scoped resume data; separates verified facts, user claims, inferences and suggestions — never invents credentials.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['analyze my resume'] },
-  { toolId: 'find_opportunities', name: 'Rank opportunities', description: 'Score recorded opportunities (impact/effort/risk/goal-linkage) with source + confidence; research provider used only when configured.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/opportunities', executionPath: 'gateway_internal', examples: ['find the best opportunities for me'] },
+  { toolId: 'find_opportunities', name: 'Rank opportunities', description: 'Score recorded opportunities (impact/effort/risk/goal-linkage) with source + confidence; when none are recorded, researches the goal live via internet-research-service instead of a static claim — sourceMode always reported honestly.', category: 'read', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/opportunities', executionPath: 'gateway_internal', examples: ['find the best opportunities for me'] },
   { toolId: 'capture_personal_goal', name: 'Capture personal goal', description: 'Store one user-scoped active goal from the conversation and immediately re-rank actions.', category: 'service', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/goals', executionPath: 'gateway_internal', input: { title: 'string', horizon: 'string?', priority: 'string?', description: 'string?' }, examples: ['my goal is to earn 5k more this month'] },
   { toolId: 'capture_reality_profile', name: 'Capture reality profile', description: 'Store a minimal personal reality profile (headline/focus/current position) from the conversation.', category: 'service', risk: 'low', serviceOwner: 'gateway-api', endpoint: '/v1/me/reality/ingest', executionPath: 'gateway_internal', input: { headline: 'string', currentPosition: 'string?', focusArea: 'string?' }, examples: ['my current role is product engineer and my focus is automation'] },
   { toolId: 'propose_aos_build', name: 'Propose AOS build', description: 'Identify the highest-value missing AOS capability for the user; building it routes through GLOBAL workspace evolution with approval.', category: 'reason', risk: 'low', serviceOwner: 'gateway-api', executionPath: 'gateway_internal', examples: ['what should AOS build next for me?'] },
@@ -512,7 +512,13 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
   // Intelligence pipelines as single gated-lite tools.
   if (/(analy[sz]e|analysis).*(history|system)|recommend improvements/.test(t)) return { kind: 'single_tool', narration: 'Learning pipeline over real history.', steps: [step('analyze_history', 'Learning pipeline (never Dokploy)')] };
   if (/security (check|audit)|harden/.test(t)) return { kind: 'single_tool', narration: 'Production security check.', steps: [step('run_security_check', 'Security pipeline')] };
-  if (/research|best practices?|investigate/.test(t)) return { kind: 'single_tool', narration: 'Research pipeline.', steps: [step('research_topic', 'Intelligence pipeline', { goal })] };
+  // Broad enough to catch open research questions that don't literally say
+  // "research" (e.g. "find current AI lighting trends in Dubai luxury
+  // interiors") — checked before the narrower "opportunities for me" pattern
+  // below so free-text topic questions reach live research, not a dead end.
+  if (/research|best practices?|investigate|trends?\b|find (the )?(current|latest|out about)|what'?s (the latest|new|happening) (in|on|with)|latest (on|in)\b/.test(t)) {
+    return { kind: 'single_tool', narration: 'Research pipeline — live web search when configured, honest fallback otherwise.', steps: [step('research_topic', 'Intelligence pipeline', { goal })] };
+  }
   if (/\b(health|is .* up|reachable)\b/.test(t) || (/check/.test(t) && svc)) return { kind: 'single_tool', narration: `Read-only health check${svc ? ` on ${svc}` : ''}.`, steps: [step('check_service_health', 'Real /health + registry verification', { targetService: svc ?? '' })] };
 
   // Phase AB — Jarvis personal commands (all strictly user-scoped).
@@ -554,7 +560,7 @@ export function planForGoal(goal: string, ctx: { safeMode: boolean; role: string
     return { kind: 'runtime_goal', narration: 'Resume intelligence on YOUR provided data only — facts, claims, inferences and suggestions kept strictly separate; nothing invented.', steps: [step('get_my_context', 'Goals give positioning direction'), step('analyze_resume', 'Separate facts/claims/inferences; concrete improvements')] };
   }
   if (/find .*opportunit.*(me|my)|best opportunities for me|increase my income|system to increase my income/.test(t)) {
-    return { kind: 'runtime_goal', narration: 'Ranking opportunities against your goals and assets — every score carries source and confidence; no fake market claims.', steps: [step('get_my_context', 'Goals + assets for linkage'), step('find_opportunities', 'Score and rank with recommended next actions')] };
+    return { kind: 'runtime_goal', narration: 'Ranking opportunities against your goals and assets — every score carries source and confidence; no fake market claims. Live research fills in when nothing is recorded yet.', steps: [step('get_my_context', 'Goals + assets for linkage'), step('find_opportunities', 'Score and rank with recommended next actions; live research fallback when empty', { goal })] };
   }
   if (/what should aos build.*(me|my)|aos build next for me|build next to improve my/.test(t)) {
     return { kind: 'runtime_goal', narration: 'Finding the highest-value missing AOS capability for you. Analysis is user-scoped; actually BUILDING it is global workspace evolution and needs your approval before anything live.', steps: [step('get_my_context', 'Your goals and gaps'), step('propose_aos_build', 'Rank capability gaps by impact/effort/risk + build plan proposal')] };
@@ -628,6 +634,39 @@ export function classifyToolFailure(toolId: string, error: string): FailureAnaly
     return { cause: 'The target is a protected core service.', nextAction: 'Owner-visible approval on the Overview is the only path — or run a read-only health check instead.', mistakeMemory: 'Never route protected-core mutations through auto-execution.' };
   }
   return { cause: `${toolId} failed: ${error.slice(0, 160)}`, nextAction: 'Inspect recent events and evidence; retry once the cause is fixed.', mistakeMemory: null };
+}
+
+/* ======================= recency ordering (Phase AG.3) =================== */
+
+export interface SortableSession {
+  runtimeSessionId: string;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+/**
+ * Phase AG.3 — deterministic "most recent operation" ordering, independent of
+ * any database-level sort. `completedAt` was historically left null on some
+ * early-exit failure paths in `runLoop` (fixed alongside this helper, see
+ * decision-log), which could leave a genuinely older failed session sorting
+ * ahead of a newer completed one under a naive `.sort({ completedAt: -1 })`.
+ * This function always ranks by the session's most meaningful timestamp —
+ * `completedAt` when set, `startedAt` otherwise — so every consumer
+ * (OperatorConsole, ActiveOperationsPanel, LiveEvents) that renders
+ * `recentSessions[0]` agrees on what "last operation" means, and a failed
+ * session never stays pinned above a newer completed one.
+ */
+export function sortRecentSessions<T extends SortableSession>(sessions: T[]): T[] {
+  const effectiveTime = (s: T): string => s.completedAt || s.startedAt;
+  return [...sessions].sort((a, b) => {
+    const byTime = effectiveTime(b).localeCompare(effectiveTime(a));
+    if (byTime !== 0) return byTime;
+    // Exact tie: a session with a real completedAt outranks one still open.
+    if (a.completedAt && !b.completedAt) return -1;
+    if (!a.completedAt && b.completedAt) return 1;
+    return 0;
+  });
 }
 
 /* ============================== narration =============================== */

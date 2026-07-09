@@ -24,6 +24,36 @@ export function peerUrl(serviceId: string, env: NodeJS.ProcessEnv = process.env)
   return `http://localhost:${port ?? 0}`;
 }
 
+/**
+ * Phase AG.4 — resolve a peer's base URL with the correct precedence for
+ * BOTH local dev and production, when a service-registry-resolved manifest
+ * domain is also available. Every service's manifest hardcodes its
+ * PRODUCTION subdomain (see e.g. services/internet-research-service/src/
+ * factory/manifest.ts) regardless of environment, so once a peer actually
+ * self-registers with a reachable LOCAL service-registry, naively preferring
+ * `registryDomain ?? peerUrl(...)` makes local dev silently fetch a real
+ * production host instead of localhost — reachable, but the wrong service,
+ * which typically manifests as a confusing 404 from whatever (if anything)
+ * answers that production subdomain. Precedence:
+ *   1. Explicit env override (`<SERVICE_ID>_URL`) — always wins when set.
+ *      This is how local dev pins a peer to localhost even though the
+ *      registry has a (correct-for-production) manifest record.
+ *   2. The service-registry's resolved manifest domain, when present —
+ *      correct in production, where DNS for that domain is real.
+ *   3. `peerUrl()`'s own localhost default, when neither of the above apply
+ *      (registry unreachable, or the peer hasn't registered yet).
+ */
+export function resolvePeerUrl(
+  serviceId: string,
+  registryDomain: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env[peerEnvKey(serviceId)];
+  if (override && override.length > 0) return override.replace(/\/+$/, '');
+  if (registryDomain && registryDomain.length > 0) return registryDomain.replace(/\/+$/, '');
+  return peerUrl(serviceId, env);
+}
+
 export interface PeerDispatchResult<T = unknown> {
   ok: boolean;
   status: number;

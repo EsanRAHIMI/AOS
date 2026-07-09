@@ -65,11 +65,18 @@ const fakeRouterReal = {
   generateStructured: async (_schema, opts) => ({
     data: {
       summary: 'A synthesized summary from the real results.',
-      findings: ['finding one', 'finding two'],
-      recommendations: ['do the thing'],
+      // Phase AG.5 — findings/opportunities are structured objects now (see
+      // shared/src/intelligence/index.ts LlmFindingSchema/LlmOpportunitySchema).
+      findings: [
+        { title: 'finding one', detail: 'detail one', whyItMatters: 'it matters one', confidence: 'medium', sourceIndexes: [0] },
+        { title: 'finding two', detail: 'detail two', whyItMatters: 'it matters two', confidence: 'medium', sourceIndexes: [1] },
+      ],
+      opportunities: [{ title: 'do the thing', action: 'do the thing', rationale: 'because', sourceIndexes: [] }],
+      nextActions: [],
+      limitations: [],
       sources: [{ title: 'WRONG TITLE', url: 'https://hallucinated-url.example/wrong', publisher: 'wrong', publishedAt: '', reliability: 'high', excerpt: 'wrong' }],
     },
-    trace: { traceId: 'trace_1', usedFallback: false },
+    trace: { traceId: 'trace_1', usedFallback: false, provider: 'openai', errorDetail: null },
   }),
 };
 const fakeSearchProvider = { providerId: 'tavily', search: async () => fakeSearchResults };

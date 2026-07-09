@@ -134,18 +134,19 @@ export function decideJarvisMode(intent: JarvisIntent): JarvisMode {
  *  a model guess. */
 export const AOS_SELF_KNOWLEDGE = {
   updatedAt: '2026-07-09',
-  currentPhase: 'Phase AD — Jarvis Intelligence Core & Living Command Home',
+  currentPhase: 'Phase AG.1 — Research Fabric Wired Into Jarvis/Operator',
   recentlyFixed: [
     'The operator/Jarvis command path was pure English regex matching with zero LLM usage and no composed natural-language reply — Phase AD added real intent classification, a ranked context packet and a grounded response composer (bilingual, EN/FA).',
+    'internet-research-service gained a real Tavily-backed WebSearchProvider (Phase AG), but neither Jarvis tool that could reach it was actually calling it: find_opportunities carried a hardcoded "research provider is not_configured" string, and research_topic only fired a fire-and-forget kernel task with no grounded reply. Phase AG.1 wired both to a synchronous internet-research-service dispatch that returns real findings + sourceMode in the same turn, and broadened the goal→tool matcher so free-text topic questions (not just "research..." phrasing) reach it.',
   ],
   knownGaps: [
-    'internet-research-service has no real web-search/fetch provider — research answers are LLM knowledge plus a curated fallback, not live search results.',
+    'Live web search only happens when TAVILY_API_KEY is set on internet-research-service specifically (that service must be restarted after the key is added/changed); without it, research honestly degrades to LLM recall or curated text and says so via sourceMode — it is never fabricated.',
     'Personal connectors (calendar, email, finance, presence/social) are honestly not_configured — no external data is ingested yet, only what the user tells AOS directly.',
     'No CI pipeline enforces typecheck/build/smoke on every change — verification is still manual scripts.',
     'Rate limiting, the safe-mode flag and the event bus are in-memory — they will not survive a multi-instance production deploy.',
     'Memory is compact structured records, not a full conversational transcript — Jarvis remembers facts and decisions, not verbatim chat history.',
   ],
-  highestLeverageNextStep: 'Wire a real search/fetch provider into internet-research-service so research-backed answers (opportunities, best practices) stop being knowledge-only, then add CI so contract drift is caught automatically.',
+  highestLeverageNextStep: 'Set a real TAVILY_API_KEY on internet-research-service in a networked environment and confirm a live sourceMode: search_api response end-to-end (never exercised in the sandbox this was built in), then add CI so contract drift is caught automatically.',
 } as const;
 
 /* ============================= context packet ============================= */

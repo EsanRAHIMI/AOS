@@ -32,6 +32,7 @@ const sharedLines = rootLines.filter(
     !/^MONITOR_AGENT_URL=/.test(line) &&
     !/^BROWSER_TESTING_AGENT_URL=/.test(line) &&
     !/^FILE_ASSET_SERVICE_URL=/.test(line) &&
+    !/^INTERNET_RESEARCH_SERVICE_URL=/.test(line) &&
     !/^MONITOR_INTERVAL_MS=/.test(line),
 );
 

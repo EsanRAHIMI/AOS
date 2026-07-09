@@ -46,7 +46,14 @@ export const LOCAL_SERVICES = [
     pkg: '@factory/gateway-api',
     alias: 'gateway',
     color: 'green',
-    extra: 'ORCHESTRATOR_AGENT_URL=http://localhost:4102',
+    // Phase AG.4 — INTERNET_RESEARCH_SERVICE_URL pins gateway-api's research
+    // dispatch to localhost even though internet-research-service self-
+    // registers with the local service-registry using its hardcoded
+    // PRODUCTION manifest domain (research.simorx.com) — without this
+    // override, resolvePeerUrl() would use that registry-resolved domain
+    // instead of localhost once the service is actually running (see
+    // decision-log D-14x). Same override mechanism as ORCHESTRATOR_AGENT_URL.
+    extra: 'ORCHESTRATOR_AGENT_URL=http://localhost:4102\nINTERNET_RESEARCH_SERVICE_URL=http://localhost:4115',
   },
   {
     num: 4,
@@ -116,6 +123,17 @@ export const LOCAL_SERVICES = [
   },
   {
     num: 10,
+    dir: 'internet-research-service',
+    id: 'internet-research-service',
+    name: 'Internet Research Service',
+    port: 4115,
+    pkg: '@factory/internet-research-service',
+    alias: 'research',
+    color: 'yellow',
+    extra: '',
+  },
+  {
+    num: 11,
     dir: 'file-asset-service',
     id: 'file-asset-service',
     name: 'File Asset Service',
@@ -126,7 +144,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 11,
+    num: 12,
     dir: 'monitor-agent',
     id: 'monitor-agent',
     name: 'Monitor Agent',
@@ -137,7 +155,7 @@ export const LOCAL_SERVICES = [
     extra: 'MONITOR_INTERVAL_MS=60000',
   },
   {
-    num: 12,
+    num: 13,
     dir: 'browser-testing-agent',
     id: 'browser-testing-agent',
     name: 'Browser Testing Agent',
@@ -148,7 +166,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 13,
+    num: 14,
     dir: 'code-operator-agent',
     id: 'code-operator-agent',
     name: 'Code Operator Agent',
@@ -159,7 +177,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 14,
+    num: 15,
     dir: 'dashboard-web',
     id: 'dashboard-web',
     name: 'Dashboard Web',

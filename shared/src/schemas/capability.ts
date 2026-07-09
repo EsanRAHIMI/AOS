@@ -148,6 +148,13 @@ export const LlmTraceSchema = z.object({
   completion: z.string().default(''),
   valid: z.boolean(),
   usedFallback: z.boolean().default(false),
+  /** Phase AG.3 — when usedFallback is true, the actual reason a real
+   *  provider call didn't produce validated data (HTTP/network error, or a
+   *  schema-validation mismatch on an otherwise-successful response). Never
+   *  silently discarded — this is what previously made fallback reasons
+   *  untraceable end-to-end. Null when usedFallback is false, or when no
+   *  provider was configured at all (mock — there was nothing to fail). */
+  errorDetail: z.string().nullable().default(null),
   attempts: z.number().default(1),
   tokensIn: z.number().default(0),
   tokensOut: z.number().default(0),

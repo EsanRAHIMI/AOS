@@ -128,6 +128,13 @@ export interface GenerateStructuredOpts<T> {
   maxAttempts?: number;
   fast?: boolean;
   promptVersion?: string;
+  /** Phase AG.3 — completion token budget for this call. Defaults to 1024
+   *  (the historical default) when unset. Tasks that ask the model to
+   *  synthesize over substantial retrieved content (e.g. research grounded
+   *  on several search results) need more headroom, or the completion gets
+   *  silently truncated into invalid JSON and looks identical to "the LLM
+   *  isn't configured" from the outside. */
+  maxTokens?: number;
   /**
    * Force deterministic fallback without calling any provider. The orchestrator
    * sets this when safe mode + LLM_SAFE_MODE_FALLBACK is on, or when a budget
@@ -208,21 +215,46 @@ export class LlmRouter {
     let costUsd = 0;
     let data: T | null = null;
     let usedFallback = false;
+    // Phase AG.3 — the specific reason the last attempt didn't produce
+    // validated data. Previously this was thrown away in a bare `catch {}`,
+    // so a real provider error (bad key, rate limit, 5xx, truncated/invalid
+    // JSON) was indistinguishable from "no provider configured" once the
+    // caller only had `usedFallback: true` to go on.
+    let lastError: string | null = null;
 
     if (this.providerName !== 'mock' && !opts.forceFallback) {
       const max = opts.maxAttempts ?? 2;
+      // Phase AG.5 — the specific corrective note appended to the prompt on
+      // a retry, once a prior attempt failed. Previously every retry
+      // attempt sent the IDENTICAL prompt again, so a model that
+      // misunderstood the required shape once would reliably misunderstand
+      // it again — attempt 2 failed with the exact same complaint as
+      // attempt 1. Now the model sees exactly what was wrong and where.
+      let correctiveNote = '';
       while (attempts < max && data === null) {
         attempts++;
         try {
-          const res = await this.provider.complete({ system, prompt: opts.prompt, model });
+          const res = await this.provider.complete({ system, prompt: opts.prompt + correctiveNote, model, maxTokens: opts.maxTokens });
           completion = res.text;
           tokensIn += res.tokensIn;
           tokensOut += res.tokensOut;
           costUsd += res.costUsd;
           const parsed = schema.safeParse(extractJson(res.text));
-          if (parsed.success) data = parsed.data;
-        } catch {
-          /* retry */
+          if (parsed.success) { data = parsed.data; lastError = null; }
+          else {
+            // Phase AG.5 — surface the failing field PATH, not just the
+            // generic Zod message ("expected string, received undefined"
+            // alone doesn't say which field). `issues[0]` is the first of
+            // possibly several; the path is the actionable part for both
+            // the corrective retry and for whoever reads errorDetail later.
+            const issue = parsed.error.issues[0];
+            const path = issue && issue.path.length > 0 ? issue.path.join('.') : '(root)';
+            const issueMessage = issue?.message ?? 'validation failed';
+            lastError = `provider responded but output did not match the expected schema (attempt ${attempts}) at "${path}": ${issueMessage}`;
+            correctiveNote = `\n\nYour previous response was invalid JSON for the required schema — the field at "${path}" was wrong or missing: ${issueMessage}. Respond again with ONLY corrected, complete JSON matching the schema exactly. Every required field must be present; if a narrative field is genuinely unknown, use a short honest placeholder string instead of omitting the key.`;
+          }
+        } catch (e) {
+          lastError = `${this.providerName} call failed (attempt ${attempts}): ${e instanceof Error ? e.message : 'request failed'}`;
         }
       }
     }
@@ -246,6 +278,7 @@ export class LlmRouter {
       completion,
       valid: true,
       usedFallback,
+      errorDetail: usedFallback ? lastError : null,
       attempts: attempts || 0,
       tokensIn,
       tokensOut,

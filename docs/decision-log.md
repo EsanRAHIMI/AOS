@@ -2,6 +2,263 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase AH.2 Health Intelligence Surface
+
+### D-153 Anatomical regions and systemic layers are different kinds of things, and the architecture says so
+The rebuilt health surface splits its 20 domains into 14 anatomical regions (rendered as on-body
+anchors + rail chips) and 6 systemic layers (sleep/recovery, stress/nervous, activity, body
+composition, energy/hormones, general — rendered as a chip strip, never as a fake organ dot),
+because pinning "sleep" or "BMI" to a body coordinate is medically dishonest and visually
+arbitrary. This split is the scaling seam: new regions only need an anchor + short label; new
+cross-body categories (wearables, labs, AI interpretations) become layers with zero geometry work;
+and multi-user/citizen monitoring reuses `buildHealthModel()` per person since the model is a pure
+function of metrics. Severity became a five-grade scale (critical/attention/moderate/optimal/noted)
+instead of ok/warn/err so triage order, chip retention under space pressure, and worst-first
+sorting all derive from one vocabulary. Rails retain worst-severity chips and cap per variant
+("+N more" overflow) so many metrics degrade gracefully instead of stacking labels into noise —
+the compact/full variant pair (homepage card vs /health room) is the same component over the same
+model, keeping one source of truth. `BodyMap` stays as a thin compat wrapper so the `BodyMetric`
+contract and both consumers were untouched.
+
+## 2026-07-10 — Phase AH Premium Body Intelligence Map
+
+### D-152 Hand-tuned inline SVG silhouette over a body-map library, with zone logic split out as pure TS
+The Health zone's visual was rebuilt as a custom anatomical silhouette (a single hand-tuned cubic
+path) instead of adopting a react-body-highlighter-style dependency: the AOS aesthetic (dark glass,
+glow, biometric rings, recovery orbit) is not what those libraries render, the runtime cost of a
+dependency buys nothing over a static path, and a library's region taxonomy would dictate our
+semantics instead of the reverse. Semantics live in `src/lib/bodyZones.ts` — a JSX-free module
+mapping every metric to one of 7 zones (unknown metrics fall back to whole-body rather than being
+dropped or guessed at) — so smoke tests exercise the real mapping logic without a JSX/DOM toolchain
+(same standalone-compile pattern as AF.2's domainCanvas). Every zone always exists in the model and
+all geometry/ids are static constants, which is what structurally rules out hydration mismatches.
+Concern signaling stays calm by design: a slow opacity pulse and a small counter in the err tone,
+never a modal/alert-style treatment — consistent with the "observable, not alarming" dashboard
+principle. The `BodyMetric` contract was intentionally left unchanged so both consumers
+(`/health`, homepage card) upgraded without edits.
+
+## 2026-07-09 — Phase AG.5 Research LLM Output Schema/Prompt/Retry-Repair Fix
+
+### D-148 The prompt and the schema had fallen out of sync — the fix changes both together, not one alone
+Phase AG.3's v2 prompt asked the model to reason toward a richer answer (findings that explain *why*
+they matter, opportunity/next-action recommendations) than the flat `findings: string[]` schema still
+accepted, and never told the model the literal JSON field names to use. Patching only the prompt (to
+ask for the old flat shape again) would have reverted AG.3's actual improvement; patching only the
+schema (to accept anything) would have violated "do not accept invalid vague output." The fix instead
+brings the schema forward to match what the prompt already wanted — structured findings/opportunities
+with required core fields and safely-defaulted optional narrative fields — and gives the prompt an
+explicit, literal JSON shape example colocated with the schema in the same file, so future changes to
+one are far more likely to be caught updating the other than when the shape lived only in prose.
+
+### D-149 Required vs. optional is decided per-field by whether omission is ever legitimate, not applied uniformly
+`title`/`detail` on a finding (and `title`/`action` on an opportunity) stay strictly required — a
+finding with no title or detail isn't a valid finding, and loosening that would violate the explicit
+"do not make everything loose" instruction. `whyItMatters`/`confidence`/`sourceIndexes`/`rationale`
+default safely instead, because a model can legitimately have a real finding without enough evidence to
+say confidently why it matters — forcing that case to fail validation would reject good-faith, honest
+output for the wrong reason. The default value itself ("Not enough evidence in retrieved sources.") is
+a stated absence of evidence, never an invented claim — satisfying "if unknown, use a short honest
+string" without ever fabricating content to satisfy the schema.
+
+### D-150 The public ResearchReport contract stays untouched; only the LLM-facing intermediate schema changed
+`ResearchReport.findings`/`.recommendations` remain flat `string[]`, exactly as they've been since
+Phase 13 — every downstream consumer (Jarvis-facing summary text in `interpretResearchTaskResponse()`,
+`ResearchTaskPayload`, the dashboard, and the AG.2/AG.3/AG.4 smoke tests) needed zero changes. New
+`flattenFindings()`/`flattenRecommendations()` helpers convert the richer LLM output down to that flat
+shape at the one place `runResearch()` builds the stored report. This kept the fix's blast radius to
+exactly the two files that needed to change (`shared/src/intelligence/index.ts`,
+`shared/src/llm/index.ts`) plus fixture updates in two existing smoke tests, rather than propagating a
+new nested shape through gateway-api, the dashboard, and every schema/contract that reads a research
+report — consistent with "smallest correct fix" across every AG.x phase so far.
+
+### D-151 Retry-repair works by telling the model exactly what was wrong, not by asking it to guess again
+`generateStructured()`'s retry loop previously sent the byte-identical prompt on every attempt — a
+model that misunderstood the required shape once had no reason to understand it differently the second
+time, which is exactly why the reported bug said "(attempt 2)" in its error text. The fix captures the
+first failure's exact field path (via `parsed.error.issues[0].path`, not just `.message`) and appends a
+corrective note to the retry prompt naming that path and the underlying reason, instructing the model to
+return corrected JSON with every required field present. This is now a real repair mechanism, verified
+in the new smoke test with a fake provider that only succeeds on attempt 2 *if* the corrective note
+actually reached the prompt — not merely retried optimistically.
+
+## 2026-07-09 — Phase AG.4 Research Route/Host Contract Fix
+
+### D-145 A registered production domain, not a missing route, was the actual cause of the research 404
+`internet-research-service` already correctly registers `POST /.factory/task` via the same
+`createFactoryService` mechanism every service uses — there was no route or contract gap to add.
+Investigation instead found the defect in gateway-api's `dispatchResearch()`: `svc?.domain ??
+peerUrl(...)`, where `svc` is the service's own self-registered manifest resolved from the local
+service-registry. Every service's manifest hardcodes its PRODUCTION subdomain
+(`https://{id}.simorx.com`) regardless of environment — this is correct and necessary for production
+(Dokploy deployments are real, separate hosts reachable only by their real domain), but in local dev,
+where `SERVICE_REGISTRY_URL` points at a locally-running service-registry, every service still
+self-registers with that same hardcoded production domain. `internet-research-service` only began
+actually completing this self-registration successfully after Phase AG.2 added it to
+`LOCAL_SERVICES` — before that, it never started locally at all, so `ctx.registry.resolve()` always
+returned null and `dispatchResearch()` always fell through to the correct `peerUrl()` localhost
+default by accident. Once the service was actually running (Phase AG.2's fix), the registry began
+returning a real record whose `domain` is `https://research.simorx.com` — the owner's actual root
+domain, which resolves and answers HTTP requests (just not with this service or route), producing
+"reachable... 404... unknown error" instead of a DNS-level connection failure. This is a genuinely
+different failure class from Phase AG.2's (that was the service never listening at all); the same
+symptom text ("returned 404") could easily be mistaken for a route-naming bug, but the actual defect
+was entirely in *which host* gateway-api chose to call, not *which path*.
+
+### D-146 `resolvePeerUrl()` fixes this without weakening production correctness or duplicating `peerUrl()`
+The tempting quick fix — always use `peerUrl()` and drop the registry lookup for research — would have
+broken production, where gateway-api has no `INTERNET_RESEARCH_SERVICE_URL` env var configured and
+relies on the registry-resolved domain being correct (each service really is a separate, independently
+deployed Dokploy host reachable only by its real subdomain). The chosen fix instead adds explicit
+precedence: an env override (local-dev-only, wired through `scripts/local-services.mjs`'s existing
+`extra` mechanism — the same one already used for `ORCHESTRATOR_AGENT_URL`) beats the registry domain,
+which beats `peerUrl()`'s bare localhost default. This is implemented once as a pure, exported,
+unit-tested `resolvePeerUrl()` in `shared/src/discovery/index.ts` rather than inline in
+`dispatchResearch()`, specifically so the identical fix can be applied to the 6 other gateway-api call
+sites carrying the exact same `svc?.domain ?? peerUrl(...)` pattern (`orchestrator-agent` ×4,
+`monitor-agent` ×2) in a future pass without re-deriving the precedence logic — those were left
+unfixed here because the reported bug and requested scope were specifically the research route, and
+because those call sites currently fail silently (fire-and-forget, caught and logged as a warning)
+rather than surfacing a user-visible error, making them lower urgency but not lower risk.
+
+### D-147 404/405 is a distinct `route_not_found` outcome, and raw response bodies are no longer discarded
+`interpretResearchTaskResponse()` previously bucketed every non-2xx status into the same generic
+`service_error`, and always discarded the actual response body via `r.json().catch(() => ({}))` before
+even checking whether it parsed — so a non-JSON body (such as the HTML a misrouted host actually
+returns) silently became the bare, undiagnosable "unknown error", which is exactly what made this
+bug's real cause invisible from the Jarvis reply text alone. 404/405 now get their own `route_not_found`
+classification (a request that reached a real server but found no matching route/method — a contract
+bug, not a generic failure), and `dispatchResearch()` now captures the raw response text unconditionally
+before attempting to parse it as JSON, threading it through as `meta.rawBodySnippet` so the summary can
+quote it directly. This follows the same "never fake success, never hide the real reason" discipline
+established in Phase AG.3 for LLM synthesis failures — applied here to HTTP/routing failures instead.
+
+## 2026-07-09 — Phase AG.3 Research Synthesis Quality & Stale Last-Operation Fix
+
+### D-142 A discarded error, not a design gap, was silently downgrading real search results to raw snippets
+The symptom ("6 real Tavily results, but `No LLM synthesis was performed this run`") looked like it
+could be `runResearch()` intentionally skipping synthesis when grounded, or an env-sync gap specific
+to `internet-research-service`. Both were ruled out: the grounded prompt in `runResearch()` already
+asked for real synthesis, and the service's LLM env matches every other agent's exactly. The actual
+defect was in `LlmRouter.generateStructured()` (`shared/src/llm/index.ts`): its retry loop's `catch`
+block discarded the thrown error entirely, and a schema-validation failure was distinguished from "no
+provider configured" nowhere in the returned trace — both collapsed into `usedFallback: true` with no
+further detail. Compounding this, every completion request used the historical default
+`maxTokens: 1024`, which is tight for a response that must echo metadata for up to 6 sources plus a
+summary/findings/recommendations — a truncated completion is invalid JSON, which schema-validates as
+a failure and looks identical to "the LLM isn't configured" from the caller's side. Fixed by capturing
+the real per-attempt failure reason into a new `LlmTrace.errorDetail` field (thrown-error message or
+which schema check failed) and adding a `maxTokens` option to `generateStructured()`, set to 3072 for
+research specifically. `runResearch()` now derives `synthesisMode`/`synthesisFailureReason` from this
+trace and states the *real* reason inline in the report summary instead of a generic "(deterministic
+fallback)" phrase — directly satisfying the standing "no fake success" principle: a run must never be
+labeled complete research when only raw snippets were actually produced, and the reason for the
+downgrade must never be hidden.
+
+### D-143 `synthesisMode` is a field independent of `sourceMode`, not a replacement for it
+Phase AG already distinguished *where source URLs came from* (`sourceMode: search_api | llm_only |
+curated_fallback`). This phase adds `synthesisMode: llm_synthesized | deterministic_fallback` as an
+orthogonal axis — *whether the prose was reasoned over by an LLM*. The two can and do disagree: a run
+can have real Tavily URLs (`sourceMode: search_api`) while LLM synthesis itself failed
+(`synthesisMode: deterministic_fallback`), which is exactly the reported bug. Keeping them as separate
+fields (rather than collapsing into one combined enum) means each caller — `interpretResearchTaskResponse()`,
+Jarvis, the dashboard — can report both facts honestly without one masking the other; a hasty design
+that conflated them would have had to pick one label for this exact combination and inevitably erred
+toward overstating the result as either "unconfigured" (technically wrong — search worked) or "real"
+(also wrong — synthesis didn't happen).
+
+### D-144 Stale last-operation display: fix the root cause AND add a deterministic pure sort, not one or the other
+Investigation found a genuine defect (`runLoop()`'s two early-`break` failure exit paths never set
+`session.completedAt`, unlike the "reached the end of the plan" path) but reasoning through MongoDB's
+BSON sort semantics for `.sort({ completedAt: -1 })` suggested a null `completedAt` sorts *last* in
+descending order, not first — meaning the null-completedAt bug alone likely wasn't sufficient to fully
+explain the exact "stale failed session shown ahead of a newer completed one" symptom on its own, and
+the precise mechanism was not pinned down with full certainty. Rather than keep investigating to find
+one single root cause, both were fixed: the `completedAt` gap (a real, independently-motivated defect
+matching the user's explicit ask about "completedAt sorting"), plus a new pure, exported, unit-tested
+`sortRecentSessions()` helper (`shared/src/operator/index.ts`) applied server-side to
+`/v1/operator/live-state`'s `recentSessions` array before any consumer reads `[0]` from it. This
+defense-in-depth approach means the displayed ordering is now correct regardless of the exact
+mechanism behind the original symptom, and stays correct even if some other future code path leaves
+`completedAt` unset again — the guarantee lives in one deterministic function every consumer shares,
+not in each caller independently getting a database-level sort right.
+
+## 2026-07-09 — Phase AG.2 internet-research-service Reachability
+
+### D-140 Root cause of "fetch failed" was a missing service-catalog entry, not a URL/env bug
+After Phase AG.1 wired `find_opportunities`/`research_topic` to call `internet-research-service`
+synchronously, the live symptom was `"Could not reach internet-research-service ... fetch failed"`.
+Investigation confirmed gateway-api's URL construction was already correct (`peerUrl()` resolves
+`http://localhost:4115` by default, matching `SERVICE_PORTS['internet-research-service']`), and the
+service itself correctly exposes `/health` and `/.factory/task`. The actual defect was one directory
+up: `scripts/local-services.mjs` — the single source of truth for both `pnpm dev:all` (which
+services actually get started) and `pnpm sync:env` (which services get a `.env` file written to
+their directory) — never included `internet-research-service`. It has existed since the service was
+first added (long before Phase AG), silently: nothing depended on reaching it synchronously until
+Phase AG.1, so the gap was invisible until now. Fixed by adding it to `LOCAL_SERVICES` (port 4115,
+`@factory/internet-research-service`), which makes both `dev:all` and `sync:env` include it, and
+renumbering the local dev roster from 14 to 15 entries (also surfaced `code-operator-agent` was
+missing from `README-SETUP.md`'s walkthrough for the same historical reason — added alongside it for
+consistency, since fixing the table without it would have left a second, adjacent inaccuracy).
+
+### D-141 Dispatch outcome classification moved into pure, exported helpers in `shared/src/research`
+The previous `dispatchResearch()` in gateway-api collapsed three genuinely different situations
+(connection refused, HTTP error, and "reached fine but Tavily isn't configured") into similar-looking
+generic error strings, which is what made the real bug (service never started) indistinguishable
+from a configuration problem in the reported symptom. `classifyResearchFetchFailure()` and
+`interpretResearchTaskResponse()` are pure functions (no I/O) that turn a raw fetch failure or HTTP
+response into one of `service_unreachable | service_error | empty_result | provider_not_configured |
+null`, callable and unit-testable from a compiled smoke script exactly like every other pure module
+in this codebase (`estimateReliability`, `rankOpportunities`, etc.) — gateway-api keeps the network
+call itself but delegates interpretation. Critically, `provider_not_configured` carries `ok: true`:
+a service that is reachable and honestly reports `sourceMode: 'llm_only'` did real work and said so
+correctly — it is not the same class of problem as the service being down, and conflating the two
+in the same "failure" bucket was part of what made the original symptom hard to diagnose from the
+Jarvis reply text alone.
+
+## 2026-07-09 — Phase AG.1 Research Fabric Wired Into Jarvis/Operator
+
+### D-136 Real research is dispatched synchronously from gateway-api, not via the async kernel-task pipeline
+Phase AG built `runResearch()` and a real `WebSearchProvider`, but the only Jarvis-reachable tool
+wired to it (`research_topic`) called `createKernelTask()` — a fire-and-forget dispatch to
+orchestrator-agent that replied "Research task started" in the same turn and left the actual
+findings, `sourceMode`, and sources to show up later on `/research`, disconnected from the
+conversation. A second tool, `find_opportunities`, carried a hardcoded `"research provider is
+not_configured"` string that never checked whether Tavily was actually configured at all. Both are
+now direct, synchronous `fetch()` calls from gateway-api to `internet-research-service`'s
+`/.factory/task` (same pattern already used for `check_service_health`, `code-operator-agent`
+tools, and monitor-agent repair dispatch — `executionPath: 'gateway_internal'`, not
+`'kernel_task'`), awaited with a 45s timeout so the grounded summary, `sourceMode`, and top sources
+land in the same reply the user is waiting on. The orchestrator's async `runResearchPipeline` is
+unchanged and still used for multi-stage strategic-planning goals created via `/v1/tasks` — this
+only affects the two tools the live Jarvis conversation can reach.
+
+### D-137 `find_opportunities` keeps recorded-opportunity ranking as the first source of truth; live research is a fallback, not a replacement
+A user's own captured opportunities (via `POST /v1/me/reality/ingest`) carry goal-linkage and
+confidence scoring that a fresh web search cannot reconstruct. When the DB has ranked opportunities,
+the tool still returns them unchanged. Live research only runs when the DB is empty, using the
+user's actual goal text as the topic — replacing a permanently-hardcoded excuse string with a real,
+honestly-labeled attempt, without discarding the higher-quality DB path when it has data.
+
+### D-138 Goal→tool matching for open research questions is broadened beyond the literal words "research"/"investigate"
+The reported failure ("Find current AI lighting design trends in Dubai luxury interiors") contains
+none of the keywords the original `research_topic` trigger required. The deterministic matcher in
+`planForGoal()` (`shared/src/operator/index.ts`) is intentionally regex-based, not LLM-based, so it
+stays auditable and reproducible — the fix is a wider, still-deterministic regex (adds `trends`,
+`find (the )?(current|latest|out about)`, `what's the latest/new/happening (in|on|with)`) checked
+before the narrower `"opportunities ... me/my"` pattern, so generic topic questions reach research
+and personal opportunity questions still reach DB-first ranking.
+
+### D-139 `GET /v1/system/integrations`'s `research.configured` flag is cosmetic, not authoritative
+`webSearchStatusFromEnv()` reads gateway-api's own process env, but gateway-api never calls Tavily
+directly — it always delegates to `internet-research-service`, which is the only process that needs
+`TAVILY_API_KEY`. Making the integrations flag authoritative would require gateway-api to either
+duplicate the key (redundant secret sprawl) or query a new status endpoint on
+internet-research-service (a real design change, out of scope for this fix per explicit instruction
+not to redesign the research system). Left as-is with an explicit code comment; the authoritative,
+always-accurate signal is the `sourceMode` returned on every individual `research_topic`/
+`find_opportunities` reply, which reflects that specific call's real outcome rather than a cached
+boot-time flag.
+
 ## 2026-07-09 — Phase AG Real Research & Intelligence Fabric
 
 ### D-132 Tavily as the first real web-search provider, behind a swappable `WebSearchProvider` interface

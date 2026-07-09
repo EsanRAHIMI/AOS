@@ -279,3 +279,11 @@ button { font: inherit; }
 .uz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; align-items: stretch; }
 .uz-card { transition: transform 140ms ease, box-shadow 140ms ease; min-height: 190px; }
 .uz-card:hover { transform: translateY(-2px); box-shadow: 0 12px 34px -14px rgba(110,168,255,0.35); }
+
+/* Phase AH — premium Body Map (BodyMap.tsx). CSS-only motion: a slow
+   attention pulse for concern rings and a calm breathe on active markers. */
+@keyframes bm-pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 0.08; } }
+@keyframes bm-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.bm-pulse { animation: bm-pulse 2.1s ease-in-out infinite; }
+.bm-breathe { animation: bm-breathe 2.8s ease-in-out infinite; }
+.bm-hotspot { cursor: pointer; }

@@ -20,6 +20,7 @@ import {
   ROLE_HEADER,
   REQUEST_ID_HEADER,
   peerUrl,
+  resolvePeerUrl,
   TaskRequestSchema,
   hasValidInternalToken,
   hasValidAdminToken,
@@ -62,6 +63,7 @@ import {
   classifyToolFailure,
   narrateStep,
   stopSessionOnFailure,
+  sortRecentSessions,
   canAccess,
   buildAccessDecision,
   stampScope,
@@ -159,6 +161,8 @@ import {
   llmStatusFromEnv,
   gitHubDeliveryFromEnv,
   webSearchStatusFromEnv,
+  classifyResearchFetchFailure,
+  interpretResearchTaskResponse,
   type ServiceActivation,
   type DeploymentChecklist,
   type MonitorRun,
@@ -786,6 +790,13 @@ async function main(): Promise<void> {
       // search real/not_configured (Phase AG — this endpoint was previously
       // silent on research entirely; internet-research-service's search
       // status now reports honestly here too).
+      // NOTE (Phase AG.1): `webSearchStatusFromEnv()` reads THIS process's
+      // own env — it does not query internet-research-service. The service
+      // that actually performs the search only needs TAVILY_API_KEY on
+      // itself; this endpoint's `research.configured` is cosmetic and will
+      // read false here unless gateway-api also carries the key. The
+      // authoritative live signal is the `sourceMode` returned on every
+      // research_topic/find_opportunities reply, not this status flag.
       app.get('/v1/system/integrations', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const gh = gitHubDeliveryFromEnv();
@@ -2563,6 +2574,55 @@ async function main(): Promise<void> {
           return { ok: false, summary: `code-operator-agent unreachable: ${e instanceof Error ? e.message : 'error'}` };
         }
       };
+      // Phase AG follow-through — real synchronous research dispatch shared by
+      // find_opportunities (DB-empty fallback) and research_topic (direct
+      // ask). Calls internet-research-service's /.factory/task and AWAITS
+      // the real runResearch() result (Tavily when TAVILY_API_KEY is set on
+      // THAT service; honest LLM-recall/curated fallback when it isn't) —
+      // no fire-and-forget kernel task, so sourceMode/provider/sources land
+      // in this same reply instead of a separate async report.
+      // Phase AG.1 follow-up — network I/O (the fetch itself) stays here;
+      // interpreting the raw fetch failure / HTTP response into a specific
+      // outcome (service_unreachable vs service_error vs empty_result vs
+      // provider_not_configured vs real search_api) is delegated to pure,
+      // unit-testable helpers in shared/src/research (see decision-log D-140).
+      const dispatchResearch = async (topic: string): Promise<{ ok: boolean; summary: string; data?: unknown }> => {
+        const svc = await ctx.registry.resolve('internet-research-service');
+        // Phase AG.4 — svc?.domain is the service's SELF-REGISTERED manifest
+        // domain, which is hardcoded to its PRODUCTION subdomain regardless
+        // of environment (see internet-research-service/src/factory/
+        // manifest.ts). Once the service actually starts locally and
+        // registers with a reachable local service-registry (true only
+        // since Phase AG.2 added it to LOCAL_SERVICES), naively preferring
+        // that domain over peerUrl()'s localhost default made gateway-api
+        // silently fetch a real, unrelated production host — reachable, but
+        // not this service, which is exactly what produced "internet-
+        // research-service returned 404: unknown error". resolvePeerUrl()
+        // lets an explicit INTERNET_RESEARCH_SERVICE_URL env override (set
+        // for local dev in scripts/local-services.mjs, same mechanism
+        // already used for ORCHESTRATOR_AGENT_URL) win over the registry
+        // domain, while leaving production (no override set) unchanged.
+        const url = resolvePeerUrl('internet-research-service', svc?.domain);
+        const taskUrl = `${url}/.factory/task`;
+        let r: Response;
+        try {
+          r = await fetch(taskUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
+            body: JSON.stringify({ taskId: genId('task'), goal: topic, input: { topic } }),
+            signal: AbortSignal.timeout(45000),
+          });
+        } catch (e) {
+          return classifyResearchFetchFailure(url, e instanceof Error ? e.message : 'request failed');
+        }
+        // Phase AG.4 — read the raw text first so a non-JSON body (e.g. an
+        // HTML 404 page from a misrouted host) is still visible in the
+        // error summary instead of silently collapsing to "unknown error".
+        const rawText = await r.text().catch(() => '');
+        let body: Parameters<typeof interpretResearchTaskResponse>[2] = {};
+        try { body = rawText ? JSON.parse(rawText) : {}; } catch { /* non-JSON — surfaced via rawBodySnippet below */ }
+        return interpretResearchTaskResponse(r.status, r.ok, body, { url: taskUrl, method: 'POST', rawBodySnippet: rawText });
+      };
       let codeWorkspaceProbe: { at: number; configured: boolean } = { at: 0, configured: false };
       const codeWorkspaceConfigured = async (): Promise<boolean> => {
         if (Date.now() - codeWorkspaceProbe.at < 60000) return codeWorkspaceProbe.configured;
@@ -2902,7 +2962,11 @@ async function main(): Promise<void> {
         // Kernel task pipelines (real agents).
         create_task: async (args) => { const id = await createKernelTask(String(args.goal ?? 'Operator task'), ['operator']); return { ok: true, summary: `Task ${id} started.`, data: { taskId: id } }; },
         create_new_service: async (args) => { const id = await createKernelTask(String(args.goal ?? 'Create a new service'), ['service-creation', 'operator']); return { ok: true, summary: `Service-creation task ${id} started (architect → builder → validation).`, data: { taskId: id } }; },
-        research_topic: async (args) => { const id = await createKernelTask(String(args.goal ?? 'Research current best practices.'), ['research', 'operator']); return { ok: true, summary: `Research task ${id} started.`, data: { taskId: id } }; },
+        // Phase AG follow-through — was a fire-and-forget kernel task that
+        // only ever replied "Research task started"; now calls the real
+        // research fabric synchronously and returns grounded findings +
+        // sourceMode in this same turn.
+        research_topic: async (args) => dispatchResearch(String(args.goal ?? 'current best practices').slice(0, 300)),
         analyze_history: async () => { const id = await createKernelTask('Analyze system history and recommend improvements', ['learning', 'operator']); return { ok: true, summary: `Learning analysis task ${id} started.`, data: { taskId: id } }; },
         generate_report: async () => { const id = await createKernelTask('Generate an executive system report.', ['report', 'operator']); return { ok: true, summary: `Report task ${id} started.`, data: { taskId: id } }; },
         run_security_check: async (_args, role) => {
@@ -3144,14 +3208,25 @@ async function main(): Promise<void> {
           if (resume) await resumeProfiles.updateOne({ resumeProfileId: resume.resumeProfileId }, { $set: { ...analysis, updatedAt: nowIso() } });
           return { ok: true, summary: `Positioning: ${analysis.positioning} Facts(verified): ${analysis.verifiedFacts.length}; your claims: ${analysis.userClaims.length}; inferences: ${analysis.modelInferences.length}. Top improvements: ${analysis.suggestions.slice(0, 2).join(' ')}`, data: analysis };
         },
-        find_opportunities: async (_args, role) => {
+        find_opportunities: async (args, role) => {
           const actor = legacyRoleToAuthContext(role);
           if (!actor.primaryUserId) return { ok: false, summary: 'No user identity — user scope fails closed.' };
           const opps = await personalOpportunities.find({ scope: 'user', userId: actor.primaryUserId, status: { $in: ['proposed', 'accepted', 'in_progress'] } }, { projection: { _id: 0 } }).limit(100).toArray();
-          if (opps.length === 0) return { ok: true, summary: 'No opportunities recorded in your scope yet, and the research provider is not_configured — I will not invent market claims. Ingest opportunity candidates (income ideas, career options) or configure research later.' };
-          const ranked = rankOpportunities(opps);
-          const top = ranked[0];
-          return { ok: true, summary: `Top opportunity: “${top?.title}” (${top?.category}), value ${top?.valueScore} — ${top?.reason.slice(0, 120)} [source: ${top?.source}, confidence ${top?.confidence}]. Next: ${top?.recommendedNextAction || 'define the first concrete step'}. ${ranked.length} ranked in total.`, data: { ranked: ranked.slice(0, 5) } };
+          if (opps.length > 0) {
+            const ranked = rankOpportunities(opps);
+            const top = ranked[0];
+            return { ok: true, summary: `Top opportunity: “${top?.title}” (${top?.category}), value ${top?.valueScore} — ${top?.reason.slice(0, 120)} [source: ${top?.source}, confidence ${top?.confidence}]. Next: ${top?.recommendedNextAction || 'define the first concrete step'}. ${ranked.length} ranked in total.`, data: { ranked: ranked.slice(0, 5) } };
+          }
+          // Phase AG follow-through — this used to be a hardcoded
+          // "research provider is not_configured" string regardless of
+          // whether Tavily was actually configured. Now it researches the
+          // real goal text live via internet-research-service and reports
+          // the actual sourceMode; only a genuine dispatch failure falls
+          // back to an honest "not available" message.
+          const topic = String(args.goal ?? '').trim() || 'high-value income and career opportunities';
+          const research = await dispatchResearch(topic);
+          if (research.ok) return { ok: true, summary: `No opportunities recorded in your scope yet — researched live instead. ${research.summary}`, data: research.data };
+          return { ok: true, summary: `No opportunities recorded in your scope yet, and live research failed: ${research.summary} Ingest opportunity candidates directly (POST /v1/me/reality/ingest), or fix internet-research-service/TAVILY_API_KEY.` };
         },
         propose_aos_build: async (_args, role) => {
           const actor = legacyRoleToAuthContext(role);
@@ -3257,7 +3332,11 @@ async function main(): Promise<void> {
               // Observational failures don't kill the session; failures in the
               // critical chain (code/test/service/deploy/…) STOP it — a session
               // with failed critical steps is never reported as completed.
-              if (stopSessionOnFailure(tool.category)) { session.status = 'failed'; break; }
+              // Phase AG.3 — completedAt must be set on every terminal exit, not
+              // only the "reached the end of the plan" path below. Leaving it
+              // null on an early-failure break made this session sort/display
+              // as stale relative to later-completed sessions (see decision-log).
+              if (stopSessionOnFailure(tool.category)) { session.status = 'failed'; session.completedAt = nowIso(); break; }
             } else {
               await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_TOOL_EXECUTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: tool.toolId, message: res.summary.slice(0, 160), level: 'success' } });
             }
@@ -3269,7 +3348,7 @@ async function main(): Promise<void> {
             if (fa.mistakeMemory) { const mid = await writeOpMemory(role, 'mistake_avoidance', fa.mistakeMemory, session.runtimeSessionId, tool.toolId); session.memoryIds.push(mid); }
             await opToolRuns.updateOne({ toolRunId: run.toolRunId }, { $set: { status: 'failed', resultSummary: msg, failureCause: fa.cause, finishedAt: nowIso() } });
             await recordStep(session, stepDef, narrateStep(tool.name, false, fa.cause), msg, 'failed');
-            session.status = 'failed'; session.nextAction = fa.nextAction;
+            session.status = 'failed'; session.nextAction = fa.nextAction; session.completedAt = nowIso();
             break;
           }
           session.currentStep++;
@@ -3374,14 +3453,24 @@ async function main(): Promise<void> {
       app.get('/v1/operator/live-state', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const ACTIVE_SESSION_STATUSES = ['planning', 'running', 'waiting_approval', 'verifying'] as const;
-        const [activeSessions, recentSessions, pendingApprovals, recentTasks, recentEvents, recentJarvisTurns] = await Promise.all([
+        const [activeSessions, recentSessionsRaw, pendingApprovals, recentTasks, recentEvents, recentJarvisTurns] = await Promise.all([
           opSessions.find({ status: { $in: ACTIVE_SESSION_STATUSES } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(20).toArray(),
-          opSessions.find({ status: { $in: ['completed', 'failed'] } }, { projection: { _id: 0 } }).sort({ completedAt: -1 }).limit(10).toArray(),
+          // Secondary tiebreaker on startedAt: two sessions can legitimately
+          // share the same completedAt millisecond, and Mongo's tie order is
+          // otherwise unspecified. sortRecentSessions() below is the real,
+          // deterministic ordering guarantee (also covers any session where
+          // completedAt was historically left null); this query-level sort
+          // just narrows the DB-side candidate set before that final pass.
+          opSessions.find({ status: { $in: ['completed', 'failed'] } }, { projection: { _id: 0 } }).sort({ completedAt: -1, startedAt: -1 }).limit(10).toArray(),
           opPermissions.find({ status: 'pending' }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray(),
           tasks.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray(),
           events.find({ type: { $in: [...IMPORTANT_OPERATOR_EVENT_TYPES] } }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
           jarvisTurns.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(5).toArray(),
         ]);
+        // Phase AG.3 — deterministic recency ordering applied in application
+        // code, not trusted to the DB sort alone (see decision-log): a failed
+        // session must never display ahead of a newer completed one.
+        const recentSessions = sortRecentSessions(recentSessionsRaw);
         const headline = activeSessions[0] ?? recentSessions[0] ?? null;
         const activeOperationSummary = headline ? `${headline.goal} — ${headline.status.replace(/_/g, ' ')}` : null;
         return success({ activeSessions, recentSessions, pendingApprovals, recentTasks, recentEvents, recentJarvisTurns, activeOperationSummary, generatedAt: nowIso() });

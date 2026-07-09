@@ -2238,3 +2238,712 @@ scoring...") remains open.
 Scope: `shared/src/{research/index.ts (new), intelligence/index.ts, schemas/intelligence.ts,
 env/index.ts, index.ts}`, `services/{internet-research-service/src/index.ts, gateway-api/src/index.ts,
 dashboard-web/src/app/research/{page.tsx,[id]/page.tsx}}`, `.env.example`, `scripts/`, `docs/`.
+
+## Phase AG.1 — Research Fabric Wired Into Jarvis/Operator — COMPLETE (2026-07-09)
+
+Bug report (owner, live testing): asking Jarvis "Find current AI lighting design trends in Dubai
+luxury interiors" returned "research provider is not_configured — I will not invent market claims,"
+despite Phase AG's `WebSearchProvider`/`TavilyProvider`/`sourceMode` machinery already existing and
+passing 23/23 smoke checks. Phase AG built the plumbing correctly but never wired it into the two
+tools the live Jarvis conversation can actually reach.
+
+**Root cause (two independent bugs, both pre-dating Phase AG and never updated when it landed):**
+1. `find_opportunities` (`services/gateway-api/src/index.ts`) returned a hardcoded
+   `"research provider is not_configured"` string whenever the user had no recorded opportunities in
+   Mongo — unconditionally, regardless of whether `TAVILY_API_KEY` was actually set anywhere. It
+   never called `runResearch()`, `internet-research-service`, or `webSearchStatusFromEnv()`.
+2. `research_topic` (registered in `shared/src/operator/index.ts`, executed in
+   `services/gateway-api/src/index.ts`) *was* correctly triggered by goals containing the literal
+   words "research"/"best practice(s)"/"investigate", but its executor called
+   `createKernelTask()` — a fire-and-forget dispatch that creates a Mongo task and hands it to
+   `orchestrator-agent`'s async `runResearchPipeline` (which DOES call the real research fabric
+   correctly). The Jarvis reply in the same turn was only `"Research task {id} started."` — the
+   actual grounded findings, `sourceMode`, and sources never made it back into the conversation.
+   Separately, the reported prompt didn't even contain "research"/"best practice"/"investigate", so
+   it never reached `research_topic` at all — it fell through to a generic "clarify" answer instead
+   (`planForGoal()` is purely deterministic-regex, matched independently of the LLM-classified
+   `intent.category`, which is used only to decide direct-answer vs. plan mode).
+
+`shared/src/jarvis/index.ts`'s `AOS_SELF_KNOWLEDGE.knownGaps` also still stated flatly that
+"internet-research-service has no real web-search/fetch provider" — stale from before Phase AG,
+which would make Jarvis confidently understate its own real capability on meta/self-assessment
+questions.
+
+**Fix.** Added `dispatchResearch(topic)` in `services/gateway-api/src/index.ts`: a direct, awaited
+`fetch()` to `internet-research-service`'s `/.factory/task` (45s timeout, same peer-dispatch
+pattern already used by `check_service_health`/`code-operator-agent` tools), returning a summary
+string that embeds `[sourceMode: ... — <plain-English label>]`, top findings, and up to 4 sources.
+`research_topic`'s executor now calls this directly instead of `createKernelTask()`; its registry
+entry's `executionPath` changed from `'kernel_task'` to `'gateway_internal'` to match reality.
+`find_opportunities` now tries the DB ranking first (unchanged, still the priority source when
+non-empty — D-137) and only calls `dispatchResearch()` with the user's actual goal text as the topic
+when the DB is empty; a genuine dispatch failure is the only case that still says research isn't
+available, and it names the real reason instead of a canned claim. `planForGoal()`'s research
+trigger (`shared/src/operator/index.ts`) was broadened to catch open topic questions that don't
+literally say "research" (adds `trends`, `find (the )?(current|latest|out about)`, `what's the
+latest/new/happening (in|on|with)` — D-138), checked before the narrower "opportunities for me"
+pattern so both routes stay distinct. `AOS_SELF_KNOWLEDGE` in `shared/src/jarvis/index.ts` corrected
+to describe the real, now-wired state and the actual remaining condition (TAVILY_API_KEY on
+internet-research-service specifically). Added a code comment on `GET /v1/system/integrations`
+clarifying its `research.configured` flag reflects gateway-api's own env, not
+internet-research-service's (D-139) — the authoritative per-call signal is `sourceMode`.
+
+Verification:
+- **New smoke PASS (13/13)** (`scripts/phaseag1-jarvis-research-routing-smoke.mjs`) against the real
+  compiled `shared/dist/operator/index.js`: the exact reported failing prompt now routes to
+  `research_topic` with the goal text passed through as the topic; literal "research ..." phrasing
+  still routes there too; "what's the latest on X" phrasing routes there; "find the best
+  opportunities for me" still routes to `find_opportunities` (DB-first, goal text now attached for
+  its fallback); four regression checks confirm the broadened regex does not hijack whole-system
+  check, restart, UI self-fix, or service-creation goals, which all still route to their original,
+  more specific tools; tool registry checks confirm `research_topic.executionPath` is now
+  `'gateway_internal'` and both tool descriptions are honest about the real path.
+- Regression: `scripts/phasex-operator-runtime-smoke.mjs` **28/28 unchanged** (no scenario in that
+  suite intersects the broadened regex, since all of its goals match earlier, more specific
+  patterns first). `scripts/phaseag-research-fabric-smoke.mjs` **23/23 unchanged** (the underlying
+  `runResearch()`/`WebSearchProvider` logic was not touched this phase). Full local suite re-run:
+  19 of 21 smoke scripts pass; the two that don't (`phaseab-personal-smoke.mjs` — 1 pre-existing
+  failure in `buildRealityGraph()`'s missing-data listing, unrelated code path never touched this
+  session; `phasey-workspace-smoke.mjs` — crashes on `EPERM: operation not permitted, unlink ...` when
+  cleaning up a generated temp workspace, a sandbox mount-permission limitation, not a code defect)
+  were confirmed unrelated by inspecting their failing assertions and stack traces — neither touches
+  `operator/`, `jarvis/`, or `gateway-api`'s research code, and `git diff --stat` for this session
+  shows only `shared/src/{operator,jarvis}/index.ts` and `services/gateway-api/src/index.ts` changed.
+- `shared` `tsc -p tsconfig.json` clean. `gateway-api` and `internet-research-service`
+  `tsc --noEmit` clean. `dashboard-web` not re-typechecked — no UI/response-shape files were touched
+  this phase (the fix is entirely in tool routing and dispatch; the `/research` pages' `sourceMode`
+  badges added in Phase AG already display whatever `sourceMode` a report carries, regardless of
+  which tool triggered the underlying research run).
+
+Honest remaining gaps: the synchronous HTTP dispatch itself
+(`dispatchResearch` → `internet-research-service` → Tavily) has not been exercised end-to-end
+against a running gateway + internet-research-service + Mongo + a real `TAVILY_API_KEY` in this
+sandbox — the fix is verified at the deterministic-routing level (smoke) and by type-checking the
+dispatch code, not by an actual live HTTP round-trip. The owner should run the manual test below
+after deploying. `GET /v1/system/integrations`'s `research.configured` flag remains cosmetic
+(D-139) — it will read `false` unless `TAVILY_API_KEY` is *also* set on gateway-api, even when
+internet-research-service is fully working; this is documented, not fixed, since fixing it properly
+would mean querying internet-research-service for its own status, a small design change outside
+this fix's explicit scope. The two unrelated pre-existing smoke failures noted above remain open.
+
+**Manual verification command (owner, after deploying with `TAVILY_API_KEY` set on
+internet-research-service and that service restarted):**
+```
+curl -sS -X POST "$FACTORY_API_URL/v1/operator/command" \
+  -H "content-type: application/json" \
+  -H "x-factory-internal-token: $FACTORY_INTERNAL_TOKEN" \
+  -d '{"text":"Find current AI lighting design trends in Dubai luxury interiors"}'
+```
+Or ask Jarvis the same sentence in the dashboard. Expect the reply to contain
+`[sourceMode: search_api — live web search (Tavily)]` and real, dated sources — not
+"research provider is not_configured". With `TAVILY_API_KEY` unset, expect the same reply shape but
+`[sourceMode: llm_only — LLM recall ...]` or `curated_fallback`, never the old hardcoded string.
+
+Scope: `shared/src/{operator/index.ts, jarvis/index.ts}`, `services/gateway-api/src/index.ts`,
+`scripts/phaseag1-jarvis-research-routing-smoke.mjs` (new), `.env.example`, `docs/{environment-variables.md,
+service-map.md, decision-log.md, phase-log.md}`.
+
+## Phase AG.2 — internet-research-service Reachability — COMPLETE (2026-07-09)
+
+Bug report (owner, live testing immediately after Phase AG.1): the routing fix worked — Jarvis now
+tries to call the research fabric — but the real runtime failed with `"research_topic could not
+reach its backing service"` / `"Could not reach internet-research-service ... fetch failed"`.
+
+**Root cause.** Not a URL, port, or env-var-naming bug: `peerUrl('internet-research-service')`
+already correctly resolves to `http://localhost:4115` (matching `SERVICE_PORTS`), and the service
+correctly exposes `/health` and `/.factory/task`. The actual defect was that
+`scripts/local-services.mjs` — the single source of truth for both `pnpm dev:all` (which services
+actually get *started*) and `pnpm sync:env` (which services get a `.env` file *written*) — never
+included `internet-research-service` at all. In local dev, nothing was ever listening on port 4115
+and the service never had a `.env` file (its `dev` script requires one via `--env-file=.env`). This
+predates Phase AG entirely and was invisible until Phase AG.1 made the dependency synchronous and
+loud in the same Jarvis reply. `README-SETUP.md`'s local port table and per-service walkthrough had
+the identical, longer-standing gap (and, discovered in the same pass, also never covered
+`code-operator-agent` for the same historical reason).
+
+**Fix.**
+1. `scripts/local-services.mjs` — added `internet-research-service` (port 4115,
+   `@factory/internet-research-service`) to `LOCAL_SERVICES`, renumbering the local roster from 14
+   to 15 entries; `code-operator-agent` was already present in the array (so `sync:env` already wrote
+   its `.env`) but had never been documented in `README-SETUP.md` — added alongside for consistency.
+2. `README-SETUP.md` — added the local port-table row, a full per-service Dokploy walkthrough section
+   for `internet-research-service` (with an explicit note on why it must be in `local-services.mjs`),
+   a brief section for `code-operator-agent`, and updated the health-check curl block + summary table
+   + service counts (13 → 15) accordingly.
+3. `shared/src/research/index.ts` — added `classifyResearchFetchFailure()` and
+   `interpretResearchTaskResponse()`: pure, exported, unit-testable functions that turn a raw
+   `fetch()` failure or HTTP response into one of `service_unreachable | service_error | empty_result
+   | provider_not_configured | null`. `provider_not_configured` is `ok: true` — a reachable service
+   honestly reporting `sourceMode: 'llm_only'`/`'curated_fallback'` did real work, it isn't a failure,
+   and conflating it with "the process is down" was part of what made the original bug report
+   ambiguous to diagnose from the reply text alone.
+4. `services/gateway-api/src/index.ts` — `dispatchResearch()` now keeps only the network I/O (the
+   `fetch()` call itself) and delegates all interpretation to the two new pure helpers; a thrown fetch
+   error now produces a message naming the exact URL attempted and the exact local command to start
+   the service, instead of a generic "check it is running" hint.
+
+Verification:
+- **New smoke PASS (21/21)** (`scripts/phaseag2-research-reachability-smoke.mjs`): confirms
+  `internet-research-service` is present in `LOCAL_SERVICES` with the correct port/pkg, all ports/ids
+  in the roster are unique (no silent collision from the renumbering), `peerUrl()` resolves the
+  correct default and env-override URL, `classifyResearchFetchFailure()` correctly labels
+  `fetch failed`/`ECONNREFUSED`/timeout as `service_unreachable` and does NOT mislabel unrelated
+  thrown errors, and `interpretResearchTaskResponse()` correctly distinguishes HTTP error /
+  empty result / not-configured-but-reachable / real search_api success — including that
+  `provider_not_configured` never appears on a real `search_api` response and
+  `service_unreachable` never appears on any reachable, well-formed response.
+- Regression: `scripts/phaseag1-jarvis-research-routing-smoke.mjs` **13/13 unchanged**,
+  `scripts/phaseag-research-fabric-smoke.mjs` **23/23 unchanged**, `scripts/phasex-operator-runtime-smoke.mjs`
+  **28/28 unchanged**. Full local suite re-run: same result as Phase AG.1 — 20 of 21 scripts pass,
+  the one pre-existing unrelated failure (`phaseab-personal-smoke.mjs`) unchanged.
+- `shared` `tsc -p tsconfig.json` clean. `gateway-api` and `internet-research-service`
+  `tsc --noEmit` clean. `scripts/local-services.mjs` validated by importing it directly with
+  `node -e "import(...)"` and confirming all 15 entries resolve with correct num/id/port ordering.
+- Live end-to-end reachability (an actual HTTP round-trip from a running gateway-api to a running
+  internet-research-service) was **not** exercised here — this sandbox has no persistent server
+  processes and is isolated from the owner's real dev machine. Verification is at the pure-logic
+  level (URL construction, error classification) plus static confirmation of the service-catalog
+  fix; the owner must run the manual commands below to confirm the live fix.
+
+Honest remaining gaps: this sandbox cannot start real services or hold open ports across tool calls,
+so the actual "curl the health endpoint" and "ask Jarvis and see a real reply" steps have not been
+run by this session — only their pure-logic preconditions have been proven correct. The Dokploy
+production side was not touched (its deployment doc, `deployment/dokploy/internet-research-service.md`,
+already existed and already listed the service correctly — this was purely a local-dev-tooling gap).
+`docs/roadmap.md`'s existing item about feeding research into daily briefing/opportunity scoring
+remains open and unrelated to this fix.
+
+**Manual verification (owner, on the real machine):**
+```bash
+# 1) Make sure the catalog fix is picked up and every service (including
+#    internet-research-service) gets its .env:
+pnpm sync:env
+
+# 2) Start everything (internet-research-service is now included):
+pnpm dev:all
+
+# 3) Confirm the service itself is up:
+curl http://localhost:4115/health
+
+# 4) Confirm the task endpoint works directly (bypassing Jarvis):
+curl -X POST http://localhost:4115/.factory/task \
+  -H "content-type: application/json" \
+  -H "x-factory-internal-token: $FACTORY_INTERNAL_TOKEN" \
+  -d '{"taskId":"manual_test_1","goal":"AI lighting design trends in Dubai luxury interiors","input":{"topic":"AI lighting design trends in Dubai luxury interiors"}}'
+
+# 5) Ask Jarvis the original prompt:
+curl -X POST http://localhost:4101/v1/operator/command \
+  -H "content-type: application/json" \
+  -H "x-factory-internal-token: $FACTORY_INTERNAL_TOKEN" \
+  -d '{"text":"Find current AI lighting design trends in Dubai luxury interiors"}'
+```
+Expected: no "fetch failed"/"could not reach its backing service". With a valid `TAVILY_API_KEY` set
+on `internet-research-service`'s own `.env` (already present there from an earlier manual setup —
+confirm it wasn't overwritten empty by `sync:env`, since the root `.env` also already carries a real
+key), the reply should contain `[sourceMode: search_api — live web search (Tavily)]` with real,
+dated sources. If the key is missing or invalid, expect `[sourceMode: llm_only — ...]` or
+`curated_fallback` — never the old generic fetch error.
+
+Scope: `scripts/local-services.mjs`, `README-SETUP.md`, `shared/src/research/index.ts`,
+`services/gateway-api/src/index.ts`, `scripts/phaseag2-research-reachability-smoke.mjs` (new),
+`docs/{decision-log.md, phase-log.md}`.
+
+## Phase AG.3 — Research Synthesis Quality & Stale Last-Operation Fix — COMPLETE (2026-07-09)
+
+Bug report (owner, live testing immediately after Phase AG.2): Tavily is reachable and live search
+works (`sourceMode: search_api`, 6 real results) — but the reply is just raw titles/snippets with
+`"No LLM synthesis was performed this run (deterministic fallback)"`, not a synthesized research
+answer. Separately, the Jarvis shell kept showing a prior FAILED operation at the top even after a
+newer operation completed successfully — a stale last-operation display.
+
+**1. Why synthesis did not run.** Two independent, real defects in `LlmRouter.generateStructured()`
+(`shared/src/llm/index.ts`), not a `runResearch()` design gap (`runResearch()`'s grounded prompt
+already correctly asked for real synthesis over the retrieved Tavily snippets):
+- The retry loop's `catch` swallowed every thrown error and every schema-validation mismatch with no
+  record kept — the trace only ever said `usedFallback: true`, giving the caller no way to tell "the
+  provider call actually failed" apart from "no provider is configured at all."
+- Every `provider.complete()` call used the historical default `maxTokens: 1024`, which is tight for
+  a research completion that must echo metadata for up to 6 sources plus produce a summary, 5-7
+  findings and recommendations — a truncated completion becomes invalid JSON, which schema-validates
+  as a failure and falls back exactly like "no LLM" from the outside, with zero visible signal that a
+  real call actually ran and produced content.
+
+**2. What was missing/wrong.** Nothing was missing from `internet-research-service`'s LLM env — it
+receives the same `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`LLM_DEFAULT_PROVIDER` as every other agent via
+the standard `sync-local-env.mjs` pipeline (confirmed present and in sync). The gap was entirely in
+the router's error handling and token budget, not configuration.
+
+**3. How synthesis now works.**
+- `shared/src/schemas/capability.ts` — `LlmTraceSchema` gained `errorDetail: string | null`: the exact
+  reason (thrown error message, or which schema field failed validation) the last attempt didn't
+  produce valid data. Null when there was nothing to fail (fallback forced, or no provider configured).
+- `shared/src/llm/index.ts` — `generateStructured()` now captures this into `lastError` on every retry
+  and persists it as `trace.errorDetail`; `GenerateStructuredOpts` gained `maxTokens?: number`, threaded
+  through to `provider.complete()`.
+- `shared/src/intelligence/index.ts` — `runResearch()` now passes `maxTokens: 3072` for the research
+  completion, and derives `synthesisMode: 'llm_synthesized' | 'deterministic_fallback'` from
+  `trace.usedFallback`, with `synthesisFailureReason` populated from `trace.errorDetail` (falling back
+  to an explicit "no LLM provider configured" or "forced fallback mode" message when `errorDetail` is
+  itself null, i.e. no provider was even attempted). When synthesis fell back but the run was grounded
+  in real search results, the report `summary` is now built explicitly around the real reason (e.g.
+  *"LLM synthesis did NOT run this call — openai call failed (attempt 2): 429 rate limited"*) instead
+  of the old generic, undifferentiated "(deterministic fallback)" phrase.
+- `shared/src/schemas/intelligence.ts` — `ResearchSynthesisModeSchema` (new) plus `synthesisMode` and
+  `synthesisFailureReason` fields added to both `ResearchReportSchema` and `ResearchRunSchema`
+  (backward-compatible `.default()`s, same pattern as Phase AG's `sourceMode`).
+- `shared/src/llm/prompts.ts` — `internet-research-service:research` bumped v1 → v2: the system prompt
+  now explicitly instructs the model to *reason over* grounded search results (executive summary,
+  5-7 concrete findings/trends explaining *why they matter*, and opportunity/next-action
+  recommendations when the topic implies a business angle) rather than restate titles/snippets, while
+  keeping the existing hard rule that source URLs in its JSON output are echoed back only to be
+  discarded — `runResearch()` still rebuilds the authoritative source list structurally from the real
+  Tavily results (Phase AG's URL-integrity guarantee is unchanged and re-verified below). No
+  business-specific content (e.g. a named client or industry) was hardcoded into the prompt — there is
+  no real captured profile data to ground that, and inventing it would violate the project's "never
+  invent" principle; the prompt asks for a *generic* opportunity/next-action framing instead.
+- `shared/src/research/index.ts` / `services/internet-research-service/src/index.ts` — `synthesisMode`
+  and `synthesisFailureReason` are threaded through `ResearchTaskPayload`, the service's task-handler
+  response, `finishAgentRun`'s summary, and the `RESEARCH_COMPLETED_V2` event payload.
+  `interpretResearchTaskResponse()` (the gateway-side pure interpreter) now embeds a `[synthesisMode:
+  ...]` tag and the real failure reason in the summary it returns to Jarvis/operator callers, alongside
+  the existing `[sourceMode: ...]` tag — the two are reported independently, so real Tavily sources with
+  failed synthesis is never collapsed into either "complete success" or "service failure."
+
+**4. How sources remain Tavily-only.** Unchanged from Phase AG and re-verified in the new smoke suite:
+`runResearch()` always rebuilds `ResearchSource[]` structurally from the raw `WebSearchResult[]` Tavily
+actually returned, never from the LLM's echoed `sources` field in its structured output — a
+hallucinated/mistyped URL from the model cannot enter the source list regardless of synthesis outcome.
+
+**5. How fallback is reported.** `synthesisMode: 'deterministic_fallback'` is now always paired with a
+non-null, specific `synthesisFailureReason` whenever a real provider was configured and attempted (the
+actual thrown error or schema-validation mismatch); when no provider is configured at all, the reason
+says so explicitly instead of leaving the caller to infer it from an absent field. The result is never
+described as "research" without qualification — the summary text itself states the real reason inline.
+
+**6. How stale last-operation was fixed.** Two-part fix, matching the two failure modes identified:
+- `services/gateway-api/src/index.ts` `runLoop()` had two early-`break` exit paths (a critical-category
+  tool failure, and a thrown exception mid-step) that set `session.status = 'failed'` but never set
+  `session.completedAt` — only the "reached the natural end of the plan" path did. Any session that
+  failed via one of these two paths therefore persisted with `completedAt: null` forever. Both paths now
+  set `session.completedAt = nowIso()` alongside `status`.
+- `shared/src/operator/index.ts` gained `sortRecentSessions()`: a pure, exported, unit-tested helper
+  that ranks sessions by `completedAt ?? startedAt` descending, with a real (non-null) `completedAt`
+  winning any exact tie over one still null — a deterministic guarantee independent of Mongo's sort
+  behavior on nulls or of the `completedAt`-never-set bug above (defense in depth: the root cause is
+  fixed AND the ordering can no longer be wrong even if some other path leaves `completedAt` unset in
+  the future). `/v1/operator/live-state`'s `recentSessions` query gained a secondary `startedAt: -1`
+  Mongo-level sort tiebreaker, and the returned array is now passed through `sortRecentSessions()`
+  before being used to compute `headline`/`activeOperationSummary` and returned to the client — so
+  `OperatorConsole`, `ActiveOperationsPanel` and any other consumer of `recentSessions[0]` all agree on
+  what "last operation" means, and a failed session can never stay pinned above a newer completed one.
+
+**7. Files changed:** `shared/src/schemas/capability.ts`, `shared/src/llm/index.ts`,
+`shared/src/llm/prompts.ts`, `shared/src/schemas/intelligence.ts`, `shared/src/intelligence/index.ts`,
+`shared/src/research/index.ts`, `shared/src/operator/index.ts`, `services/internet-research-service/src/index.ts`,
+`services/gateway-api/src/index.ts`, `scripts/phaseag3-research-synthesis-smoke.mjs` (new),
+`docs/{phase-log.md, decision-log.md}`.
+
+**8. Tests run:**
+- **New smoke PASS (32/32)** (`scripts/phaseag3-research-synthesis-smoke.mjs`): real search results +
+  working LLM → `llm_synthesized` with real synthesized prose; real search results + no provider
+  configured → `deterministic_fallback` with the explicit "no provider configured" reason embedded in
+  both `synthesisFailureReason` and the summary text; real search results + a genuine provider error
+  (e.g. rate limit) → that exact error surfaced, not a generic message; hallucinated LLM source URL
+  still structurally cannot enter `sources` (Phase AG guarantee re-verified post-AG.3); `sourceMode`
+  and `synthesisMode` both preserved end-to-end through `interpretResearchTaskResponse()` including a
+  backward-compat check for legacy payloads without the new fields; `sortRecentSessions()` — newest
+  completed session always sorts first regardless of input order, a null-`completedAt` session (the
+  historical bug) never outranks a real newer completed one, two null-`completedAt` sessions fall back
+  to `startedAt`, and an exact effective-time tie is broken in favor of the session with a real
+  `completedAt`; `LlmRouter.generateStructured()` against a real router instance with its provider
+  swapped for an offline fake — confirms `errorDetail` captures a thrown error verbatim and separately
+  distinguishes a schema-validation failure, proving the fix is in the actual retry loop, not just the
+  type signature.
+- Regression, all unchanged: `scripts/phaseag-research-fabric-smoke.mjs` **23/23**,
+  `scripts/phaseag1-jarvis-research-routing-smoke.mjs` **13/13**,
+  `scripts/phaseag2-research-reachability-smoke.mjs` **21/21**. Full local suite re-run: same two
+  pre-existing, unrelated results as Phase AG.2 — `phaseab-personal-smoke.mjs` (1 failure, personal
+  reality baseline, untouched by this phase) and `phasey-workspace-smoke.mjs` (crashes on an `EPERM`
+  unlinking a prior smoke-test scratch workspace — a sandbox filesystem-mount limitation, not a code
+  defect; see the existing memory note on this).
+- `shared` `tsc -p tsconfig.json` clean. `gateway-api`, `internet-research-service` and `dashboard-web`
+  `tsc --noEmit` all clean.
+
+**9. Manual test the owner should run** (mirrors Phase AG.2's block, extended):
+```bash
+pnpm sync:env && pnpm dev:all
+curl -X POST http://localhost:4101/v1/operator/command \
+  -H "content-type: application/json" \
+  -H "x-factory-internal-token: $FACTORY_INTERNAL_TOKEN" \
+  -d '{"text":"Find current AI lighting design trends in Dubai luxury interiors"}'
+```
+Expected with a valid `TAVILY_API_KEY` and a valid `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`: a real
+executive summary, 5-7 findings explaining *why* each trend matters, opportunity/next-action
+recommendations, real Tavily source URLs, and `[sourceMode: search_api ...] [synthesisMode:
+llm_synthesized ...]` in the reply. If the LLM key is missing/invalid/rate-limited, expect
+`[synthesisMode: deterministic_fallback — ...]` with the *specific* reason inline (not a bare
+"deterministic fallback" tag), while `[sourceMode: search_api ...]` and the real source URLs remain
+correct either way. Separately: trigger one operation that fails (e.g. a goal routing to a
+not-configured tool) followed by one that completes successfully, then reload the Jarvis shell —
+the completed operation should show as the last operation, not the earlier failure.
+
+**10. Remaining gaps:** as with Phase AG.2, this sandbox cannot hold open server processes or make
+live calls against the owner's real API keys, so the manual block above has not been executed by this
+session — verification here is at the pure-logic/unit level against the real compiled code, with fake
+router/provider objects standing in for actual network calls (consistent with this project's standing
+practice of never spending the owner's real API credits from the sandbox). The v2 prompt's request for
+"opportunity/next-action recommendations when the topic implies a business angle" is a prompting
+instruction, not a code-level guarantee — its real-world quality depends on the model's actual output
+and can only be fully judged against a live call. The two pre-existing regressions noted in item 8 are
+unrelated to this phase's scope and were not investigated further here.
+
+Scope: `shared/src/{schemas/capability.ts, llm/index.ts, llm/prompts.ts, schemas/intelligence.ts,
+intelligence/index.ts, research/index.ts, operator/index.ts}`, `services/internet-research-service/src/index.ts`,
+`services/gateway-api/src/index.ts`, `scripts/phaseag3-research-synthesis-smoke.mjs` (new),
+`docs/{decision-log.md, phase-log.md}`.
+
+## Phase AG.4 — Research Route/Host Contract Fix — COMPLETE (2026-07-09)
+
+Bug report (owner, live testing immediately after Phase AG.3): research is reachable, but
+`research_topic` now fails with `"internet-research-service returned 404: unknown error"` for the same
+prompt that previously worked through to the synthesis-quality bug. Reachable but 404 rules out the
+Phase AG.2 class of bug (that was DNS/connection-level unreachability); this is a route/host contract
+mismatch.
+
+**Root cause.** `internet-research-service` correctly registers `POST /.factory/task` (via
+`createFactoryService({ taskHandler: handleTask })`, the same standard path/mechanism every other
+service uses — confirmed no route or contract gap on the service side, and confirmed `pnpm dev:all`
+runs `tsx src/index.ts` directly against source, not a stale `dist` build, so it is always current).
+The actual defect was in gateway-api's `dispatchResearch()`: `const url = svc?.domain ?? peerUrl(...)`.
+`svc` comes from `ctx.registry.resolve('internet-research-service')`, which returns the service's raw,
+self-registered manifest — and every service's manifest hardcodes its **production** subdomain
+(`domain: https://research.simorx.com`, derived from `SERVICE_SUBDOMAINS`/`ROOT_DOMAIN = 'simorx.com'`
+in `shared/src/constants/index.ts`) regardless of environment. In local dev, `SERVICE_REGISTRY_URL` is
+set to `http://localhost:4108` and service-registry runs locally, so every service — including
+`internet-research-service`, which only started registering successfully for the first time after
+Phase AG.2 added it to `LOCAL_SERVICES` — self-registers into the LOCAL registry with that same
+hardcoded production `domain` field. `ctx.registry.resolve()` therefore returns a truthy `svc.domain`
+(`https://research.simorx.com`), which wins the `??` and is used verbatim, completely bypassing
+`peerUrl()`'s correct `http://localhost:4115` fallback. `https://research.simorx.com` is the owner's
+real root domain (`simorx.com`), which resolves and answers HTTP requests, just not with this service
+or route — producing exactly "reachable... 404... unknown error" (no `error.message` in whatever body
+that host actually returned, which `interpretResearchTaskResponse()` previously reported generically).
+This same `svc?.domain ?? peerUrl(...)` pattern exists at 6 other call sites in gateway-api
+(orchestrator-agent ×4, monitor-agent ×2) — those are fire-and-forget/`try`-swallowed today, so the
+identical bug degrades silently there rather than surfacing in a user-visible reply; flagged below as a
+remaining gap, not fixed here (out of the requested scope).
+
+**Fix.**
+1. `shared/src/discovery/index.ts` — new exported, pure `resolvePeerUrl(serviceId, registryDomain, env)`:
+   an explicit env override (`<SERVICE_ID>_URL`) always wins first (this is how local dev pins a peer to
+   localhost even though the registry has a — correct-for-production — manifest record); the
+   registry-resolved domain is used next (correct in production, where that DNS is real); `peerUrl()`'s
+   own localhost default is the final fallback (registry unreachable / peer not yet registered).
+2. `services/gateway-api/src/index.ts` `dispatchResearch()` — now calls
+   `resolvePeerUrl('internet-research-service', svc?.domain)` instead of `svc?.domain ?? peerUrl(...)`.
+3. `scripts/local-services.mjs` — gateway-api's `extra` env block gained
+   `INTERNET_RESEARCH_SERVICE_URL=http://localhost:4115`, the exact same override mechanism already
+   used for `ORCHESTRATOR_AGENT_URL` (which — per the same root cause — has almost certainly been
+   silently relying on this exact pattern to work at all). `scripts/sync-local-env.mjs`'s shared-env
+   filter list gained `INTERNET_RESEARCH_SERVICE_URL=` for consistency with the other peer-URL entries
+   already filtered there.
+4. `shared/src/research/index.ts` `interpretResearchTaskResponse()` — gained a new `errorKind:
+   'route_not_found'`, returned specifically for HTTP 404/405 (a request that reached *some* server but
+   found no matching route/method — a contract bug, distinct from a generic 5xx `service_error`), plus
+   an optional 4th `meta: { url, method, rawBodySnippet }` parameter so the returned summary now states
+   the exact URL/method dispatched and, when the response body wasn't valid JSON (e.g. an HTML 404
+   page — exactly what a misrouted host like this returns), a snippet of the actual raw content instead
+   of the previous bare, undiagnosable "unknown error". `dispatchResearch()` now reads `r.text()` first
+   and passes it through as `rawBodySnippet` alongside the parsed-JSON attempt.
+
+Verification:
+- **New smoke PASS (25/25)** (`scripts/phaseag4-research-route-contract-smoke.mjs`): confirms the
+  manifest domain really is the real, env-independent production subdomain (not a placeholder);
+  `resolvePeerUrl()`'s exact precedence in all four combinations of {override set/unset} × {registry
+  domain present/absent}, including trailing-slash normalization; `scripts/local-services.mjs`'s
+  gateway-api entry actually carries the new override without regressing the pre-existing
+  `ORCHESTRATOR_AGENT_URL` one; `interpretResearchTaskResponse()` classifies 404 and 405 as
+  `route_not_found` (not `service_error`), embeds the real URL/method/raw-body-snippet in the summary,
+  and never falls back to the bare "unknown error" when any diagnostic context is available; a 3-arg
+  legacy call (no `meta`) still works without crashing; 500 remains `service_error` (regression check —
+  only 404/405 are route-contract issues); the full `sourceMode`/`synthesisMode` success path from
+  Phase AG.3 is unaffected by the new 4th parameter.
+- Regression, all unchanged: `scripts/phaseag-research-fabric-smoke.mjs` **23/23**,
+  `scripts/phaseag1-jarvis-research-routing-smoke.mjs` **13/13**,
+  `scripts/phaseag2-research-reachability-smoke.mjs` **21/21**,
+  `scripts/phaseag3-research-synthesis-smoke.mjs` **32/32**. `phaseab-personal-smoke.mjs`'s one
+  pre-existing, unrelated failure is unchanged from Phase AG.2/AG.3.
+- `shared` `tsc -p tsconfig.json` clean. `gateway-api` and `internet-research-service` `tsc --noEmit`
+  clean. `dashboard-web`'s `tsc --noEmit` fails, but only inside `.next/dev/types/{routes.d.ts,
+  validator.ts}` — a gitignored, auto-generated Next.js type-cache file, truncated mid-write by an
+  earlier interrupted dev process in this sandbox, unrelated to any source file this phase (or Phase
+  AG.3) touched (confirmed: dashboard-web's `src/` has zero references to `resolvePeerUrl`/`peerUrl`/
+  `discovery`). Attempting to delete `.next` to force a clean regeneration failed with the same sandbox
+  `EPERM` limitation on this mounted folder noted in Phase AG.3's report and in memory — a known
+  environment constraint, not a code defect.
+
+Honest remaining gaps: the identical `svc?.domain ?? peerUrl(...)` pattern (same root cause) exists at
+6 other gateway-api call sites for `orchestrator-agent` (×4) and `monitor-agent` (×2) — not fixed here,
+since the reported bug and requested scope were specifically the research route. Those paths are
+fire-and-forget with swallowed errors today, so the same production-domain-in-local-dev mismatch would
+degrade silently (a task "remains queued" / a monitor call quietly no-ops) rather than surfacing loudly
+like research's synchronous dispatch did — worth a follow-up phase applying `resolvePeerUrl()` there
+too, plus adding the matching `<SERVICE>_URL` local overrides to `scripts/local-services.mjs` for
+`orchestrator-agent` (`monitor-agent` already has no local override entry either). This sandbox cannot
+hold open server processes or make a live end-to-end call, so the manual commands below have not been
+executed by this session — verification here is at the pure-logic/unit level against the real compiled
+code and the real `LOCAL_SERVICES`/manifest data, not a live HTTP round-trip.
+
+**Manual verification (owner, on the real machine):**
+```bash
+# 1) Pick up the new INTERNET_RESEARCH_SERVICE_URL override and restart:
+pnpm sync:env && pnpm dev:all
+
+# 2) Confirm the service itself is up:
+curl http://localhost:4115/health
+
+# 3) Confirm the task endpoint now returns 200 directly:
+curl -i -X POST http://localhost:4115/.factory/task \
+  -H "content-type: application/json" \
+  -d '{"goal":"Find current AI lighting design trends in Dubai luxury interiors"}'
+
+# 4) Confirm Jarvis no longer gets a 404:
+curl -X POST http://localhost:4101/v1/operator/command \
+  -H "content-type: application/json" \
+  -H "x-factory-internal-token: $FACTORY_INTERNAL_TOKEN" \
+  -d '{"text":"Find current AI lighting design trends in Dubai luxury interiors"}'
+```
+Expected: no `404`/`"unknown error"`. Either a real `sourceMode: search_api` result with
+`synthesisMode: llm_synthesized` (or an explicit `synthesisFailureReason` if the LLM call itself fails —
+Phase AG.3's concern, unrelated to this fix), or an honest `provider_not_configured` message if
+`TAVILY_API_KEY` is genuinely missing — never a route/contract error again for this endpoint.
+
+Scope: `shared/src/discovery/index.ts`, `shared/src/research/index.ts`,
+`services/gateway-api/src/index.ts`, `scripts/local-services.mjs`, `scripts/sync-local-env.mjs`,
+`scripts/phaseag4-research-route-contract-smoke.mjs` (new), `docs/{decision-log.md, phase-log.md}`.
+
+## Phase AG.5 — Research LLM Output Schema/Prompt/Retry-Repair Fix — COMPLETE (2026-07-09)
+
+Bug report (owner, live testing immediately after Phase AG.4): routing works, Tavily returns 6 real
+results (`sourceMode: search_api`), the Jarvis session completes — but LLM synthesis itself fails:
+`"provider responded but output did not match the expected schema (attempt 2): Invalid input: expected
+string, received undefined"`.
+
+**1. Exact schema field/path that caused the failure.** Not directly observable from the pre-fix error
+text (that was the bug — `generateStructured()` only ever surfaced `parsed.error.issues[0]?.message`,
+never `.path`), but reconstructed with high confidence from the schema and prompt as of Phase AG.3: the
+old `LlmResearchSchema.findings` was `z.array(z.string()).min(1)` — a flat string array — while the
+Phase AG.3 v2 system prompt explicitly asked the model to produce "5-7 concrete key findings/trends
+explaining what they mean and why they matter" and "opportunity or next-action recommendations," and
+never once stated the literal required JSON key names. A real model, given content instructions richer
+than the schema's flat shape, naturally nested its findings into objects (`{title, detail, ...}`) or
+introduced additional narrative keys the schema didn't recognize; whichever exact sub-field was
+involved, the net effect was the same class of failure: a real, substantive response that didn't
+literally match `findings: string[]`. This is now impossible to reproduce with as little diagnostic
+information — see fix item 4 below.
+
+**2. Why the LLM output missed it.** The prompt described desired CONTENT ("produce a concise summary,
+findings, and recommendations... reason over retrieved results") but never gave the model an explicit
+JSON shape with exact field names — `JSON_ONLY`'s "Respond ONLY with valid JSON matching the requested
+schema" refers to a schema the model was never actually shown. Once Phase AG.3 made the content
+requirements richer (findings that explain *why* they matter; opportunity/next-action framing) without
+updating the literal output shape to match, the prompt and the schema fell out of sync — the model was
+asked for something the schema no longer had room for.
+
+**3/4. Fix applied.**
+- `shared/src/intelligence/index.ts` — `LlmResearchSchema.findings` redesigned to
+  `LlmFindingSchema[]` (`title`, `detail` always required — no valid finding can lack real content;
+  `whyItMatters`/`confidence`/`sourceIndexes` default safely when the model genuinely has nothing to
+  add). New `opportunities: LlmOpportunitySchema[]` (`title`/`action` required, `rationale` defaulted),
+  `nextActions: string[]`, `limitations: string[]` — directly matching what the v2 prompt was already
+  asking for. `recommendations` was removed from the LLM-facing schema entirely (the model no longer
+  needs to separately produce it — see flattening below). Both deterministic fallback functions
+  (`fallbackResearch`, `fallbackFromSearchResults`) were updated to the new shape so `schema.parse(opts.fallback())`
+  — which validates the fallback exactly like a real response — still succeeds.
+- `shared/src/intelligence/index.ts` `runResearch()` — the per-call `prompt:` text now includes an
+  explicit `SHAPE_EXAMPLE`: literal JSON with exact field names, required-vs-optional guidance ("for
+  any narrative field you're unsure of, write a short honest string... rather than omitting the key"),
+  and a request for 5-7 findings. Placed in the request-specific prompt (not the versioned system
+  prompt in `prompts.ts`) so it stays colocated with, and can't silently drift from, the Zod schema
+  that actually validates it.
+- `shared/src/llm/index.ts` `generateStructured()` — the Zod validation-failure branch now reports the
+  **failing field path** (`issue.path.join('.')`, e.g. `"findings.0.detail"`), not just the bare Zod
+  message, in both the trace's `errorDetail` and a new **retry corrective note** appended to the prompt
+  on the next attempt: `"Your previous response was invalid... the field at \"{path}\" was wrong or
+  missing: {message}. Respond again with ONLY corrected, complete JSON..."`. Previously attempt 2 sent
+  the model the byte-identical prompt as attempt 1, so a model that misunderstood the shape once
+  reliably failed the same way twice — this is the concrete answer to "does attempt 2 receive the
+  validation error and schema correction instruction:" it did not before, it does now.
+- `shared/src/intelligence/index.ts` — `ResearchReport.findings`/`.recommendations` (the STORED/PUBLIC
+  contract every downstream consumer reads — Jarvis summary text, `ResearchTaskPayload`, the dashboard,
+  AG.2-AG.4 smoke tests) remain flat `string[]`, completely unaffected by the richer LLM-facing schema:
+  new `flattenFindings()`/`flattenRecommendations()` helpers flatten
+  `{title, detail, whyItMatters}` → `"title: detail (Why it matters: whyItMatters)"` and
+  `opportunities + nextActions` → a single recommendations list; `limitations` are appended to findings
+  as `"Limitation: ..."` entries rather than being silently dropped.
+
+**5. How sources remain Tavily-only.** Completely unchanged and re-verified: `runResearch()` still
+always rebuilds `ResearchSource[]` structurally from the raw `WebSearchResult[]` Tavily returned, never
+from the LLM's echoed `sources` field, regardless of the findings/opportunities schema change — a new
+smoke test explicitly injects an attacker URL into the LLM's fake `sources` output and confirms it
+never reaches the stored sources.
+
+Verification:
+- **New smoke PASS (22/22)** (`scripts/phaseag5-research-schema-repair-smoke.mjs`): the EXACT reported
+  prompt ("Find current AI lighting design trends in Dubai luxury interiors") produces a valid
+  `synthesisMode: llm_synthesized` structure with flattened why-it-matters findings, flattened
+  opportunity/next-action recommendations, and flattened limitations; a fake provider that omits a
+  required `findings[0].detail` on attempt 1 is repaired on attempt 2 once the retry corrective note is
+  present (and the test explicitly asserts the model would NOT self-correct without that note reaching
+  the prompt); `errorDetail` names the exact failing path (`findings.0.detail`) instead of a bare
+  generic message; missing OPTIONAL fields (`whyItMatters`, `confidence`, `sourceIndexes`,
+  `opportunities`, `nextActions`, `limitations`, and optional `sources[]` sub-fields) never break
+  synthesis and never leak a literal `"undefined"` into report text; an LLM-injected source URL still
+  cannot enter `sources`; deterministic fallback still activates (after exhausting `maxAttempts`) when
+  the model's output is genuinely unrecoverable JSON, with `sourceMode` staying `search_api` throughout.
+- Regression, all unchanged: `scripts/phaseag-research-fabric-smoke.mjs` **23/23** (fixture updated to
+  the new structured-findings shape — assertions unchanged), `scripts/phaseag1-jarvis-research-routing-smoke.mjs`
+  **13/13**, `scripts/phaseag2-research-reachability-smoke.mjs` **21/21**,
+  `scripts/phaseag3-research-synthesis-smoke.mjs` **32/32** (fixtures updated the same way),
+  `scripts/phaseag4-research-route-contract-smoke.mjs` **25/25**. `phaseab-personal-smoke.mjs`'s one
+  pre-existing, unrelated failure is unchanged.
+- `shared` `tsc -p tsconfig.json`, `gateway-api` and `internet-research-service` `tsc --noEmit` all
+  clean (verified with real exit-code capture this time, not piped through `tail`, after an earlier
+  pipe-masking mistake in Phase AG.3/AG.4's verification steps was caught during this phase).
+
+**Secondary — stale "Last operation ... failed" shell text.** Investigated per the report. The
+Phase AG.3 fix (`sortRecentSessions()` applied server-side to `/v1/operator/live-state`, plus
+`completedAt` set on every `runLoop()` exit path) is still the correct, complete fix for the
+server-side ordering bug and was not touched again here — no new server-side bug was found.
+`OperatorConsole.tsx`'s "Last operation: ..." text is written by a `useEffect` that runs exactly ONCE
+on component mount (guarded by `if (log.length > 0) return`) and never re-syncs afterward, including
+across soft (SPA) navigation — this is a deliberate one-time chat-transcript seed, not a live status
+widget, so it will only reflect current server state on a genuine fresh mount (hard reload / first
+load), not indefinitely. If this text is still stale after both a hard reload AND confirming the
+Phase AG.3 fix is actually deployed/running (this sandbox cannot verify a live process was restarted),
+it points at the running dashboard-web/gateway-api processes not yet running Phase AG.3's build rather
+than a remaining code defect — no further server-side issue was found in this investigation.
+
+Honest remaining gaps: no live LLM call was made from this sandbox (same standing constraint as every
+prior AG.x phase) — verification is at the pure-logic/unit level against the real compiled code with a
+fake provider that reproduces the exact reported Zod error text and confirms the repair path. The
+prompt's `SHAPE_EXAMPLE` improves the odds of first-attempt-valid output substantially but cannot
+*guarantee* a real model never produces an unexpected shape; the retry-repair path exists precisely
+because that guarantee isn't structurally possible with a probabilistic model — attempt 2's corrective
+feedback is the actual safety net now, not just optimistic hope that attempt 1 succeeds.
+
+**Manual verification (owner, on the real machine):**
+```bash
+pnpm sync:env && pnpm dev:all
+curl -X POST http://localhost:4101/v1/operator/command \
+  -H "content-type: application/json" \
+  -H "x-factory-internal-token: $FACTORY_INTERNAL_TOKEN" \
+  -d '{"text":"Find current AI lighting design trends in Dubai luxury interiors"}'
+```
+Expected: `sourceMode: search_api`, `synthesisMode: llm_synthesized`, a real executive summary, 5-7
+findings with why-it-matters framing, and opportunity/next-action recommendations — no schema
+validation failure. If the LLM still fails on both attempts (e.g. a genuinely unusual model response),
+expect `synthesisMode: deterministic_fallback` with the specific repaired-but-still-failing reason
+inline (Phase AG.3's guarantee), never a bare, undiagnosable error.
+
+Scope: `shared/src/intelligence/index.ts`, `shared/src/llm/index.ts`,
+`scripts/{phaseag-research-fabric-smoke.mjs, phaseag3-research-synthesis-smoke.mjs}` (fixtures updated),
+`scripts/phaseag5-research-schema-repair-smoke.mjs` (new), `docs/{decision-log.md, phase-log.md}`.
+
+## Phase AH — Premium Body Intelligence Map — COMPLETE (2026-07-10)
+
+**Goal (owner report):** the Health zone's body visual read as a placeholder stickman —
+6 line strokes with floating dots — unacceptable for the Living AI Government standard. Replace it
+with a premium biometric-scan visualization: anatomical silhouette, semantic body regions, metrics
+attached to meaningful zones, calm concern signaling, dark-glass luxury aesthetic.
+
+**What was built:**
+
+1. **`src/lib/bodyZones.ts` (new, JSX-free)** — pure zone-mapping logic: 7 semantic zones
+   (`head`, `chest`, `abdomen`, `arms`, `legs`, `body`, `recovery`), an exact + keyword-fallback
+   metric→zone table (energy/heart/hrv→chest, stress/focus→head, sleep→recovery orbit,
+   nutrition/digestion→abdomen, activity/steps→legs, strength/mobility/habit→arms,
+   weight/wellbeing/symptom→whole body, unknown→whole body so nothing is ever dropped),
+   `buildZoneModel()` (per-zone active/concern/worst-level; every zone always exists → stable
+   geometry, no hydration divergence) and `zoneTone()` (concern→err, level<4→warn, else ok).
+   JSX-free by design so the smoke test compiles and exercises it standalone (AF.2 pattern).
+
+2. **`BodyMap.tsx` rebuilt** — hand-tuned anatomical silhouette (front-facing cubic-bezier path,
+   believable shoulder/waist/hip proportions, arms slightly apart from the torso), translucent
+   accent→ok gradient fill with soft glow outline, concentric dashed biometric rings, dotted central
+   biometric axis, and a recovery orbit around the head for sleep/rest. Per-zone markers (breathing
+   core dot + soft ring) with leader-line labels in two clean columns (metric name + value); dormant
+   zones render faint anchor points, never invented data. Concerns get a slow `bm-pulse` attention
+   ring in the err tone plus a quiet top-left concern counter — signal, not alarm. Hover hotspots
+   per region (whole-body path lowest hit priority) drive a highlight halo + a bottom status line;
+   zero-metric state shows an intentional "Awaiting biometric signals" caption instead of a broken
+   empty figure. Pure inline SVG, zero dependencies, CSS-only motion (`bm-pulse`/`bm-breathe` added
+   to globals.css), static ids/geometry only (no hydration risk), accessible region labels.
+   Geometry was verified visually (SVG→PNG render) before finalizing.
+
+3. **Both surfaces upgraded at once** — `/health` (DomainRoom overview) and the homepage health
+   card (HomeLive → UniverseZone) already rendered this same component; the existing `BodyMetric`
+   data contract was kept, so no consumer changed.
+
+**Verification:** `scripts/phaseah-premium-bodymap-smoke.mjs` (new, 33 checks) — old stickman
+primitives gone; semantic data-zone regions present; metric→zone mapping correct incl. keyword
+fallback and unknown→body; concern state distinct (model + bm-pulse ring + counter); zero/one/many
+metric behavior (same-zone stacking, worst-level, warn tone); both surfaces import the same visual;
+hydration safety (no Math.random/Date, static ids). Plus dashboard-web `tsc --noEmit` and the AF.2
+domain-canvas + AF.5 domain-rooms regression smokes.
+
+Scope: `services/dashboard-web/src/{components/BodyMap.tsx, lib/bodyZones.ts (new), app/globals.css}`,
+`scripts/phaseah-premium-bodymap-smoke.mjs` (new), `docs/{phase-log.md, decision-log.md, roadmap.md}`.
+
+## Phase AH.2 — Health Intelligence Surface — COMPLETE (2026-07-10)
+
+**Goal (owner report):** Phase AH's silhouette was cleaner than the stickman but still read as a
+decorative outline — anatomy too generic, no meaningful segmentation, too few body domains, no
+severity grading, and no architecture for future health data. Rebuild it as a serious, scalable
+health intelligence system, not a body picture.
+
+**What was built:**
+
+1. **Health Domain Model (`src/lib/bodyZones.ts`, rewritten)** — the surface is now data-first:
+   - **14 anatomical regions:** hair/scalp, mind, vision (eyes), hearing (ears), dental (mouth),
+     neck/throat/thyroid, heart & lungs (chest), digestion (abdomen), liver & gut, spine & posture,
+     arms & hands, hips & pelvis, legs & knees, feet.
+   - **6 systemic layers** for cross-body intelligence that must never be faked as an organ dot:
+     sleep & recovery, stress & nervous system, movement & activity (incl. habits), body
+     composition (weight/BMI/fat/muscle), energy & hormones, and a `general` whole-body layer.
+     Unknown metrics land in `general` — nothing is ever dropped or invented.
+   - **Graded severity**, not binary: critical (concern + level≤3) / attention (concern, or
+     level<4) / moderate (4–6) / optimal (≥7) / noted (report without a level), each with one
+     theme color. Domains inherit their worst metric's severity.
+   - `buildHealthModel()` returns per-domain states plus derived-only aggregates (signal count,
+     active domains worst-first, concern count, mean level). ~90 metric keywords map into the
+     20 domains with exact + keyword fallback. JSX-free for standalone smoke compilation.
+
+2. **`components/health/BodyScan.tsx` (new)** — the anatomical layer: refined skull-with-jaw head,
+   ears, clavicles, sternum, three ribcage arcs, dotted spine axis, pelvic girdle, and ten joint
+   nodes over the verified silhouette — a segmented biometric scan, not an outline. Active regions
+   get on-body anchors; metrics surface as **severity-colored chip rails** left/right of the body
+   with leader lines. Rails retain the worst-severity regions when space runs out (compact: 5/rail,
+   full: 7/rail, then "+N more") and always lay out in anatomical order so leader lines never cross
+   — many metrics stay structured, never ugly. Controlled hover (chips ↔ hotspots ↔ strip all
+   highlight the same domain).
+
+3. **`components/health/HealthIntelligence.tsx` (new)** — the layered surface both cards render:
+   status summary (real derived numbers only) → BodyScan → systemic layer strip → fixed-height
+   hover detail line → (full variant) a per-domain breakdown grid listing every metric. `compact`
+   keeps the homepage card concise; `full` powers the /health room. One component, one model.
+
+4. **`BodyMap.tsx` → thin compat wrapper** — same public name and unchanged `BodyMetric` contract
+   (both consumers kept working; /health now passes `variant="full"`).
+
+**Verification (all green, first attempt):** rewritten
+`scripts/phaseah-premium-bodymap-smoke.mjs` (supersedes the AH checks) — **70/70**: registry
+completeness, all 20 domain mappings incl. fallback rules, graded severity, concern visuals,
+zero/one/many behavior (stacking, worst-level, derived average, chip overflow), both surfaces on
+one system, hydration safety. `dashboard-web tsc --noEmit` — clean. Regressions: AF.2 domain-canvas
+smoke 21/21, AF.5 domain-rooms smoke 29/29. Rail/anatomy geometry verified visually (SVG→PNG
+render) before implementation.
+
+Scope: `services/dashboard-web/src/{lib/bodyZones.ts, components/BodyMap.tsx,
+components/health/{BodyScan.tsx, HealthIntelligence.tsx} (new), app/health/page.tsx}`,
+`scripts/phaseah-premium-bodymap-smoke.mjs` (rewritten), `docs/{phase-log.md, decision-log.md, roadmap.md}`.

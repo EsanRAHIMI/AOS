@@ -55,6 +55,19 @@ export type LlmBudgetEvent = z.infer<typeof LlmBudgetEventSchema>;
 export const ResearchSourceModeSchema = z.enum(['search_api', 'llm_only', 'curated_fallback']);
 export type ResearchSourceMode = z.infer<typeof ResearchSourceModeSchema>;
 
+/**
+ * Phase AG.3 — `synthesisMode` is orthogonal to both `mode` and `sourceMode`
+ * above. `sourceMode` says where the *source URLs* came from; `synthesisMode`
+ * says whether the *prose* (summary/findings/recommendations) was actually
+ * reasoned over the retrieved content by an LLM, or is the deterministic
+ * title/snippet restatement used when no LLM call produced valid output.
+ * A run can have `sourceMode: 'search_api'` (real Tavily URLs) together with
+ * `synthesisMode: 'deterministic_fallback'` (LLM synthesis failed) — that
+ * combination must never be reported as "complete research."
+ */
+export const ResearchSynthesisModeSchema = z.enum(['llm_synthesized', 'deterministic_fallback']);
+export type ResearchSynthesisMode = z.infer<typeof ResearchSynthesisModeSchema>;
+
 export const ResearchSourceSchema = z.object({
   sourceId: z.string(),
   runId: z.string(),
@@ -82,6 +95,11 @@ export const ResearchReportSchema = z.object({
   evidenceId: z.string().nullable().default(null),
   mode: z.enum(['real', 'fallback']).default('fallback'),
   sourceMode: ResearchSourceModeSchema.default('llm_only'),
+  synthesisMode: ResearchSynthesisModeSchema.default('deterministic_fallback'),
+  /** Phase AG.3 — set only when synthesisMode is 'deterministic_fallback' and
+   *  a real LLM call was attempted; carries the actual reason (from
+   *  LlmTrace.errorDetail) instead of a silent, unexplained downgrade. */
+  synthesisFailureReason: z.string().nullable().default(null),
   createdAt: IsoDate,
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;
@@ -94,6 +112,8 @@ export const ResearchRunSchema = z.object({
   sourceCount: z.number().default(0),
   mode: z.enum(['real', 'fallback']).default('fallback'),
   sourceMode: ResearchSourceModeSchema.default('llm_only'),
+  synthesisMode: ResearchSynthesisModeSchema.default('deterministic_fallback'),
+  synthesisFailureReason: z.string().nullable().default(null),
   traceId: z.string().nullable().default(null),
   createdAt: IsoDate,
 });

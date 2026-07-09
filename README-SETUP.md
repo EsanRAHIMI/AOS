@@ -22,7 +22,7 @@ pnpm dev:all
 
 `dev:all` خودکار این کارها را انجام می‌دهد:
 
-1. `sync:env` — کپی `.env` روت به ۱۳ سرویس + پورت و URL لوکال
+1. `sync:env` — کپی `.env` روت به ۱۵ سرویس + پورت و URL لوکال
 2. `build:deps` — build کردن `shared` و `service-kit`
 3. اجرای همزمان همه سرویس‌ها (ترتیب = ترتیب بخش ۲)
 
@@ -41,10 +41,12 @@ pnpm dev:all
 | 7 | devops-agent | 4105 |
 | 8 | memory-agent | 4109 |
 | 9 | documentation-service | 4110 |
-| 10 | file-asset-service | 4112 |
-| 11 | monitor-agent | 4113 |
-| 12 | browser-testing-agent | 4116 |
-| 13 | dashboard-web | **4100** ← داشبورد |
+| 10 | internet-research-service | 4115 |
+| 11 | file-asset-service | 4112 |
+| 12 | monitor-agent | 4113 |
+| 13 | browser-testing-agent | 4116 |
+| 14 | code-operator-agent | 4122 |
+| 15 | dashboard-web | **4100** ← داشبورد |
 
 - داشبورد: http://localhost:4100
 - API: http://localhost:4101
@@ -493,7 +495,64 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۰. file-asset-service
+## ۱۰. internet-research-service
+
+**کار:** تحقیق زنده روی اینترنت برای Jarvis/operator — جستجوی واقعی وب (Tavily) وقتی
+`TAVILY_API_KEY` روی همین سرویس تنظیم شده باشد؛ در غیر این صورت با `sourceMode: llm_only`
+یا `curated_fallback` صادقانه اعلام می‌کند که نتیجه از جستجوی زنده نیست.
+
+| دامنه | پورت |
+|---|---:|
+| research.simorx.com | 4115 |
+
+**Dokploy**
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/internet-research-service` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/internet-research-service... run build` |
+| Start | `pnpm --filter @factory/internet-research-service run start` |
+
+**Environment**
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=internet-research-service
+SERVICE_NAME=Internet Research Service
+SERVICE_DOMAIN=https://research.simorx.com
+SERVICE_PORT=4115
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+# بدون این کلید هم کار می‌کند (LLM recall/curated fallback صادقانه)، اما جستجوی
+# واقعی وب فقط وقتی روشن است که این کلید روی همین سرویس (نه gateway-api) ست شده باشد.
+# بعد از تنظیم/تغییر این کلید، سرویس باید ری‌استارت شود.
+TAVILY_API_KEY=
+
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+
+LOG_LEVEL=info
+```
+
+**تست:** `curl https://research.simorx.com/health`
+
+**نکتهٔ مهم لوکال:** این سرویس باید در `scripts/local-services.mjs` باشد تا هم `pnpm dev:all`
+واقعاً آن را اجرا کند و هم `pnpm sync:env` برایش `.env` بسازد — وگرنه gateway-api هنگام
+تلاش برای تحقیق زنده با خطای `service_unreachable`/`fetch failed` مواجه می‌شود، نه به این
+دلیل که مسیر کد اشتباه است، بلکه چون هیچ پردازه‌ای روی پورت 4115 گوش نمی‌دهد.
+
+---
+
+## ۱۱. file-asset-service
 
 **کار:** آپلود و مدیریت فایل/asset روی S3.
 
@@ -540,7 +599,7 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۱. monitor-agent
+## ۱۲. monitor-agent
 
 **کار:** health scan دوره‌ای، ثبت incident، ساخت repair task.
 
@@ -584,7 +643,7 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۲. browser-testing-agent
+## ۱۳. browser-testing-agent
 
 **کار:** تست مرورگر/HTTP روی targetهای داخلی.
 
@@ -631,7 +690,28 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۳. dashboard-web
+## ۱۴. code-operator-agent
+
+**کار:** جستجو/ویرایش/typecheck/build/git/PR روی workspace کد (شاخه‌های ایزوله). جزئیات کامل:
+`deployment/dokploy/code-operator-agent.md` و `services/code-operator-agent/.env.example`.
+
+| دامنه | پورت |
+|---|---:|
+| code.simorx.com | 4122 |
+
+**Dokploy**
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/code-operator-agent` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/code-operator-agent... run build` |
+| Start | `pnpm --filter @factory/code-operator-agent run start` |
+
+**تست:** `curl https://code.simorx.com/health`
+
+---
+
+## ۱۵. dashboard-web
 
 **کار:** داشبورد Next.js — UI کنترل، مانیتورینگ، تأیید انسان.
 
@@ -699,16 +779,22 @@ curl https://memory.simorx.com/health
 # ۹ — documentation-service — مستندسازی خودکار
 curl https://docs.simorx.com/health
 
-# ۱۰ — file-asset-service — فایل و asset روی S3
+# ۱۰ — internet-research-service — تحقیق زنده (Tavily وقتی کلید ست شده)
+curl https://research.simorx.com/health
+
+# ۱۱ — file-asset-service — فایل و asset روی S3
 curl https://assets.simorx.com/health
 
-# ۱۱ — monitor-agent — health scan و incident
+# ۱۲ — monitor-agent — health scan و incident
 curl https://monitor.simorx.com/health
 
-# ۱۲ — browser-testing-agent — تست مرورگر/HTTP
+# ۱۳ — browser-testing-agent — تست مرورگر/HTTP
 curl https://browser-testing.simorx.com/health
 
-# ۱۳ — dashboard-web — داشبورد کنترل (UI)
+# ۱۴ — code-operator-agent — عملیات روی کد (workspace ایزوله)
+curl https://code.simorx.com/health
+
+# ۱۵ — dashboard-web — داشبورد کنترل (UI)
 curl https://factory.simorx.com/health
 ```
 
@@ -723,10 +809,12 @@ curl https://factory.simorx.com/health
 | 7 | devops-agent | devops.simorx.com | 4105 | deploy |
 | 8 | memory-agent | memory.simorx.com | 4109 | حافظه |
 | 9 | documentation-service | docs.simorx.com | 4110 | مستندات |
-| 10 | file-asset-service | assets.simorx.com | 4112 | فایل/S3 |
-| 11 | monitor-agent | monitor.simorx.com | 4113 | مانیتورینگ |
-| 12 | browser-testing-agent | browser-testing.simorx.com | 4116 | تست UI |
-| 13 | dashboard-web | factory.simorx.com | 4100 | داشبورد |
+| 10 | internet-research-service | research.simorx.com | 4115 | تحقیق زنده |
+| 11 | file-asset-service | assets.simorx.com | 4112 | فایل/S3 |
+| 12 | monitor-agent | monitor.simorx.com | 4113 | مانیتورینگ |
+| 13 | browser-testing-agent | browser-testing.simorx.com | 4116 | تست UI |
+| 14 | code-operator-agent | code.simorx.com | 4122 | عملیات کد |
+| 15 | dashboard-web | factory.simorx.com | 4100 | داشبورد |
 
 پاسخ سالم: `{"status":"ok"}`
 
@@ -734,7 +822,7 @@ curl https://factory.simorx.com/health
 ```bash
 curl https://api.simorx.com/v1/services
 ```
-باید همه ۱۳ سرویس در لیست باشند.
+باید همه ۱۵ سرویس در لیست باشند.
 
 ---
 

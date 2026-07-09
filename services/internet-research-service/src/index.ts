@@ -48,10 +48,19 @@ const handleTask: TaskHandler = async (req, ctx) => {
   await collection<ResearchReport>(COLLECTIONS.RESEARCH_REPORTS).insertOne(report);
   await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
 
-  await finishAgentRun(runId, { status: 'succeeded', summary: `Research complete (${report.mode}, sources: ${report.sourceMode}); ${sources.length} sources.` });
-  await ctx.publisher.publish({ type: EVENT_TYPES.RESEARCH_COMPLETED_V2, taskId, payload: { reportId: report.reportId, sourceCount: sources.length, mode: report.mode, sourceMode: report.sourceMode, message: `Research report ready (${report.mode}, sources: ${report.sourceMode})` } });
+  await finishAgentRun(runId, { status: 'succeeded', summary: `Research complete (${report.mode}, sources: ${report.sourceMode}, synthesis: ${report.synthesisMode}); ${sources.length} sources.` });
+  await ctx.publisher.publish({ type: EVENT_TYPES.RESEARCH_COMPLETED_V2, taskId, payload: { reportId: report.reportId, sourceCount: sources.length, mode: report.mode, sourceMode: report.sourceMode, synthesisMode: report.synthesisMode, message: `Research report ready (${report.mode}, sources: ${report.sourceMode}, synthesis: ${report.synthesisMode})` } });
 
-  return { taskId: taskId ?? 'adhoc', accepted: true, agentRunId: runId, research: { reportId: report.reportId, runId: run.runId, mode: report.mode, sourceMode: report.sourceMode, sourceCount: sources.length, evidenceId: evidence.evidenceId, summary: report.summary, findings: report.findings, recommendations: report.recommendations, sources: sources.map((s) => ({ title: s.title, url: s.url, reliability: s.reliability, sourceMode: s.sourceMode })) } };
+  return {
+    taskId: taskId ?? 'adhoc', accepted: true, agentRunId: runId,
+    research: {
+      reportId: report.reportId, runId: run.runId, mode: report.mode, sourceMode: report.sourceMode,
+      synthesisMode: report.synthesisMode, synthesisFailureReason: report.synthesisFailureReason,
+      sourceCount: sources.length, evidenceId: evidence.evidenceId, summary: report.summary,
+      findings: report.findings, recommendations: report.recommendations,
+      sources: sources.map((s) => ({ title: s.title, url: s.url, reliability: s.reliability, sourceMode: s.sourceMode })),
+    },
+  };
 };
 
 async function main(): Promise<void> {
