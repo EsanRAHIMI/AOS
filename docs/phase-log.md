@@ -2974,3 +2974,23 @@ testing-and-ci.md (new), development-rules.md, decision-log.md (D-154/D-155), ro
 Scope: `shared/{package.json, vitest.config.ts, test/*(new), src/schemas/event.ts}`,
 root `package.json`, `pnpm-lock.yaml`, `docs/{testing-and-ci.md(new), development-rules.md,
 decision-log.md, roadmap.md, phase-log.md}`.
+
+## Phase K1.2 — GitHub Actions CI Gate — COMPLETE (2026-07-10)
+
+**Goal (master-direction §J.1):** make CI the canonical verifier; red CI blocks merge.
+
+**What was built:** `.github/workflows/ci.yml` — on push/PR to main:
+install (`--frozen-lockfile`) → `build:deps` (shared + service-kit) → `pnpm -r run typecheck`
+(all 21 projects incl. dashboard) → `pnpm -r run test`. pnpm version from `packageManager`,
+Node from `.nvmrc`, pnpm cache enabled, 20-min timeout, per-ref concurrency cancel.
+Full service builds/`next build` deliberately deferred to the 19→6 consolidation so CI
+validates the real deployables (documented in the workflow header).
+
+**Verification:** the workflow's exact command sequence executed locally against a clean
+sandbox copy of the repo: frozen-lockfile install OK (no drift — proves lockfile/package.json
+coherence), build:deps OK, typecheck OK for all 21 projects, tests 93/93 green. Confirmed
+`browser-testing-agent` uses `playwright-core` (no browser postinstall) — no hidden CI
+download. First live Actions run occurs on next push to GitHub (not possible from this
+environment; commands proven identical locally).
+
+Scope: `.github/workflows/ci.yml` (new), `docs/{testing-and-ci.md, phase-log.md}`.

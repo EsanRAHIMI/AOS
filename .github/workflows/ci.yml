@@ -1,0 +1,47 @@
+# K1.2 — canonical verification gate (docs/testing-and-ci.md).
+# Every push/PR to main must pass: install (frozen lockfile) → build shared +
+# service-kit → recursive typecheck → recursive tests. A red CI blocks merge —
+# no exceptions, including for agents.
+#
+# Deliberately excluded for now (see master-direction.md §D K1):
+# - Full service builds / dashboard `next build` — land with the 19→6
+#   consolidation so CI validates the real deployables, not the old topology.
+# - E2E/scenario jobs — land in K2 with the agent runtime.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version comes from package.json "packageManager" (pnpm@9.15.0)
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared + service-kit
+        run: pnpm run build:deps
+
+      - name: Typecheck (all packages)
+        run: pnpm -r run typecheck
+
+      - name: Test (all packages)
+        run: pnpm -r run test
