@@ -13,6 +13,7 @@
     "build:shared": "pnpm --filter @factory/shared run build",
     "build:deps": "pnpm run build:shared && pnpm --filter @factory/service-kit run build",
     "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
     "dev": "echo 'Run a specific service: pnpm --filter <service> run dev'",
     "dev:all": "pnpm sync:env && pnpm run build:deps && node scripts/dev-all.mjs",

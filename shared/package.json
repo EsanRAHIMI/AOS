@@ -23,6 +23,8 @@
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -35,6 +37,7 @@
   },
   "devDependencies": {
     "typescript": "^5.9.2",
-    "@types/node": "^22.15.0"
+    "@types/node": "^22.15.0",
+    "vitest": "^4.1.10"
   }
 }

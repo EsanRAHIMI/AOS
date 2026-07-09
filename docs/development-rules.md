@@ -12,11 +12,18 @@ These rules keep AOS fast, safe, and easy for future agents to extend.
 - Every important behavior emits events, evidence, audit logs, memory, or documentation.
 - User/tenant data must be scoped explicitly; global kernel state must be marked global.
 
+## Testing (K1, mandatory)
+
+- No feature or refactor merges without tests pinning its contract (`docs/testing-and-ci.md`).
+- `*.contract.test.ts` files are guarantees: changing one requires a decision-log entry.
+- Do not add new `scripts/*-smoke.mjs` files; convert existing ones to vitest tests and delete
+  them in the same PR whenever their area is touched.
+- Run `pnpm test` + `pnpm -r run typecheck` before considering the repo healthy.
+
 ## Local Development
 
 - No local Docker requirement. Services run from the pnpm workspace.
 - Use `pnpm -r run typecheck` before considering the repo healthy.
-- Use focused smoke scripts when changing runtime, voice, workspace, Dokploy, or security flows.
 - Keep `.env.example` and `deployment/env/*.env.example` updated with new env needs.
 
 ## Code Evolution

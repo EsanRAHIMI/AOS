@@ -2,6 +2,25 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.1 Test Substrate (master-direction.md era begins)
+
+### D-155 Event `source` re-asserted required — first bug caught by contract tests
+Phase AA's `.merge(ScopeFieldsSchema)` into `SystemEventSchema` silently replaced the REQUIRED
+event `source` (emitting serviceId) with scope-provenance's OPTIONAL `source` — the bus was
+accepting anonymous events. The very first contract-test run exposed it. Fixed by re-asserting
+`source: z.string()` via `.extend()` after the merge, with a comment naming the collision.
+Risk assessed as low: `EventPublisher` always stamps `source`, so no legitimate publisher is
+affected; verified by shared/service-kit/event-bus/gateway typechecks + full suite green.
+Lesson recorded: schema merges can silently weaken required fields — contract tests are the net.
+
+### D-154 Vitest as the workspace test runner; contract tests colocated per package
+Phase K1 (see docs/master-direction.md §D/§J) requires a trust substrate before any refactor.
+Vitest 4 chosen: native TS/ESM, resolves the codebase's NodeNext `.js` specifiers to `.ts`
+sources without a build step, single dependency, fast (full suite <1s). Tests live in
+`<package>/test/*.contract.test.ts` and import SOURCE, not dist. The 30+ bespoke smoke scripts
+in `scripts/` are superseded progressively: each one is deleted in the PR that converts its
+coverage into real tests. Root `pnpm test` runs the recursive suite.
+
 ## 2026-07-10 — Phase AH.2 Health Intelligence Surface
 
 ### D-153 Anatomical regions and systemic layers are different kinds of things, and the architecture says so

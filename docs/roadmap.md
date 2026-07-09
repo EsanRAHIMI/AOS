@@ -1,5 +1,12 @@
 # Roadmap
 
+> **SUPERSEDED (2026-07-10):** Future direction is now defined exclusively by
+> [`master-direction.md`](./master-direction.md) — phases **K1–K5** with hard
+> verification gates. Everything below is the historical record of Phases 1–AH.
+> **Current phase: K1 — Foundation Reset** (tests, CI, gateway split,
+> scope-by-construction, Redis backbone, real auth, 19→6 consolidation).
+> No new features, domains, agents, or UI work until K1's gate is green.
+
 ## Phase 1 — Foundation — DONE
 Repo, shared contracts, service-kit, core services, dashboard, data models,
 docs, Dokploy specs. (See phase-log.md.)

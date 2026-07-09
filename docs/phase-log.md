@@ -2947,3 +2947,30 @@ render) before implementation.
 Scope: `services/dashboard-web/src/{lib/bodyZones.ts, components/BodyMap.tsx,
 components/health/{BodyScan.tsx, HealthIntelligence.tsx} (new), app/health/page.tsx}`,
 `scripts/phaseah-premium-bodymap-smoke.mjs` (rewritten), `docs/{phase-log.md, decision-log.md, roadmap.md}`.
+
+## Phase K1.1 — Test Substrate (Vitest + First Contract Tests) — COMPLETE (2026-07-10)
+
+**Goal (master-direction §J.1):** trust substrate before any refactor. No features.
+
+**What was built:**
+1. Vitest 4 wired into the workspace: `shared/vitest.config.ts`, `shared` test scripts,
+   root `pnpm test`, lockfile updated (additive: vitest toolchain only).
+2. **93 contract tests in 6 suites** (`shared/test/*.contract.test.ts`) pinning: token auth
+   guards; the `canAccess` isolation engine (fail-closed, user/tenant/global/case, consent gate,
+   agent-approval prohibition, owner approval-gating); `stampScope`/`scopeFilter` fail-closed
+   halves; the LLM router validation invariant (nothing unvalidated escapes, honest fallback
+   traces, governance defaults, cost mapping — zero network); Jarvis grounding (bilingual intent
+   fallback, packet ranking/cap, user_priority precedence, correction gate); API envelopes +
+   event contract + id/time utilities.
+3. **First real bug caught and fixed (D-155):** `SystemEventSchema.merge(ScopeFieldsSchema)`
+   had silently made event `source` optional (field collision with scope provenance) — the bus
+   accepted anonymous events. Re-asserted required via `.extend()`.
+
+**Verification:** full suite 93/93 green (<1s); `tsc --noEmit` clean for shared,
+service-kit, event-bus-service, gateway-api (the `source` consumers). Docs updated:
+testing-and-ci.md (new), development-rules.md, decision-log.md (D-154/D-155), roadmap.md
+(supersession header → master-direction.md).
+
+Scope: `shared/{package.json, vitest.config.ts, test/*(new), src/schemas/event.ts}`,
+root `package.json`, `pnpm-lock.yaml`, `docs/{testing-and-ci.md(new), development-rules.md,
+decision-log.md, roadmap.md, phase-log.md}`.
