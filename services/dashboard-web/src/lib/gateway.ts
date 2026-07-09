@@ -242,4 +242,30 @@ export const gateway = {
     systemHealthSummary: { servicesRegistered: number; openIncidents: number; pendingApprovals: number; safeMode: boolean; activeOperation: string | null };
     memoryInsights: string[];
   }>('/v1/me/universe'),
+  // Phase AF.1 — Living Command Universe Foundation. The daily command
+  // briefing (built in Phase AE, corrected in AE.1) had ZERO consumers in the
+  // dashboard until this method — the single most concrete "built but
+  // invisible" gap identified in docs/living-command-universe-vision.md §A.8.
+  briefing: () => call<{
+    briefingId: string;
+    actorId: string;
+    scope: 'global' | 'user';
+    headline: string;
+    narrative: string;
+    topPriorities: string[];
+    decisions: string[];
+    blockers: string[];
+    suggestedFollowUps: string[];
+    language: string;
+    createdAt: string;
+    primaryPriority: string;
+    activeBlockers: string[];
+    systemWarnings: string[];
+    recommendedNextActions: string[];
+    memoryFactsUsed: Array<{ kind: string; content: string; importance: number; createdAt: string }>;
+    confidence: number;
+    dataFreshness: string;
+    prioritizedItems: Array<{ label: string; detail: string; type: 'task' | 'project' | 'action'; weight: number }>;
+    generatedAt: string;
+  }>('/v1/jarvis/briefing'),
 };

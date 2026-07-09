@@ -3,29 +3,41 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { voiceStartAction, voiceEndSessionAction } from '@/app/voice/actions';
 import { operatorCommandAction, getRuntimeSessionAction, decideRuntimePermissionAction, type RuntimeSessionView, type OperatorCommandResult, type ScopeContextView } from '@/app/operator/actions';
+import { getBriefingAction, type JarvisBriefingView } from '@/app/jarvis/actions';
 import { useRealtimeVoiceSession, type RealtimeState } from '@/hooks/useRealtimeVoiceSession';
 import { UtteranceGate } from '@/lib/utteranceGate';
+import { domainLinkFor, type DomainLink } from '@/lib/domainLinks';
 
 /**
- * Phase X — Operator Console. The human interface to the Autonomous Operator
- * Runtime. Voice and text are equal input channels; every command goes to the
- * gateway runtime (`/v1/operator/command`), which plans, executes tools,
- * pauses for approvals, and reports. This component never executes anything
- * itself. Command hygiene (final-only, dedupe, echo suppression, single
- * in-flight) is enforced by the Phase 19.5 UtteranceGate + the server.
+ * Phase X — Operator Console; Phase AF.1 — promoted to the persistent Jarvis
+ * Runtime Shell. Mounted once at the root layout (`app/layout.tsx`), so its
+ * state (log, active session, briefing) survives route navigation by
+ * construction — Next.js App Router keeps a layout's client component tree
+ * mounted across page changes; only `page.tsx` content remounts. This is
+ * refactored in place rather than duplicated: voice, session polling, and
+ * approvals below are UNCHANGED from Phase X/18/19.
+ *
+ * Two modes:
+ *  - Ambient (collapsed): a compact, always-visible strip showing the real
+ *    daily-brain priority (`/v1/jarvis/briefing`) and current activity — not
+ *    a customer-support pill with a static label.
+ *  - Expanded (open): the full conversational panel, unchanged behavior.
  */
 
 type ConsoleState = 'idle' | 'listening' | 'capturing' | 'finalizing' | 'thinking' | 'waiting_approval' | 'executing' | 'speaking' | 'error';
-interface LogItem { who: 'user' | 'operator'; text: string }
+interface LogItem { who: 'user' | 'operator'; text: string; domain?: DomainLink | null }
 
 const ACTIVE_STATUSES = ['planning', 'running', 'verifying', 'waiting_approval'];
 const STEP_GLYPH: Record<string, string> = { done: '✓', failed: '✕', running: '▸', pending: '○', skipped: '–', awaiting_approval: '⏸', manual_required: '!' };
 /** Workspace live-phase → short label for the status strip. */
 const WS_PHASES = ['planning', 'generating', 'editing', 'building', 'booting', 'probing', 'fixing', 'verifying', 'ready_for_migration', 'waiting_approval', 'completed', 'failed'];
+/** How often the ambient shell refreshes the daily briefing while idle. */
+const BRIEFING_REFRESH_MS = 120_000;
 
-export function OperatorConsole({ role }: { role: string }) {
+export function OperatorConsole({ role, initialBriefing = null }: { role: string; initialBriefing?: JarvisBriefingView | null }) {
   const pathname = usePathname() ?? '/';
   const [open, setOpen] = useState(false);
+  const [briefing, setBriefing] = useState<JarvisBriefingView | null>(initialBriefing);
   const [state, setStateRaw] = useState<ConsoleState>('idle');
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [log, setLog] = useState<LogItem[]>([]);
@@ -99,6 +111,19 @@ export function OperatorConsole({ role }: { role: string }) {
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [log, session, capabilities, interimText, rt.partialUserText, rt.partialAssistantText]);
 
+  // Phase AF.1 Step 6 — the ambient shell stays current without the user
+  // opening the panel: refresh the real daily briefing periodically. This
+  // is what lets the collapsed bar show today's actual priority, not a
+  // static label, even if the tab has been open for a while.
+  const refreshBriefing = useCallback(async (): Promise<void> => {
+    const b = await getBriefingAction();
+    setBriefing(b);
+  }, []);
+  useEffect(() => {
+    const id = setInterval(() => { void refreshBriefing(); }, BRIEFING_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [refreshBriefing]);
+
   const showHint = (text: string): void => {
     setHint(text);
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
@@ -128,9 +153,9 @@ export function OperatorConsole({ role }: { role: string }) {
     setState(rtActiveRef.current ? 'listening' : 'idle');
   };
 
-  const say = (text: string): void => {
+  const say = (text: string, domain: DomainLink | null = null): void => {
     if (!text || !gate.acceptAssistant(text)) return;
-    setLog((c) => [...c, { who: 'operator', text }]);
+    setLog((c) => [...c, { who: 'operator', text, domain }]);
     speak(text);
   };
 
@@ -191,8 +216,11 @@ export function OperatorConsole({ role }: { role: string }) {
       if (r.kind === 'error') { say(r.reply); setState('error'); return; }
       if (r.kind === 'capabilities') { setCapabilities(r.groups); say(r.spoken); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       // Phase AD — grounded direct answer: no fake tool session, just a real,
-      // context-grounded reply (honest about what's not configured).
-      if (r.kind === 'answer') { setScopeCtx(r.scopeContext); setFollowUps(r.suggestedFollowUps); say(r.reply); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
+      // context-grounded reply (honest about what's not configured). Phase
+      // AF.1 Step 7 — attach a real domain link when the classified intent
+      // maps to one, so the reply can point back at the part of the
+      // universe it's about.
+      if (r.kind === 'answer') { setScopeCtx(r.scopeContext); setFollowUps(r.suggestedFollowUps); say(r.reply, domainLinkFor(r.intentCategory)); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       if (r.kind === 'clarify') { say(r.reply); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       // Runtime session started.
       setScopeCtx(r.scopeContext);
@@ -204,6 +232,10 @@ export function OperatorConsole({ role }: { role: string }) {
       setState('error');
     } finally {
       gate.markHandled();
+      // A turn may have just extracted a new memory fact or changed what's
+      // blocking progress (Phase AE.1) — refresh so the ambient bar and any
+      // future briefing read reflect it promptly, not up to 2 minutes late.
+      void refreshBriefing();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
@@ -296,13 +328,40 @@ export function OperatorConsole({ role }: { role: string }) {
   }
 
   if (!open) {
+    // Phase AF.1 Step 1 — Ambient mode. Not a customer-support pill: this is
+    // Jarvis's persistent, always-visible read of the real world — the
+    // active session's goal while working, or the real stated priority from
+    // the daily briefing otherwise. Every value here is real state already
+    // held by this component; nothing is invented for the collapsed view.
+    const hasActivity = Boolean(session && ACTIVE_STATUSES.includes(session.status));
+    const blockerCount = briefing?.activeBlockers.length ?? 0;
+    const headline = hasActivity
+      ? session!.goal.slice(0, 64)
+      : (briefing?.primaryPriority ? briefing.primaryPriority.slice(0, 64) : 'Give me a goal, or ask what matters today');
     return (
       <button
         type="button"
-        aria-label="Open operator console"
-        onClick={() => { setOpen(true); setState('idle'); if (log.length === 0) setLog([{ who: 'operator', text: 'Operator runtime online. Give me a goal — I plan, use tools, and ask before any change. Try “check the whole system” or “what can you do?”.' }]); }}
-        style={{ position: 'fixed', right: 18, bottom: 'calc(18px + env(safe-area-inset-bottom))', zIndex: 60, height: 46, padding: '0 18px', borderRadius: 23, border: '1px solid var(--border-2)', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', color: '#06122b', fontSize: 12.5, fontWeight: 700, letterSpacing: '0.08em', cursor: 'pointer', boxShadow: '0 10px 30px -8px rgba(110,168,255,0.7)' }}
-      >OPERATOR</button>
+        aria-label="Open Jarvis"
+        onClick={() => { setOpen(true); setState('idle'); if (log.length === 0) setLog([{ who: 'operator', text: 'Jarvis online. Give me a goal — I plan, use tools, and ask before any change. Try “check the whole system” or “what can you do?”.' }]); }}
+        style={{
+          position: 'fixed', right: 16, bottom: 'calc(16px + env(safe-area-inset-bottom))', zIndex: 60,
+          display: 'flex', alignItems: 'center', gap: 9, maxWidth: 'min(380px, calc(100vw - 32px))',
+          padding: '10px 16px', borderRadius: 16, border: '1px solid var(--border-2)',
+          background: 'var(--glass-strong)', backdropFilter: 'blur(var(--blur))', WebkitBackdropFilter: 'blur(var(--blur))',
+          cursor: 'pointer', textAlign: 'left', boxShadow: '0 12px 34px -12px rgba(0,0,0,0.55)',
+        }}
+      >
+        <span className={hasActivity ? 'op-active-dot' : undefined} style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor, boxShadow: `0 0 8px ${dotColor}`, flexShrink: 0 }} />
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 9.5, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--muted, #7a8699)', textTransform: 'uppercase' }}>
+            {hasActivity ? 'Jarvis · working' : 'Jarvis'}
+          </span>
+          <span style={{ fontSize: 12.5, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text)' }}>
+            {headline}
+          </span>
+        </span>
+        {blockerCount > 0 && <span className="badge err" style={{ fontSize: 10, flexShrink: 0 }}>{blockerCount}</span>}
+      </button>
     );
   }
 
@@ -311,7 +370,7 @@ export function OperatorConsole({ role }: { role: string }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor, boxShadow: `0 0 8px ${dotColor}`, flexShrink: 0 }} />
-          <b style={{ fontSize: 13, letterSpacing: '0.02em' }}>Operator Console</b>
+          <b style={{ fontSize: 13, letterSpacing: '0.02em' }}>Jarvis</b>
           <span className="m" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{statusText}</span>
           {rtActive && <span className="m" style={{ fontSize: 11 }}>{fmtClock(rt.elapsedSec)}</span>}
         </div>
@@ -356,6 +415,14 @@ export function OperatorConsole({ role }: { role: string }) {
         {log.map((m, i) => (
           <div key={i} style={{ alignSelf: m.who === 'user' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
             <div className={m.who === 'user' ? 'glass' : ''} style={{ padding: '8px 11px', borderRadius: 10, fontSize: 13, background: m.who === 'operator' ? 'var(--glass-2)' : undefined, border: m.who === 'operator' ? '1px solid var(--border)' : undefined }}>{m.text}</div>
+            {/* Phase AF.1 Step 7 — domain reference: points this specific
+                reply back at the real zone it concerns, real intentCategory
+                only, never guessed. */}
+            {m.domain && (
+              <a href={m.domain.href} className="chip" style={{ fontSize: 10, textDecoration: 'none', marginTop: 4, display: 'inline-block' }}>
+                Related: {m.domain.title} →
+              </a>
+            )}
           </div>
         ))}
 

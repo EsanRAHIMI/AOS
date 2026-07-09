@@ -1492,3 +1492,192 @@ catch every dishonesty pattern `scoreJarvisAnswer` can detect (e.g. a hidden `no
 trigger regeneration, only get logged as a quality issue); `active` on `JarvisMemoryFact` has no write path
 yet (no explicit "forget X" command).
 Scope: `shared/src/jarvis/{memory,index}.ts`, `services/gateway-api/src/index.ts`, `scripts/`, `docs/`.
+
+## Phase AF.1 — Living Command Universe Foundation — COMPLETE (2026-07-09)
+Full product-architecture direction recorded first in `docs/living-command-universe-vision.md` (sections A–J).
+This phase executes the highest-leverage slice of that direction: make Jarvis's already-real intelligence
+structurally visible and persistent, not a bolted-on chat widget, without a chaotic full redesign. Per the
+governing constraint: no unused components, no unused API methods, no fake placeholder intelligence — every
+piece below is wired to a real, already-tested backend capability.
+
+Delivered (shared):
+- `buildUniverseZones()`'s finance zone now exposes `in/mo` and `out/mo` metrics (additive), alongside the
+  existing `net/mo`/`obligations` — `aggregateFinance()` always computed these; they were simply never
+  exposed to any zone consumer. This is what makes a real cashflow visual possible without inventing numbers.
+
+Delivered (dashboard-web — persistent shell, Step 1):
+- `OperatorConsole.tsx` (the Phase X operator console) is now the persistent Jarvis Runtime Shell — refactored
+  in place, not duplicated. It already lived in `app/layout.tsx` (mounted once, outside `page.tsx`), so its
+  state already survived route navigation by construction; what was missing was an ambient presence. The
+  collapsed state is no longer a static "OPERATOR" pill — it is a compact bar showing the real active session
+  goal while working, or the real `primaryPriority` from `/v1/jarvis/briefing` otherwise, plus a live blocker
+  count. The expanded panel (voice, session polling, approvals, capabilities) is unchanged.
+
+Delivered (dashboard-web — Presence Bar, Step 2):
+- New `gateway.briefing()` client method + `app/jarvis/actions.ts::getBriefingAction()` — the FIRST consumer
+  of `GET /v1/jarvis/briefing` anywhere in the dashboard (built in Phase AE, corrected in AE.1, zero UI
+  consumers until now — the single most concrete "built but invisible" finding in the vision doc, §A.8).
+- New `PresenceBar.tsx` replaces the old flattened one-sentence "Jarvis today summary" card: renders
+  `primaryPriority`, `activeBlockers`, `systemWarnings`, `recommendedNextActions` (as real Jarvis-summon
+  buttons), `confidence`, relative `dataFreshness`, and `memoryFactsUsed` count as distinct, honest sections
+  — never merged into prose. An unreachable briefing renders an explicit "not reachable" state, never a fake
+  placeholder.
+- Also closes a second, smaller stale-field gap found during this work: `/v1/me/universe`'s `memoryInsights`
+  field was typed all the way through `gateway.ts` and never rendered anywhere since Phase AD. Now rendered
+  in the Presence Bar. `todaySummary` (Phase AD) is deliberately no longer rendered — fully superseded by the
+  more accurate, AE.1-corrected `primaryPriority`; kept in the API for compatibility, documented here as an
+  intentional, not silent, non-use.
+
+Delivered (dashboard-web — Focus Row, Step 3):
+- New pure module `src/lib/focus.ts::buildFocusItems()` — framework-free (no React import), unit-testable.
+  Structurally guarantees the exact fix Phase AE.1 made at the answer-composition layer now also holds on the
+  homepage: an explicit stated priority is always item one; blockers and pending approvals follow; generic
+  system warnings are the LAST resort, shown only when the row would otherwise be empty.
+- New `FocusRow.tsx` renders the top 1–3 items with kind-labeled badges (YOUR PRIORITY / BLOCKER / APPROVAL /
+  RECOMMENDED / SYSTEM) and visual weight — not a generic card grid.
+
+Delivered (dashboard-web — Domain Canvas, Step 4):
+- `UniverseZone.tsx` is now the shared shell (unchanged contract) that any domain can wrap with a real visual
+  body via `children` — previously only the `health` zone (via `BodyMap.tsx`, already existing) did this.
+- New `components/domains/FinanceFlow.tsx` — real inflow/outflow bars, net figure, and upcoming obligations,
+  built from the newly-exposed `in/mo`/`out/mo` metrics. Hand-built CSS/SVG-free bars, zero new dependencies
+  (no chart library exists or was added — follows the `BodyMap` precedent). Honest "not tracked yet" state
+  when no real amounts exist.
+- New `components/domains/SystemPulse.tsx` — deliberately compact single-row infrastructure strip (services /
+  incidents / safe mode / active operation). Visible but subordinate, per the product direction.
+- New `components/domains/PresenceBadges.tsx` — connector states as badges instead of bullet prose.
+- `daily`/`life`/`ventures`/`opportunities`/`growth` zones are unchanged this phase (explicitly scoped out —
+  "do not redesign every domain in one chaotic pass").
+
+Delivered (dashboard-web — inline Jarvis annotations, Step 5):
+- `UniverseZone.tsx` gained `JarvisAnnotation`: an `attention`-status zone now shows a distinct, bordered
+  "Jarvis suggests: …" line using the zone's own real `jarvisCommand` field — not a duplicate of the headline
+  already shown, not invented commentary. `setup_needed`/`not_configured` zones are intentionally left to the
+  existing dashed setup-hint box (already correct) rather than duplicating the same text twice on one card.
+
+Delivered (dashboard-web — live activity, Step 6):
+- The ambient bar's activity indicator is driven by the SAME real `session` state the expanded panel already
+  polls every 2.5s while a runtime session is active (`ACTIVE_STATUSES`) — no second SSE/EventSource
+  connection was added. `LiveEvents.tsx` (the homepage's live pulse feed) is unchanged. A second, independent
+  live-event subscription inside the shell was deliberately NOT built this phase to avoid duplicating a
+  connection with no incremental proof of value yet — recorded as a real scoped-out decision, not silently
+  skipped (see decision log).
+
+Delivered (dashboard-web — result blocks / domain links, Step 7):
+- New pure module `src/lib/domainLinks.ts::domainLinkFor(intentCategory)` maps a REAL, already-classified
+  `intentCategory` (returned by `/v1/operator/command` since Phase AD) to the real zone it concerns. The
+  Jarvis shell now renders a "Related: Zone →" chip under `answer`-kind replies. Deliberately NOT applied to
+  `session`-kind replies — the gateway's `/v1/operator/command` session branch does not currently return
+  `intentCategory` at all (a real, separate backend gap, not fabricated here — see known gaps below).
+- Existing `suggestedFollowUps` action chips and the persistent session/progress panel (Step 1) already
+  satisfy "action chips" and "persistent task/progress display" — reused, not duplicated.
+
+Verification:
+- **Phase AF.1 smoke PASS (11/11)** (`scripts/phaseaf1-focus-row-smoke.mjs`) — proves the Focus Row's
+  priority-first structural guarantee, including the exact real failed-conversation scenario (stated priority
+  + noisy service-registry/file-asset-service warnings) and the "system warning only as last resort" rule.
+- Regression: Phase X 28/28, Phase AA 39/39, Phase AC+ 18/18, Phase AD 28/28, Phase AE 30/30, Phase AE.1
+  26/26 all still green (Phase AB's one pre-existing unrelated failure is unchanged).
+- `shared` `tsc` clean; `gateway-api` `tsc --noEmit` clean; `dashboard-web` `tsc --noEmit` clean (all new and
+  edited files typecheck with zero errors).
+- `next build` could NOT be completed in this sandbox: the mounted dev folder is read-only for `node_modules`
+  writes (confirmed via `npm install` → `EPERM: operation not permitted, unlink .../node_modules/.bin/next`),
+  and the ARM64 SWC binary is not preinstalled, so `next build` needs to download it — that download
+  intermittently failed DNS resolution inside Node's fetch in this sandbox even though `curl` to the same
+  registry succeeded. This is an environment limitation, not a code issue: `tsc --noEmit` (the authoritative
+  type-correctness signal) is clean across all three packages, and this exact sandbox constraint was already
+  documented in the Phase AD entry above (isolated `/tmp` copies were used there for installs). Honestly
+  reported rather than skipped or claimed clean.
+
+Honest remaining gaps: `daily`/`life`/`ventures`/`opportunities`/`growth` zones still use the pre-Phase-AF.1
+generic list rendering — only Health/Finance/Systems/Presence have a domain-specific visual so far. No
+dedicated `/finance`, `/health` etc. routes exist yet — domains still link into the older generic `/me/*`
+pages. `session`-kind replies have no `intentCategory` in the gateway response, so the domain-link chip only
+appears on `answer`-kind replies. The shell does not yet have its own independent live-event subscription —
+activity is inferred from session state only. Inline Jarvis annotations only cover `attention` status; no
+annotation logic was added for `live` zones (deliberately — nothing to flag). `next build` was not verified
+in this sandbox pass (see Verification above); a full `next build` should be run in CI or an isolated copy
+before this ships.
+Scope: `shared/src/personal/index.ts`, `services/dashboard-web/src/{app,components,lib}/**`, `scripts/`,
+`docs/`.
+
+## Phase AF.2 — Full Domain Canvas Expansion & Jarvis-Guided Interaction — COMPLETE (2026-07-09)
+Closes the gaps AF.1 left honest: all nine Command Universe zones now render a real domain-specific visual
+(none fall back to the generic bullet list), Jarvis's inline annotation is domain-aware instead of one
+generic line, a real backend field (financial risk items) that was being silently dropped is now surfaced,
+and the Domain Canvas gained real screen-guidance (anchors + highlight-on-arrival). Builds on AF.1's
+foundation — nothing from AF.1 was redone.
+
+Delivered (dashboard-web — parsing + manifest, no new dependencies):
+- `src/lib/zoneParsing.ts` — `extractNumberAfter`/`firstSegment`/`segments`, small typed parsers for the
+  `"category · score X"`-style `detail` strings `buildUniverseZones()` already writes, shared across the new
+  domain components instead of each reinventing regex.
+- `src/lib/domainCanvas.ts` — `ZONE_IDS` + `DOMAIN_RENDERERS` manifest (zoneId → renderer file), the single
+  source of truth the new smoke test checks "every zone has a real renderer" against.
+
+Delivered (dashboard-web — 5 new domain visuals, `components/domains/`):
+- `PriorityStack.tsx` (Today & Priorities) — ranked stack with a score bar sized against the batch's own max
+  (parsed from the real `"category · score X"` detail); rows with no parseable score (overdue/approval
+  special rows) show their real detail text instead of a fabricated bar.
+- `HouseholdMap.tsx` (Family & Home) — groups `zone.items` by their real domain tag (family/home/relationship/
+  household, parsed from `detail`) into clustered chip groups; high-importance items visually called out.
+- `VentureBoard.tsx` (Ventures & Projects) — status-board rows with an income-tone indicator and real goal-link
+  count. `PersonalProject` has no blocker/next-action field — rather than inventing one, rows honestly read
+  "no blocker tracked" / "no goal link yet" when that's genuinely true.
+- `SkillLanes.tsx` (Learning & Growth) — each active track as a status lane toward its target skill. No
+  progress percentage is shown — `PersonalLearningTrack` has no percent-complete field, so none is invented.
+- `OpportunityRadar.tsx` (Opportunity Radar) — ranked dual bars from the already-computed `valueScore`/
+  `confidence` (`rankOpportunities()`), no client-side re-scoring.
+
+Delivered (dashboard-web — BodyMap + FinanceFlow upgrades):
+- `BodyMap.tsx` — added a visible micro-label next to every active node (previously hover-only via `<title>`)
+  and a distinct pulsing attention ring around `concern: true` nodes, so a real flagged concern reads at a
+  glance instead of blending into the same fill color used for a low-but-fine level.
+- `FinanceFlow.tsx` — **fixed a real dropped-data bug**: the finance zone builder already computes `finRisks`
+  (real financial risk items tagged `tone: 'err'`), but this component only ever read `tone: 'warn'` ("due")
+  items, so risk items were silently invisible. Both are now surfaced, clearly separated (including in the
+  "no amounts tracked yet" early-return branch, since risk records come from the personal graph, independent
+  of whether any finance amount exists).
+
+Delivered (dashboard-web — domain-specific Jarvis annotations):
+- New pure module `src/lib/domainInsight.ts::buildDomainInsight(zone)` replaces the old one-size-fits-all
+  annotation. Branches per real `zoneId`/`status`/`metrics` to produce a distinct message per domain (why it
+  matters, what's concretely missing or wrong, the real `jarvisCommand` as the suggested action) tagged with
+  one of the product's four categories (`setup_needed`/`not_configured`/`blocker`/`opportunity`). Returns
+  `null` for a `live` zone — silence is correct when there's nothing to flag.
+- `UniverseZone.tsx`'s `JarvisAnnotation` now renders this instead of the old generic "Jarvis suggests" line,
+  and this single annotation now supersedes the separate dashed setup-hint box (kept only as a defensive
+  fallback for a hypothetical future zone type with no insight branch — should never actually render).
+- **Also fixed a duplication bug found while wiring this in**: the generic bullet-list rendering of `zone.items`
+  was unconditional, so every zone with a custom visual (`children`) was ALSO showing the same items again as
+  a plain list underneath — directly contributing to the "still too text-heavy" complaint. The list now only
+  renders when there is no domain-specific visual already representing the zone's items.
+
+Delivered (dashboard-web — screen-guidance: anchors + highlight-on-arrival):
+- Every `UniverseZone` card now renders with `id="zone-<zoneId>"` and, on mount or `hashchange`, checks
+  `window.location.hash` against its own anchor — on match it scrolls itself into view and shows a temporary
+  glow highlight (~2.6s). Pure client-side visual affordance; no approval/scope/memory logic touched.
+- `src/lib/domainLinks.ts`'s `CATEGORY_TO_DOMAIN` now points at these homepage anchors (`/#zone-<id>`) instead
+  of the still-generic secondary `/me/*` pages, since every zone now has a real custom visual on the homepage
+  itself. `approvals_tasks` correctly keeps its own `/approvals` route — a real distinct workflow, not a zone.
+- `page.tsx` wires all 5 new components into their zones; all nine zones now pass a `children` visual to
+  `UniverseZone` — none fall back to the generic list anymore.
+
+Verification:
+- **Phase AF.2 smoke PASS (21/21)** (`scripts/phaseaf2-domain-canvas-smoke.mjs`) — every zone has a manifest
+  renderer; `buildDomainInsight` returns null for `live`, distinct real-data-driven text per zone (not one
+  generic string), correctly branches growth's "opportunity" framing on the real `goals` metric; Phase AF.1's
+  Focus Row priority-first guarantee re-verified green.
+- Regression: Phase AF.1 Focus Row smoke re-run **11/11** green.
+- `shared` `tsc` clean; `gateway-api` `tsc --noEmit` clean; `dashboard-web` `tsc --noEmit` clean (zero errors
+  across all new/edited files). `next build` not attempted in this sandbox pass — same pre-existing sandbox
+  limitation documented in the Phase AF.1 entry above (read-only mounted `node_modules`, SWC binary download
+  DNS flakiness); `tsc --noEmit` remains the authoritative signal used here.
+
+Honest remaining gaps: no dedicated `/finance`, `/health`, `/ventures` etc. routes exist yet — every zone's
+"Open" link still goes to the older generic `/me/*` pages even though the homepage now has the real visual;
+only the Jarvis-guidance domain links were repointed at the homepage anchors this phase. `session`-kind
+operator replies still have no `intentCategory` (pre-existing AF.1 gap, unchanged). The highlight-on-arrival
+effect is visual-only — it does not yet expand a zone's `children` visual or pre-fetch anything beyond what
+the page already loads. `next build` still unverified in this sandbox (see Verification above).
+Scope: `services/dashboard-web/src/{app,components,lib}/**`, `scripts/`, `docs/`.

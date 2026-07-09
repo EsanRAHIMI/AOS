@@ -579,7 +579,12 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
     ],
     setupHint: 'Ingest kind=finance_item (itemType income|expense|bill|installment|obligation|investment, amount, cadence, dueDate). Bank connectors: not_configured (later, approval-gated).',
     jarvisCommand: 'Find the best opportunities for me based on my goals and current assets.',
+    // Phase AF.1 — Domain Canvas needs monthlyIn/monthlyOut (not just net) to
+    // render a real inflow/outflow visual instead of a bullet list. This was
+    // already computed by aggregateFinance() and simply never exposed before.
     metrics: [
+      { label: 'in/mo', value: fin.hasAmounts ? String(fin.monthlyIn) : '—', tone: fin.hasAmounts ? 'ok' : 'neutral' },
+      { label: 'out/mo', value: fin.hasAmounts ? String(fin.monthlyOut) : '—', tone: fin.hasAmounts ? 'warn' : 'neutral' },
       { label: 'net/mo', value: fin.hasAmounts ? String(fin.net) : '—', tone: fin.net > 0 ? 'ok' : fin.hasAmounts ? 'err' : 'neutral' },
       { label: 'obligations', value: String(fin.obligations), tone: fin.obligations ? 'warn' : 'ok' },
     ],

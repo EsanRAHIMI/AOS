@@ -1,28 +1,53 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { getSession } from '@/lib/auth';
+import { getBriefingAction } from '@/app/jarvis/actions';
 import { UniverseZone, type ZoneData } from '@/components/UniverseZone';
 import { BodyMap, type BodyMetric } from '@/components/BodyMap';
+import { FinanceFlow } from '@/components/domains/FinanceFlow';
+import { SystemPulse } from '@/components/domains/SystemPulse';
+import { PresenceBadges } from '@/components/domains/PresenceBadges';
+import { PriorityStack } from '@/components/domains/PriorityStack';
+import { HouseholdMap } from '@/components/domains/HouseholdMap';
+import { VentureBoard } from '@/components/domains/VentureBoard';
+import { SkillLanes } from '@/components/domains/SkillLanes';
+import { OpportunityRadar } from '@/components/domains/OpportunityRadar';
 import { LiveEvents } from '@/components/LiveEvents';
+import { PresenceBar } from '@/components/PresenceBar';
+import { FocusRow } from '@/components/FocusRow';
 import { JarvisSuggestions } from '@/components/JarvisSuggestions';
+import { buildFocusItems } from '@/lib/focus';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Phase AC+ — The Command Universe. The living home of AOS: nine life/work/
- * system domains on one operating surface, fed by ONE scope-enforced
- * aggregation contract (/v1/me/universe). Every zone is honest — LIVE only
- * with real data, otherwise a premium setup-ready state that says exactly how
- * to activate it. Jarvis (the Operator Console, bottom right) is summonable
- * from every zone with a contextual command.
+ * Phase AF.1 — The Command Universe, foundation of the Living AI Government
+ * vision (docs/living-command-universe-vision.md). Structural shell:
+ * Identity Strip → Jarvis Presence Bar (real /v1/jarvis/briefing data) →
+ * Focus Row (top 1–3 things that need attention, priority-first) → Domain
+ * Canvas (all nine zones now render a real domain-specific visual, Phase
+ * AF.2) → live pulse. Jarvis (the persistent shell, `OperatorConsole`,
+ * mounted at the root layout) is summonable from every zone with a
+ * contextual command, and every zone is a real anchor (`#zone-<id>`) a
+ * Jarvis reply's domain-link chip can point straight at.
  */
 export default async function CommandUniversePage() {
-  const [session, universe, ctx] = await Promise.all([getSession(), gateway.universe(), gateway.meContext()]);
+  const [session, universe, ctx, briefing] = await Promise.all([
+    getSession(),
+    gateway.universe(),
+    gateway.meContext(),
+    getBriefingAction(),
+  ]);
   const zones = new Map<string, ZoneData>((universe?.zones ?? []).map((z) => [z.zoneId, z as ZoneData]));
   const z = (id: string): ZoneData | undefined => zones.get(id);
   const health = z('health');
+  const finance = z('finance');
+  const systems = z('systems');
+  const presence = z('presence');
   const live = [...zones.values()].filter((x) => x.status === 'live').length;
   const attention = [...zones.values()].filter((x) => x.status === 'attention').length;
+  const pendingApprovals = universe?.systemHealthSummary.pendingApprovals ?? 0;
+  const safeMode = universe?.systemHealthSummary.safeMode ?? false;
 
   // Body map metrics from the health zone's real items (level parsed from detail).
   const bodyMetrics: BodyMetric[] = (health?.items ?? []).map((it) => ({
@@ -32,9 +57,16 @@ export default async function CommandUniversePage() {
     detail: it.detail,
   }));
 
+  const focusItems = buildFocusItems(
+    briefing
+      ? { primaryPriority: briefing.primaryPriority, activeBlockers: briefing.activeBlockers, systemWarnings: briefing.systemWarnings, recommendedNextActions: briefing.recommendedNextActions }
+      : null,
+    pendingApprovals,
+  );
+
   return (
     <>
-      {/* Hero strip — the world state in one line */}
+      {/* Identity Strip — the world state in one line */}
       <div className="card" style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '14px 18px' }}>
         <div>
           <div style={{ fontSize: 17, fontWeight: 750, letterSpacing: '0.01em' }}>
@@ -54,29 +86,76 @@ export default async function CommandUniversePage() {
         </div>
       </div>
 
-      {/* Phase AD — Jarvis today summary + system health rollup + suggested prompts */}
-      {universe && (
-        <div className="card" style={{ marginBottom: 14, padding: '14px 18px' }}>
-          <div style={{ fontSize: 13, marginBottom: 8 }}>{universe.todaySummary}</div>
-          <div className="m" style={{ fontSize: 11, marginBottom: 10 }}>
-            {universe.systemHealthSummary.servicesRegistered} service(s) registered · {universe.systemHealthSummary.openIncidents} open incident(s) · {universe.systemHealthSummary.pendingApprovals} approval(s) pending · safe mode {universe.systemHealthSummary.safeMode ? 'ON' : 'off'}
-            {universe.systemHealthSummary.activeOperation ? ` · operation: ${universe.systemHealthSummary.activeOperation}` : ''}
-          </div>
+      {/* Phase AF.1 Step 2 — Jarvis Presence Bar: real briefing, not a
+          flattened sentence. */}
+      <PresenceBar briefing={briefing} memoryInsights={universe?.memoryInsights} />
+
+      {/* Phase AD's zone-status-derived quick prompts — distinct from the
+          briefing's authoritative recommendations above: these surface
+          whichever zone most needs attention right now, one click into a
+          contextual Jarvis command. Kept small and clearly secondary so it
+          never competes with the Presence Bar for attention. */}
+      {universe && universe.suggestedPrompts.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <span className="label" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>Explore</span>
           <JarvisSuggestions prompts={universe.suggestedPrompts} />
         </div>
       )}
 
-      {/* The universe grid */}
+      {/* Phase AF.1 Step 3 — Focus Row: what actually needs attention now,
+          priority-first. Renders nothing when there is genuinely nothing to
+          focus on (never a fake placeholder row). */}
+      <FocusRow items={focusItems} />
+
+      {/* The Domain Canvas — Phase AF.2: all nine zones now render a real,
+          domain-specific visual (src/lib/domainCanvas.ts is the checkable
+          manifest); none fall back to the generic bullet list anymore. */}
       <div className="uz-grid" style={{ marginBottom: 14 }}>
         {health && (
           <UniverseZone zone={health} tall>
             <BodyMap metrics={bodyMetrics} />
           </UniverseZone>
         )}
-        {(['daily', 'finance', 'ventures', 'life', 'opportunities', 'growth', 'systems', 'presence'] as const).map((id) => {
-          const zone = z(id);
-          return zone ? <UniverseZone key={id} zone={zone} /> : null;
-        })}
+        {z('daily') && (
+          <UniverseZone zone={z('daily')!}>
+            <PriorityStack zone={z('daily')!} />
+          </UniverseZone>
+        )}
+        {z('life') && (
+          <UniverseZone zone={z('life')!}>
+            <HouseholdMap zone={z('life')!} />
+          </UniverseZone>
+        )}
+        {finance && (
+          <UniverseZone zone={finance}>
+            <FinanceFlow zone={finance} />
+          </UniverseZone>
+        )}
+        {z('ventures') && (
+          <UniverseZone zone={z('ventures')!}>
+            <VentureBoard zone={z('ventures')!} />
+          </UniverseZone>
+        )}
+        {z('growth') && (
+          <UniverseZone zone={z('growth')!}>
+            <SkillLanes zone={z('growth')!} />
+          </UniverseZone>
+        )}
+        {z('opportunities') && (
+          <UniverseZone zone={z('opportunities')!}>
+            <OpportunityRadar zone={z('opportunities')!} />
+          </UniverseZone>
+        )}
+        {systems && (
+          <UniverseZone zone={systems}>
+            <SystemPulse zone={systems} safeMode={safeMode} />
+          </UniverseZone>
+        )}
+        {presence && (
+          <UniverseZone zone={presence}>
+            <PresenceBadges zone={presence} />
+          </UniverseZone>
+        )}
       </div>
 
       {/* Live pulse — the kernel is alive under everything */}

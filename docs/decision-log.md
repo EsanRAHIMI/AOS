@@ -2,6 +2,73 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-09 — Phase AF.2 Full Domain Canvas Expansion & Jarvis-Guided Interaction
+
+### D-111 The generic item list is a fallback, not a supplement — suppress it when a real visual exists
+`UniverseZone.tsx` was unconditionally rendering both a domain's custom visual (`children`) AND the same
+`zone.items` again as a plain bullet list underneath it, for every zone that had one (Health/Finance/Systems/
+Presence since AF.1). This is a real duplication bug, not a design choice — found while wiring in
+`domainInsight`. Fixed by rendering the generic list only `!children`. Directly addresses part of the user's
+"still too text-heavy" complaint: some of that text was literally the same data rendered twice.
+
+### D-110 One unified domain-specific annotation replaces two separate boxes
+AF.1 had two separate explanation surfaces on a card: `JarvisAnnotation` (attention-only, generic "Jarvis
+suggests" line) and a dashed setup-hint box (setup_needed/not_configured only), deliberately kept apart in
+AF.1 to avoid restating the same text twice. AF.2's `buildDomainInsight()` makes each zone's explanation
+genuinely different per domain/status, so the two-box split is no longer needed to avoid redundancy — one
+annotation now covers attention/setup_needed/not_configured/opportunity uniformly. The dashed box is kept
+only as a defensive fallback for a hypothetical zone type with no insight branch (should never render in
+practice, since all nine real zoneIds are covered).
+
+### D-109 Domain links point at homepage anchors, not secondary pages — because that's where the real work is
+Before this phase, `domainLinks.ts` pointed Jarvis's "Related: Zone →" chips at `/me/*` secondary pages that
+were still generic list views. Now that every zone has a real, domain-specific visual on the homepage itself
+(`/#zone-<id>`), pointing there is more honest than pointing at a page that hasn't been upgraded yet.
+`approvals_tasks` is the deliberate exception — Approvals is a real distinct workflow page, not a Domain
+Canvas zone, so re-pointing it at a zone anchor would be incorrect, not just unnecessary.
+
+### D-108 Fix the dropped financial-risk-items bug now rather than deferring it
+While building the finance zone's Jarvis insight text, direct code reading found `FinanceFlow.tsx` only ever
+read `tone: 'warn'` items from `zone.items`, silently dropping the `tone: 'err'` financial risk items the
+backend's `finRisks` computation already produces. This is the exact "half-used backend data" pattern flagged
+twice by the user (first for `/v1/jarvis/briefing`, again for `memoryInsights`). Fixed immediately as part of
+this phase rather than filed as a follow-up, since it was directly in the file already being touched and the
+fix is small, additive, and zero-risk (purely additive rendering, no contract change).
+
+## 2026-07-09 — Phase AF.1 Living Command Universe Foundation
+
+### D-107 Refactor the persistent shell in place — do not create a second Jarvis surface
+`OperatorConsole.tsx` already lived in `app/layout.tsx`, mounted once, outside every `page.tsx` — so its
+state already survived navigation before this phase touched it. The temptation was to build a brand new
+"JarvisShell" component from scratch to match the vision doc's language. Rejected: that would create two
+competing Jarvis surfaces (old console + new shell) and risk losing the working voice/session/approval logic
+during a rewrite. Instead the existing component was extended in place — ambient mode added, expanded mode
+unchanged — honoring the explicit instruction "refactor or wrap it properly rather than duplicating it badly."
+
+### D-106 System-warning-last is a structural guarantee, implemented twice on purpose
+The exact rule Phase AE.1 enforced in `composeJarvisResponseFallback` (explicit priority outranks system
+health) is re-implemented independently in `src/lib/focus.ts::buildFocusItems()` for the homepage Focus Row,
+rather than trying to share one function across the `shared` package and the Next.js app. Two independent,
+each-unit-tested implementations of the same rule in two different layers (answer composition vs. homepage
+ranking) is preferred here over a forced shared abstraction across a package boundary that would need its own
+plumbing — simplicity and testability at each layer over premature cross-layer reuse.
+
+### D-105 No second live-event subscription without proven need
+The ambient shell's activity indicator reuses the SAME `session` state the expanded panel already polls —
+it does NOT open an independent SSE/EventSource connection alongside `LiveEvents.tsx`'s existing one. Adding
+a second subscription "for the shell" with no concrete content plan for it yet would be exactly the kind of
+speculative, not-really-used code this phase was chartered to eliminate. Recorded as a deliberate scope cut,
+not an oversight — a future phase can add it once there's a specific cross-page live signal worth showing.
+
+### D-104 A domain-link chip only where the data is real — no guessed categories
+`domainLinkFor()` is applied only to `answer`-kind operator replies, which carry a real, already-classified
+`intentCategory`. `session`-kind replies do not currently return `intentCategory` from
+`/v1/operator/command` at all (confirmed by reading `services/gateway-api/src/index.ts` directly — the
+session response object never sets that field). Rather than guessing a category from the goal text
+client-side (which would be exactly the "fake intelligence" this phase forbids), the domain-link chip is
+scoped to only where the real classification exists, and the gap is recorded honestly as a follow-up instead
+of papered over.
+
 ## 2026-07-09 — Phase AE.1 Jarvis Priority & Memory Correction
 
 ### D-103 Recency is the supersession mechanism — no deactivation write needed

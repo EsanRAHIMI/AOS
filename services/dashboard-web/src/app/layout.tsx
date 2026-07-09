@@ -8,6 +8,7 @@ import { SafeModeBanner } from '@/components/SafeModeBanner';
 import { OperatorConsole } from '@/components/OperatorConsole';
 import { getSession } from '@/lib/auth';
 import { gateway } from '@/lib/gateway';
+import { getBriefingAction } from '@/app/jarvis/actions';
 
 export const metadata: Metadata = {
   title: 'Factory · Autonomous OS Control Room',
@@ -43,7 +44,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     );
   }
 
-  const safe = await gateway.safeMode();
+  // Phase AF.1 Step 1 — fetch once at the layout level (mounted once, not
+  // per-page) so the persistent Jarvis shell's ambient bar shows the real
+  // priority on first paint instead of a blank state until a client fetch
+  // resolves. The shell refreshes this itself afterward (OperatorConsole).
+  const [safe, initialBriefing] = await Promise.all([gateway.safeMode(), getBriefingAction()]);
   const user = { email: session.email, role: session.role };
   return (
     <html lang="en">
@@ -57,7 +62,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </main>
         </div>
         <MobileTabBar />
-        <OperatorConsole role={session.role} />
+        <OperatorConsole role={session.role} initialBriefing={initialBriefing} />
       </body>
     </html>
   );

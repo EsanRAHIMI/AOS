@@ -1,6 +1,13 @@
 /** Phase AC+ — abstract human body visualization for the Health zone.
  *  Pure SVG, no data invented: nodes light up only for metrics that have real
- *  reports; unreported nodes render as dormant setup-ready points. */
+ *  reports; unreported nodes render as dormant setup-ready points.
+ *
+ *  Phase AF.2: added a visible micro-label next to every active node
+ *  (previously only available on hover via <title>, easy to miss) and a
+ *  distinct pulsing attention ring around `concern: true` nodes so a real
+ *  flagged concern reads at a glance instead of blending into the same fill
+ *  color used for a low-but-fine level. Minimal, not cartoonish: no new
+ *  icons, same node/line vocabulary, just clearer signal. */
 
 export interface BodyMetric { metric: string; level: number | null; concern: boolean; detail: string }
 
@@ -35,12 +42,32 @@ export function BodyMap({ metrics }: { metrics: BodyMetric[] }) {
       {Object.entries(NODE_POS).map(([metric, pos]) => {
         const m = byMetric.get(metric);
         const active = Boolean(m);
-        const color = !active ? 'var(--border-2)' : m?.concern ? 'var(--err)' : (m?.level ?? 10) < 4 ? 'var(--warn)' : 'var(--ok)';
+        const concern = Boolean(m?.concern);
+        const color = !active ? 'var(--border-2)' : concern ? 'var(--err)' : (m?.level ?? 10) < 4 ? 'var(--warn)' : 'var(--ok)';
+        const labelSide = pos.x < 60 ? -1 : pos.x > 60 ? 1 : 1;
         return (
           <g key={metric}>
+            {concern && (
+              <circle cx={pos.x} cy={pos.y} r={7} fill="none" stroke="var(--err)" strokeWidth="1" opacity="0.55">
+                <animate attributeName="r" values="4.5;9;4.5" dur="1.8s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.6;0;0.6" dur="1.8s" repeatCount="indefinite" />
+              </circle>
+            )}
             <circle cx={pos.x} cy={pos.y} r={active ? 4 : 2.5} fill={active ? color : 'transparent'} stroke={color} strokeWidth="1.2" opacity={active ? 1 : 0.55}>
-              {active && <animate attributeName="opacity" values="1;0.55;1" dur="2.4s" repeatCount="indefinite" />}
+              {active && !concern && <animate attributeName="opacity" values="1;0.55;1" dur="2.4s" repeatCount="indefinite" />}
             </circle>
+            {active && (
+              <text
+                x={pos.x + labelSide * 7}
+                y={pos.y + 2.5}
+                fontSize="5.5"
+                textAnchor={labelSide > 0 ? 'start' : 'end'}
+                fill={concern ? 'var(--err)' : 'var(--muted, #7a8699)'}
+                style={{ fontWeight: concern ? 700 : 500 }}
+              >
+                {pos.label}
+              </text>
+            )}
             <title>{`${pos.label}: ${m ? m.detail || `${m.level ?? '—'}/10` : 'no report yet — ingest kind=health_state'}`}</title>
           </g>
         );
