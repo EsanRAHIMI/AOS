@@ -8,7 +8,7 @@ this document is the human-readable operating map.
 
 | Service | ID | Type | Port | Subdomain | Role |
 |---|---|---|---:|---|---|
-| Dashboard Web | `dashboard-web` | web | 4100 | `factory.simorx.com` | Mission control, Operator Console, approvals, voice/text interface |
+| Dashboard Web | `dashboard-web` | web | 4100 | `factory.simorx.com` | Living Command Universe home (`/`), Personal Command Center (`/me/*`), Mission Control (`/operations`), Operator Console, approvals, voice/text interface |
 | Gateway API | `gateway-api` | gateway | 4101 | `api.simorx.com` | Public/API front door, auth, RBAC, task intake, operator executor, approvals |
 | Orchestrator Agent | `orchestrator-agent` | agent | 4102 | `orchestrator.simorx.com` | Goal decomposition, pipeline coordination, policy-gated delegation |
 

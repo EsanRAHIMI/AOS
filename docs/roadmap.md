@@ -292,45 +292,70 @@ Phase 10 candidates:
 5. Old overview preserved as /operations Engine Room; zones honest (live only with real data) — DONE.
 6. 18/18 universe smoke + all 7 regression suites; all typechecks; dashboard build — DONE.
 
-## Phase AA-RB — Reality Baseline & Documentation Truth — NEXT
-1. Keep docs synchronized with the 19-service reality, not old phase assumptions.
+## Phase AD — Jarvis Intelligence Core & Living Command Home — DONE (2026-07-09)
+Real Jarvis reasoning core (`shared/src/jarvis`) + `/v1/jarvis/*` endpoints + the first
+`page.tsx` consumer of the briefing contract. See `phase-log.md` for detail.
+
+## Phase AE — Jarvis Memory, Daily Brain & Real Context Upgrade — DONE (2026-07-09)
+Memory-fact ingestion, quality scoring, and the restructured briefing engine
+(`primaryPriority`/`activeBlockers`/`systemWarnings`/`recommendedNextActions`).
+
+## Phase AE.1 — Jarvis Priority & Memory Correction — DONE (2026-07-09)
+Fixed priority-first response logic so a stated priority is never displaced by a
+system warning; broadened memory-fact extraction. See D-related entries in
+`decision-log.md`.
+
+## Phase AF.1–AF.4.4 — Living Command Universe, Domain Canvas, Realtime Runtime & Live Activity — DONE (2026-07-09)
+The homepage (`/`) became a persistent, realtime command surface: Jarvis
+Presence Bar + Focus Row wired to the briefing endpoint, all nine Command
+Universe zones given real domain-specific visual renderers (`BodyMap`,
+`FinanceFlow`, `HouseholdMap`, `VentureBoard`, `SkillLanes`,
+`OpportunityRadar`, `SystemPulse`, `PresenceBadges`, `PriorityStack`), a
+domain action layer (accept/reject/ingest controls on zone cards), a
+realtime block-invalidation runtime (`UniverseProvider` + SSE), a persistent
+`GET /v1/operator/live-state` snapshot that survives refresh/navigation, a
+hydration fix for relative timestamps, and a rebuilt Live Activity feed that
+groups every operation into one card by stable identity instead of a raw,
+duplicated event dump. Full phase-by-phase detail (AF.1 through AF.4.4,
+7 sub-phases) is in `phase-log.md`; decisions D-108 through D-128 in
+`decision-log.md`.
+
+## Carried-forward directions (not yet scheduled or phase-lettered)
+
+These themes from the earlier AA–AE "NEXT" planning are still real and still
+pending — they are listed here without phase letters to avoid colliding with
+the AA/AB/AC+/AD/AE/AE.1/AF.1–4.4 phases above, which already completed under
+those same letters. Assign a fresh phase name only when work actually starts.
+
+**Documentation & environment truth**
+1. Keep docs synchronized with the current service/route/collection reality (this audit pass is the first instance of that discipline being applied explicitly).
 2. Verify live env/integration status: MongoDB, S3, Dokploy, GitHub, LLM, voice, registry, event bus.
 3. Add automated doc-health checks for service map, constants, env examples, and deployment docs.
 4. Point Dokploy diagnostics at the live instance and capture parser/endpoint deltas honestly.
-5. Rename deprecated framework surfaces when required by the current framework contract.
-6. Ensure every dashboard capability displays `real`, `fallback`, `manual_required`, or `not_configured`.
 
-## Phase AB — Real Research & Intelligence Fabric — NEXT
-1. Add real web search + fetch provider with citation extraction, source reliability, and freshness.
-2. Store research sources separately from synthesized reports.
-3. Add watch topics for technology, business, market, project, user, and public-service-relevant news.
-4. Let research feed daily briefing, opportunity scoring, architecture decisions, and reports.
-5. Keep deterministic fallback visible for tests/offline mode only.
+**Real research & intelligence fabric**
+5. Add a real web search + fetch provider (`internet-research-service` currently has none — LLM-only or curated fallback) with citation extraction, source reliability, and freshness.
+6. Store research sources separately from synthesized reports; add watch topics; feed daily briefing/opportunity scoring/reports.
 
-## Phase AC — Multi-User Operating Layer — NEXT
-1. Add identity/tenant model: Esan as primary owner, future users as tenant-scoped actors.
-2. Add user/tenant context memory: goals, constraints, preferences, roles, projects, consent.
-3. Add read-only connectors first: calendar, email, files/drive, GitHub/projects, and approved records.
-4. Build user-scoped daily briefing and weekly strategy review loops.
-5. Add opportunity engine for income, projects, career, products, learning, technology, and civic signals.
-6. Keep all external/personal/public-service write actions draft-only until approval, audit, and rollback are ready.
+**Multi-user operating layer**
+7. Onboard real second users/tenants on top of the Phase AA scope/RBAC skeleton (today only Esan is seeded as owner).
+8. Read-only connectors: calendar, email, files/drive, GitHub/projects.
+9. User-scoped daily briefing and weekly strategy loops for non-owner users; opportunity engine extended beyond the single-owner case.
 
-## Phase AD — Production Hardening & Scale — NEXT
-1. OIDC/OAuth2 login + JWT/session revocation + persistent per-user RBAC.
-2. Tenant-aware authorization, row-level access checks, consent records, and role delegation.
-3. Redis-backed rate limits, locks, safe-mode propagation, and session invalidation.
-4. Redis Streams or NATS behind event-bus-service for multi-instance fan-out.
-5. OpenTelemetry traces/metrics/log correlation.
-6. OpenAPI/AsyncAPI generation from shared schemas.
-7. Contract tests for every standard service endpoint.
+**Production hardening & scale**
+10. OIDC/OAuth2 login + JWT/session revocation + persistent per-user RBAC (today: env-credential login + signed HMAC cookie).
+11. Redis-backed rate limits, safe-mode propagation, and session invalidation for multi-instance deploys.
+12. Redis Streams or NATS behind event-bus-service for multi-instance SSE fan-out.
+13. OpenTelemetry traces/metrics/log correlation; OpenAPI/AsyncAPI generation from shared schemas; contract tests per standard endpoint.
 
-## Phase AE — Governed Autonomous Execution — NEXT
-1. LLM-planned goals and LLM-synthesized workspace edit batches through the LLM router.
-2. Reviewer/QA loop on workspace promotion branches before PR creation.
-3. GitHub PR automation when configured; protected core remains owner-gated.
-4. Approval-gated connector write actions with previews and evidence.
-5. Public-service/citizen workflows only after tenant policy, audit, and privacy gates pass.
-6. Outcome learning tied to real user/tenant/business/civic results, not only technical runs.
+**Governed autonomous execution**
+14. LLM-planned goals and LLM-synthesized workspace edit batches through the LLM router.
+15. Reviewer/QA loop on workspace promotion branches before PR creation; GitHub PR automation when configured.
+16. Approval-gated connector write actions with previews and evidence; public-service/citizen workflows only after tenant policy, audit, and privacy gates pass.
+
+**Command Universe follow-through**
+17. Dedicated per-domain routes (no `/finance`, `/health`, etc. exist yet — zones live only on the homepage; `living-command-universe-vision.md` Section A finding #4).
+18. `next build` verification once this sandbox has a working SWC binary (or an equivalent CI environment) for linux/arm64.
 
 ## Technology direction
 TypeScript · Next.js 16 · Fastify 5 · MongoDB Atlas · AWS S3 · Zod 4 · SSE

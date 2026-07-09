@@ -4,6 +4,18 @@
 > تاریخ گزارش: ۱۴۰۵/۰۴/۱۴ (Jul 5, 2026) · وضعیت مخزن: تا Phase Z
 > این گزارش بر پایه‌ی مطالعه‌ی مستقیم کد (نه صرفاً README) تهیه شده است و «ادعا» را از «واقعیت پیاده‌سازی» تفکیک می‌کند.
 
+> **یادداشت وضعیت (۲۰۲۶-۰۷-۰۹ / 2026-07-09):** این گزارش پیش از فازهای AA تا
+> AF.4.4 نوشته شده و آن‌ها را پوشش نمی‌دهد — از جمله Scope/Identity Governance،
+> Personal Reality Baseline، Jarvis Intelligence Core/Memory، و کل صفحه‌ی
+> خانه‌ی Living Command Universe (۹ ناحیه با رندرر اختصاصی، لایه‌ی اقدام
+> دامنه، live-state پایدار). **بخش ۱۱ ("فقدانِ کاربردِ نهایی")** به‌طور
+> مشخص توسط همین فازها هدف قرار گرفت. برای وضعیت فعلی به `docs/phase-log.md`
+> (فاز AC+ تا AF.4.4) و `docs/living-command-universe-vision.md` مراجعه کنید.
+> This report predates Phases AA–AF.4.4 and does not cover them — including
+> the Living Command Universe home, Jarvis intelligence/memory, and the
+> Section 11 "no end product" gap this exact work addressed. See
+> `docs/phase-log.md` and `docs/living-command-universe-vision.md` for current state.
+
 ---
 
 ## فهرست

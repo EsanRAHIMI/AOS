@@ -150,3 +150,13 @@ missing and how to ingest it.
 Future extraction path: engines lift into daily-briefing-agent,
 personal-strategy-agent, opportunity-agent, brand-resume-agent via the
 workspace runtime when volume justifies dedicated services.
+
+## Phase AC+ / AF.1–AF.4.4 — the UI layer built on top of this backend
+This backend was originally consumed only through `/me/*` pages. Phase AC+
+added the `/` Living Command Universe home (`GET /v1/me/universe`, 9 zones).
+Phase AD–AE.1 added a separate Jarvis intelligence/memory core
+(`shared/src/jarvis`, `/v1/jarvis/*`) layered on top of this reality data.
+Phase AF.1–AF.4.4 gave each zone a real domain-specific visual, added a
+domain action layer (accept/reject/ingest directly from a zone card), and
+made operator/session state persistent across refresh. See
+`docs/living-command-universe-vision.md` and `docs/phase-log.md`.

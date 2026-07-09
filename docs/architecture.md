@@ -10,18 +10,31 @@ data isolated.
 
 ```text
 Authorized user / Operator / Role
-  -> dashboard-web (Operator Console, voice/text, approvals, reports)
-  -> gateway-api (auth, RBAC, task intake, operator runtime, approval gate)
+  -> dashboard-web
+       `/` Living Command Universe home (Presence Bar, 9 domain-specific zones,
+           domain actions, persistent Live Activity feed — Phase AC+/AF.1-4.4)
+       `/me/*` Personal Command Center (Phase AB)
+       persistent Operator Console dock (Jarvis, voice/text, inline approvals)
+       `/operations` Mission Control + ~55 engine-room pages (self-dev kernel)
+  -> gateway-api (auth, RBAC, task intake, operator runtime, approval gate,
+       persistent live-state snapshot, Jarvis briefing/memory endpoints)
   -> orchestrator-agent (planning, delegation, intelligence pipeline)
   -> specialist agents (architect, builder, reviewer, QA, devops, monitor, memory, report)
   -> infra services (registry, events, docs, assets, research, browser testing, code operator)
 
 State: MongoDB Atlas
 Files/artifacts: AWS S3
-Realtime: event-bus-service via SSE
+Realtime: event-bus-service via SSE + dashboard-side block-invalidation model (UniverseProvider)
 Deploy: Dokploy, one app per service
 Code evolution: isolated workspaces through code-operator-agent
 ```
+
+The Command Universe home and Personal Command Center are not new services —
+they are pages/routes inside the existing `dashboard-web` service, backed by
+existing `gateway-api` routes and `shared/src/{personal,jarvis,operator}`
+modules. See `docs/phase-log.md` (Phase AB, AC+, AD–AF.4.4) for what each
+phase actually added, and `docs/living-command-universe-vision.md` for the
+product reasoning behind the home surface.
 
 ## Core Principles
 

@@ -6,10 +6,11 @@ Start here when understanding or extending AOS.
 
 - `vision.md` — long-term role-aware AI Government platform vision.
 - `mission.md` — current and next operating mission.
-- `architecture.md` — 19-service architecture and future personal layer.
+- `architecture.md` — 19-service architecture; personal layer and Command Universe home now implemented (Phase AB/AC+/AF).
 - `service-map.md` — canonical human-readable service list.
 - `agent-map.md` — agent responsibilities and future agent direction.
-- `data-model.md` — MongoDB collections and future personal data model.
+- `data-model.md` — MongoDB collections (Phase 1–10 at full detail, Phase 11+ at collection-name level) and remaining future data-model direction.
+- `living-command-universe-vision.md` — product diagnosis and plan for the `/` Jarvis Command Universe home; largely implemented (Phase AF.1–AF.4.4).
 
 ## Operating Rules
 
@@ -29,11 +30,11 @@ Start here when understanding or extending AOS.
 
 ## Strategy and History
 
-- `roadmap.md` — completed phases and next phases AA-AE.
-- `phase-log.md` — historical implementation log.
-- `decision-log.md` — historical architecture decisions.
+- `roadmap.md` — completed phases (1 through AF.4.4) and carried-forward directions not yet phase-lettered.
+- `phase-log.md` — historical implementation log, current through Phase AF.4.4.
+- `decision-log.md` — historical architecture decisions, current through D-128.
 - `memory-strategy.md` — memory and learning rules.
-- `personal-operating-layer.md` — next user/tenant-scoped operating layer.
+- `personal-operating-layer.md` — user/tenant-scoped operating layer; Phase AB baseline implemented, multi-user/connectors still next.
 - `multi-tenant-governance.md` — data isolation, tenant/user scopes, and role direction.
 
 ## Documentation Rule

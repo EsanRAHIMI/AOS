@@ -8,7 +8,7 @@
 |---|---|
 | **Services** | 19 independent services · one Dokploy app each |
 | **Operator tools** | 50+ live tools across 15+ categories |
-| **Development phase** | Phase Y complete (Workspace Evolution Runtime) |
+| **Development phase** | Phase AF.4.4 complete (Living Command Universe & Realtime Operator Runtime) |
 | **Runtime** | Node.js 22+ · pnpm 9 · TypeScript 5.9 |
 | **Data** | MongoDB Atlas · AWS S3 · SSE Event Bus |
 
@@ -73,6 +73,12 @@ Core design: **independent deployment + shared contracts + HTTP communication** 
 - Loop: **plan → tool → observe → approve → continue → evidence → memory**
 - **Operator Console** — serious UI with runtime panel, inline approvals, live narration
 - **Voice Operator** — WebRTC realtime + STT/TTS + anti-mistake guardrails
+
+### Living Command Universe (Phase AC+, AF.1–AF.4.4)
+- **`/` home** — a persistent, realtime personal command surface, not a static dashboard
+- **9 domain zones**, each with a real domain-specific visual (body map, cashflow, venture board, opportunity radar, …) driven by `/v1/me/universe`
+- **Domain action layer** — accept/reject/ingest controls directly on zone cards, not read-only
+- **Persistent live-state** (`/v1/operator/live-state`) — active operations, approvals, and the Live Activity feed survive refresh and navigation, one card per real operation
 
 ### Workspace Evolution (Phase Y)
 - **Isolated, disposable** workspace under `.workspaces/`
@@ -403,9 +409,16 @@ Full deploy and env guide: [`README-SETUP.md`](README-SETUP.md)
 | 10–17 | Continuous Improvement · Security · Intelligence · Safe Ops · Dokploy | ✅ |
 | 18–19 | Voice Operator · WebRTC Realtime | ✅ |
 | X | Operator Runtime · 50+ tools · Operator Console | ✅ |
-| Y | Workspace Evolution · isolated staging · promote/rollback | ✅ |
+| Y–Z | Workspace Evolution · isolated staging · live fix loop | ✅ |
+| AA–AB | Scope/Identity/Multi-Tenant Governance · Personal Reality Baseline & Jarvis Intelligence | ✅ |
+| AC+ | Living AI Government Interface — 9-zone Jarvis Command Universe home | ✅ |
+| AD–AE.1 | Jarvis Intelligence Core · Memory/Daily Brain · Priority & Memory Correction | ✅ |
+| AF.1–AF.4.4 | Domain Canvas (9 real renderers) · domain actions · realtime block runtime · persistent live-state · grouped Live Activity feed | ✅ |
 
-**Latest verification:** Phase Y smoke **31/31** · all 19 services typecheck · dashboard `next build` ✓
+**Latest verification (Phase AF.4.4, 2026-07-09):** 131/131 cumulative regression smoke ·
+`gateway-api`/`dashboard-web` `tsc --noEmit` clean · `next build` still unverified in this
+sandbox (missing `@next/swc-linux-arm64` binary — see `docs/decision-log.md` D-124).
+Full phase-by-phase detail: `docs/phase-log.md`.
 
 Per-phase details: [`docs/phase-log.md`](docs/phase-log.md)
 

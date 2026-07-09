@@ -4,6 +4,14 @@ Primary datastore for all text/structured data, logs, task records, memory,
 documents, agent traces, and system state. Collection names are defined once in
 `shared/src/constants/index.ts` (`COLLECTIONS`) — never hardcode strings.
 
+**This document is not exhaustive.** It documents Phase 1–10 collections at
+full schema detail below, and the Phase 11+ groups (security, real
+intelligence, voice, operator runtime, workspace evolution, identity/tenant,
+personal reality, Jarvis) at collection-name level only, in the "Later-phase
+collection groups" section near the end. `shared/src/constants/index.ts`
+(`COLLECTIONS`) is always the canonical, current list — if this doc and that
+file disagree, the code is right and this doc is stale.
+
 ## Collections
 | Collection | Purpose | Schema (shared/src/schemas) |
 |---|---|---|
@@ -40,39 +48,75 @@ documents, agent traces, and system state. Collection names are defined once in
 - Indexes: unique on natural id (`serviceId`, `taskId`, `objectId`, …);
   time/compound indexes on `events` for fast streaming/history.
 
-## Future Multi-User Operating Layer collections
+## Multi-User Operating Layer collections — mostly implemented (Phase AA/AB)
 
-These collections are not canonical until added to `shared/src/constants/index.ts`
-and backed by Zod schemas. They define the next data-model direction for turning
-AOS into a tenant/user-scoped operating system with a single unified software
-kernel.
+Phase AA (Scope, Identity & Multi-Tenant Governance) and Phase AB (Personal
+Reality Baseline) implemented nearly all of what this section used to describe
+as "future/proposed." The table below is corrected to show real status —
+most of these are canonical today under the names actually used in
+`shared/src/constants/index.ts`, not the placeholder names originally
+proposed here.
 
-| Proposed Collection | Purpose |
-|---|---|
-| tenants | Personal, team, organization, government, or public-service tenant boundary |
-| user_profiles | Per-user identity, timezone, language, preferences, risk tolerance |
-| user_roles | Tenant-scoped role assignments and delegation rules |
-| user_goals | Life, business, career, finance, learning, civic, or project goals |
-| user_constraints | Budget, time, deadlines, commitments, limitations |
-| context_items | User/tenant facts, preferences, inferences with source, confidence, expiry |
-| consent_grants | Explicit permission grants for data sources and actions |
-| connector_accounts | Permission-scoped calendar/email/drive/github/finance connections |
-| connector_sync_runs | Read-only ingestion runs, errors, freshness, counts |
-| daily_briefings | User/role-specific priorities, risks, approvals, schedule notes |
-| weekly_strategy_reviews | Progress review, decisions, next-week plan, user feedback |
-| opportunity_reports | Income/project/job/product/technology/civic opportunities and scores |
-| watch_topics | Topics AOS monitors per user/tenant with cadence and source policy |
-| public_service_cases | Government/citizen workflows with strict role and privacy boundaries |
+| Originally proposed name | Real status | Actual collection(s) |
+|---|---|---|
+| tenants | **Implemented** (Phase AA) | `tenants` |
+| user_profiles | **Implemented** (Phase AA) | `user_profiles` |
+| user_roles | **Implemented** (Phase AA) | `user_roles`, `tenant_memberships` |
+| user_goals | **Implemented** (Phase AA) | `user_goals` (single source of truth for goals across all personal-reality engines) |
+| user_constraints | **Implemented** (Phase AA) | `user_constraints` |
+| consent_grants | **Implemented** (Phase AA) | `consent_grants` |
+| connector_accounts | **Implemented** (Phase AA) | `connector_accounts` (read-only sync scaffolding; real connectors like calendar/email are still `not_configured`) |
+| connector_sync_runs | **Implemented** (Phase AA) | `connector_sync_runs` |
+| daily_briefings | **Implemented** (Phase AA schema; Phase AB adds the real engine) | `daily_briefings`, plus `personal_briefing_runs` (Phase AB's actual briefing-run record) |
+| weekly_strategy_reviews | **Implemented** (Phase AA schema; Phase AB adds the real engine) | `weekly_strategy_reviews`, plus `strategy_review_runs` (Phase AB) |
+| opportunity_reports | **Implemented** (Phase AA schema; Phase AB adds the real engine) | `opportunity_reports`, plus `personal_opportunities` (Phase AB) |
+| public_service_cases | **Implemented, unused** — schema/collection exists, no case workflow built on top yet | `public_service_cases` |
+| context_items | **Still not implemented** — no direct equivalent | — |
+| watch_topics | **Partially implemented** — narrower than originally proposed | `technology_watch_items` (Phase AB, tech-watch only, not general topics) |
 
-Rules for these future collections:
+Rules for these collections (still binding):
 
-- Every user/tenant-scoped record must include `tenantId`, `userId` or an explicit service/global scope.
-- Store source, confidence, freshness, and user-editability.
+- Every user/tenant-scoped record must include `tenantId`, `userId` or an explicit service/global scope. Enforced today via the `canAccess` scope engine at the gateway boundary (Phase AA) — see `docs/multi-tenant-governance.md`.
+- Store source, confidence, freshness, and user-editability. Every Phase AB personal-reality record carries `scope + source + confidence + freshness + recordKind`.
 - Separate personal facts, institutional records, public records, and model inferences.
-- Start connectors read-only and consent-based.
+- Start connectors read-only and consent-based. Real connector sync (calendar/email/drive) is still not built — `connector_accounts`/`connector_sync_runs` exist as scaffolding only.
 - Never store secrets in personal context.
 - Write actions require approval, audit, evidence, and clear rollback notes.
 - Global software state such as services, capabilities, schemas, deployments, and docs remains shared.
+
+Genuinely still-future work: `context_items` (a general facts/preferences/inferences
+collection distinct from the more specific `personal_*` collections), real
+connector sync jobs, and a `public_service_cases` workflow layer. See
+`docs/roadmap.md`'s "Carried-forward directions" for the current honest list.
+
+## Later-phase collection groups (Phase 11 → AF.4.4)
+
+Everything from Phase 11 onward is real and canonical in
+`shared/src/constants/index.ts`, but is not itemized here at the same
+field-level schema detail as Phases 1–10 above (see the relevant
+`shared/src/schemas/*.ts` file and `docs/phase-log.md` for authoritative
+detail on each). Collection groups, by the phase that introduced them:
+
+| Phase | Group | Representative collections |
+|---|---|---|
+| 12 | Security & auth | `security_checks`, `security_events` |
+| 13 | Real intelligence | `llm_cost_records`, `llm_budget_events`, `research_runs`, `research_sources`, `review_reports`, `qa_reports`, `intelligence_reports` |
+| 15 | Safe real operations | `operation_plans`, `dokploy_targets`, `deployment_snapshots` |
+| 17 | Dokploy calibration | `dokploy_api_diagnostics` |
+| 18 | Voice operator | `voice_sessions`, `voice_messages`, `voice_tool_calls`, `voice_permissions`, `voice_memories`, `voice_learning_events` |
+| X | Operator runtime (Jarvis-class) | `operator_tools`, `operator_tool_runs`, `operator_tool_permissions`, `operator_runtime_sessions`, `operator_runtime_steps`, `operator_runtime_memories`, `operator_capability_index` |
+| Y | Workspace evolution | `workspaces`, `workspace_runs`, `workspace_services`, `workspace_changes`, `workspace_tests`, `workspace_artifacts`, `workspace_migrations`, `workspace_rollbacks` |
+| AA | Scope, identity & tenancy | `tenants`, `user_profiles`, `tenant_memberships`, `user_roles`, `scope_policies`, `consent_grants`, `connector_accounts`, `connector_sync_runs`, `scoped_memories`, `user_goals`, `user_constraints`, `daily_briefings`, `weekly_strategy_reviews`, `opportunity_reports`, `public_service_cases`, `access_decisions` |
+| AB | Personal reality baseline | `personal_reality_profiles`, `personal_assets`, `personal_projects`, `personal_systems`, `personal_risks`, `personal_opportunities`, `personal_income_streams`, `personal_learning_tracks`, `personal_career_records`, `resume_profiles`, `technology_watch_items`, `next_best_actions`, `personal_briefing_runs`, `strategy_review_runs` |
+| AC+ | Command Universe domains | `personal_health_states`, `personal_life_items`, `personal_finance_items` |
+| AD | Jarvis intelligence core | `jarvis_turns` |
+| AE | Jarvis memory & daily brain | `jarvis_memory_facts`, `jarvis_answer_scores`, `jarvis_briefings` |
+
+Phases AF.1–AF.4.4 (Living Command Universe, Domain Canvas, realtime runtime,
+Live Activity) added no new collections — they are entirely a frontend/API
+layer on top of the `operator_*` (Phase X) and `personal_*`/`jarvis_*`
+(Phase AB/AD/AE) collections already listed above. See
+`docs/phase-log.md` for what each phase actually built.
 
 ## Phase 3 — Self-Expanding Capability Engine collections
 | Collection | Purpose | Schema (shared/src/schemas/capability.ts) |

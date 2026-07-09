@@ -1,8 +1,24 @@
 # Living AI Government — Jarvis Command Universe
 
-**Product vision & transformation plan — Phase AF (pre-implementation)**
-Status: strategic direction, approved-pending-review. Nothing in this document has been implemented yet.
-Written 2026-07-09 as the required product-architecture step before any homepage rebuild begins.
+**Product vision & transformation plan — Phase AF**
+Written 2026-07-09 as the required product-architecture step before the homepage rebuild began.
+
+**Status update (2026-07-09, same day, after Phase AF.1–AF.4.4):** the
+original banner below said "nothing in this document has been implemented
+yet." That is no longer true. Phases AF.1 through AF.4.4 implemented the
+large majority of Sections C–H: the Presence Bar/Focus Row (Section J's
+recommended first step), all nine domain-specific zone renderers (Section
+A.1/A.2's core complaint), the domain action layer (Section A.9's "read-only
+only" complaint), the persistent live-state snapshot and grouped Live
+Activity feed, and the hydration fix. Section A's diagnosis below is
+preserved as-written because it is an accurate historical record of what was
+wrong and why this rebuild happened — it is **not** a description of the
+current product. For current status, see `docs/phase-log.md` (Phase AF.1
+through AF.4.4) and `docs/decision-log.md` (D-108 onward). Known items from
+this document still genuinely open: dedicated per-domain routes (Section
+A.4's "no `/finance`, no `/health` route" finding still holds — zones live
+only on the homepage), and per-actor scoping of live-state (deliberately not
+implemented — see D-124).
 
 This document is deliberately grounded in a direct code audit of the current
 system (file paths, component names, and API contracts are real, not
