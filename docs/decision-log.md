@@ -2,6 +2,170 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-09 — Phase AF.4.4 Live-State Cap Hardening
+
+### D-127 `activeSessions` limit raised 5→20 as a correctness fix, not a cosmetic tweak
+The old `opSessions.find({ status: in active states }).limit(5)` meant a 6th concurrent active/waiting-approval
+session silently vanished from both the Overview panel and the Live Activity feed — not a display nicety but a
+real operation going invisible to the operator. Raised to 20 (a realistic ceiling for concurrent Jarvis
+sessions on a single-operator system; not unbounded, so a runaway loop still can't grow the payload without
+limit). `recentSessions`/`recentTasks` raised 5→10 and `recentEvents` 30→50 for the same reason — these feed
+`buildOperationFeed`'s grouping, and a too-tight window meant a fast-moving operation's supporting events could
+already be evicted before the card patched correctly. `pendingApprovals` (limit 10) was left unchanged since
+approvals are only ever "waiting on you," a state a single operator resolves quickly, and it already generously
+exceeds realistic pending-approval counts.
+
+### D-128 Overview stays capped at 4 visible active-session rows regardless of backend snapshot size
+`ActiveOperationsPanel` is the concise homepage summary, not the full operations view — raising the backend
+limit to 20 without a companion UI cap would have let a busy day balloon the Overview module to 20 rows,
+directly undermining its purpose. Kept `.slice(0, 4)` (matching the pattern already used for
+`pendingApprovals`/`recentTasks` in this same component) with an honest "+N more active — open Jarvis" link
+rather than a fake "and more..." label with no action. The full, scrollable, all-of-them Live Activity feed
+(AF.4.3's `buildOperationFeed`) remains the place every active operation is always visible as a real card.
+
+## 2026-07-09 — Phase AF.4.3 Live Activity Module Rebuild
+
+### D-125 An approval is merged into its session's card, not rendered as its own item
+A pending `OperatorToolPermission` always belongs to exactly one `runtimeSessionId` and exists only because
+that session is blocked — it is not an independent operation. `buildOperationFeed` matches an approval to its
+session by that shared id and updates the session card's status/meta rather than creating a second card,
+directly matching the product requirement's own example output ("one operation card ... status: waiting
+approval"). A standalone approval card is only created in the defensive case where a pending approval
+references a session absent from the current snapshot — real data is never dropped, just shown minimally.
+
+### D-126 Scoped inline styles instead of editing the shared `.feed` CSS class
+`Live Activity`'s box needed a fixed height and internal scroll, but the global `.feed` class it used is
+referenced by 12 other pages (task/incident/capability detail timelines, the `/events` page, ...). Giving it a
+`max-height`/`overflow` would have changed those unrelated pages' timelines too — directly against this
+phase's explicit "do not touch unrelated parts" instruction. `LiveEvents.tsx` now builds its own scoped
+inline-styled card list instead of reusing `.feed`, leaving every other consumer of that class untouched.
+
+## 2026-07-09 — Phase AF.4.2 Re-verification + Actor-Scoping Investigation
+
+### D-124 `live-state` stays globally scoped behind RBAC, not per-record actor-filtered
+Investigated adding per-actor filtering to `GET /v1/operator/live-state`. `OperatorRuntimeSession.userId`
+actually stores the declared RBAC role (`'owner'`, `'agent'`, …), not a real per-person id;
+`OperatorToolPermission` has no actor field at all; no sibling endpoint (`/v1/operator/sessions`,
+`/v1/tasks`, `/v1/events`, `/v1/approvals`) filters by actor today. Filtering by role risks hiding real
+active operations from the single human owner the moment any session was ever created under a different
+declared role — a regression against this phase's own core goal. Kept the existing `guard(req)` RBAC gate as
+the access boundary (consistent with every sibling endpoint) instead of inventing a filtering scheme the data
+model doesn't actually support. [[D-116]] [[D-122]]
+
+## 2026-07-09 — Phase AF.4.1 Persistent Live Operation Feed, Hydration Fix & Approval UX Hardening
+
+### D-123 A stable placeholder render, not `suppressHydrationWarning`, fixes the relative-time mismatch
+The reported hydration bug (`PresenceBar` rendering "3s ago" server-side and "5s ago" client-side) could have
+been silenced with `suppressHydrationWarning` on the offending element — that hides the React warning but
+does nothing about the underlying cause, and the visible text would still visibly jump right after load.
+Instead, `RelativeTime.tsx` renders an identical, non-time-dependent placeholder on both the server pass and
+the client's first render (so there is genuinely nothing to reconcile), and only computes the real elapsed-
+time label inside `useEffect`, which by construction never runs during SSR. The fix addresses the actual
+value mismatch rather than muting React's warning about it.
+
+### D-122 `IMPORTANT_OPERATOR_EVENT_TYPES` lives in `shared/src/constants`, not duplicated per-service
+The live-state endpoint's Mongo query (gateway-api) and the `LiveEvents` SSE subscription list + grouping
+decision (dashboard-web) both need to agree on which events count as "important enough for the default feed."
+Rather than maintaining two independently-edited allowlists that could silently drift apart (one service adds
+a new important event type and forgets the other), the allowlist is one exported array in
+`shared/src/constants`, imported by both. [[D-116]]
+
+### D-121 `'live-pulse'` is a real block, not a redesign of the block-invalidation model
+AF.4's 12-block manifest already reserved `'live-pulse'` as a named block but nothing invalidated it — the
+Active Operations panel and the upgraded Live Activity card are wired to it exactly the same way every other
+block already works (`UniverseProvider.refresh()`, the `aos:invalidate-blocks` bus, `LiveEvents`' SSE bridge).
+No new invalidation mechanism was introduced; this phase's UI additions plug into AF.4's existing model rather
+than inventing a parallel one. [[D-118]] [[D-117]]
+
+### D-120 Optimistic approval feedback disables and relabels the clicked button; it does not fabricate a
+### success state
+Real user testing found the multi-second gap between clicking Approve and seeing any change felt broken. The
+fix sets a `decidingAction` state immediately (before the network call) that disables both buttons and swaps
+the clicked one's label to "Approving…"/"Rejecting…" — but the actual session/permission state is not touched
+until the real backend response lands, and `decidingAction` is cleared in a `finally` block so a failed
+request still leaves the UI in an honest, interactive state rather than stuck showing a decision that never
+actually happened.
+
+## 2026-07-09 — Phase AF.4 Realtime Block Runtime, Fast Jarvis Response & Operation Lifecycle Fix
+
+### D-119 `createTaskInlineAction` is a new sibling, not a modified `createTaskAction`
+The existing `createTaskAction` unconditionally `redirect()`s to `/tasks/:id` — correct for the dedicated
+task-creation forms/pages that already depend on that navigation, wrong for an inline Domain Canvas control
+where navigating away on every "create task" click would violate the phase's "update in place" requirement.
+Rather than making the redirect conditional (which would change behavior for every existing caller and
+require threading a flag through), a second, smaller function with the identical permission check and
+gateway call — just without the `redirect()` — was added alongside it. `createTaskAction` and its callers are
+completely unchanged.
+
+### D-118 Client-side referential-identity merge instead of a per-block backend endpoint
+The backend only exposes one combined `/v1/me/universe` endpoint; building nine separate per-zone endpoints
+was out of scope for this phase and not clearly justified yet. `UniverseProvider.refresh(blocks)` instead
+refetches the one real endpoint and replaces only the `Map` entries for zones whose block was actually
+requested, leaving every other zone's object reference untouched — components reading an unaffected zone
+correctly skip re-render. This is "block-level" in the sense that matters (React update scope), built
+honestly on the real endpoint that exists rather than a fabricated one; the network cost of refetching the
+whole universe payload on every refresh is a known, accepted tradeoff, not a hidden one — see the phase-log's
+"honest remaining gaps."
+
+### D-117 A `window` CustomEvent bus for cross-tree invalidation, not a second SSE connection or prop drilling
+`OperatorConsole` is mounted at the root layout, outside `page.tsx`'s React tree where `UniverseProvider`
+lives — it cannot call `useUniverse()` directly, and prop-drilling a refresh callback through the layout
+would require restructuring the mount order. A `window` `CustomEvent('aos:invalidate-blocks')` was chosen
+instead, mirroring the app's existing `aos:jarvis` event (used the opposite direction, `UniverseZone` →
+`OperatorConsole`) — a precedent already established and working, not a new pattern. `invalidateBlocks()` is
+a safe no-op when no provider is mounted, so calling it from a component that might render on a non-homepage
+page is never an error. Extending the app's one existing `LiveEvents` `EventSource` to also call
+`invalidateBlocks()` (rather than opening a second `EventSource` anywhere) was the same reasoning applied to
+the SSE side specifically.
+
+### D-116 Session execution is backgrounded per-request, not moved to a job queue
+The 10+ second Jarvis latency came from three sequential LLM-bound calls plus a fully synchronous tool loop,
+all inside the request/response cycle. A full job-queue rewrite (e.g. a dedicated worker service consuming
+from a queue) would have been the "correct-at-scale" answer but was more architecture than this bug needed:
+the existing `opSessions` collection plus the client's already-working 2.5s poll were enough infrastructure
+to support "return immediately, keep working in the background, let the poll observe progress" — the fix was
+backgrounding the same in-process work (`void (async () => {...})()`, individually try/catch-wrapped so a
+failure still writes an honest `status: 'failed'`) and making `recordStep` persist incrementally so the poll
+has something real to observe mid-run. A queue-based rewrite remains a reasonable future step if session
+volume ever makes in-process backgrounding insufficient, but wasn't justified for a first pass at the actual
+reported bug.
+
+## 2026-07-09 — Phase AF.3 Jarvis Guided Control & Domain Action Layer
+
+### D-115 A blocker without a schema field becomes a risk record, not a new column
+`PersonalProject` has no blocker or next-action field. Rather than adding one (a schema change touching the
+zone builder, the ingest handler, and every consumer), "report blocker" routes through the already-real
+`risk` ingestion kind, and "next action" routes through already-real task creation. Both are honest, existing
+record types that already mean approximately the right thing — adding a narrower-purpose field later remains
+possible without this decision blocking it, but wasn't justified for a first pass.
+
+### D-114 Opportunity "Save" reuses the `accepted` status — no new status value invented
+The phase brief asked for "save/reject/follow" on an opportunity. `PersonalOpportunity.status` only has
+`proposed/accepted/rejected/in_progress/done/expired` — there is no `saved`. Introducing a new enum value
+would touch the shared schema, the zone builder's status filter (`['proposed','accepted','in_progress']`),
+and every place that reads status. `accepted` is the closest existing real meaning ("keep pursuing this"), so
+"Save" maps there; a future phase can split them if the product actually needs the distinction.
+
+### D-113 Add-data and opportunity-decision actions get an in-form preview, not a new approval gate
+Item 5 of the phase brief asks Jarvis to show what it understood, what's missing, and what happens on
+approval. The existing `session.pendingPermission` UI already does exactly that for the one class of action
+that requires owner approval. Ingest (`POST /v1/me/reality/ingest`) and next-action/opportunity decisions
+were never gated by that system — they are, and always were, scope-enforced-but-unapproved personal CRUD.
+Building a second, parallel "pending approval" flow for these would misrepresent their actual risk tier (and
+contradict the existing `/me` forms that already write through them with no approval step). Instead
+`DomainActionControl` shows a one-line preview of exactly what will be created before a lightweight
+client-side Confirm — honest about the (low, personal-scope) stakes of the action instead of inventing
+ceremony that doesn't match the rest of the system.
+
+### D-112 `itemId` is additive and opt-in per zone, not a blanket `ZoneItem` requirement
+Per-item decide controls (accept/reject an opportunity or next-action) need a real record id, but most zone
+items (health metrics, life items, finance obligations, ventures, learning tracks) aren't individually
+decidable records at all — they're facts or aggregates. Rather than forcing every zone's items through a
+decision-capable shape, `itemId` stays `optional` on `ZoneItem` and is only populated by the two zone
+builders (`daily`, `opportunities`) that have a real underlying record and a real decision endpoint. A decide
+control only ever renders when `itemId` is present, so there is no risk of a control appearing for a
+record that can't actually be decided on.
+
 ## 2026-07-09 — Phase AF.2 Full Domain Canvas Expansion & Jarvis-Guided Interaction
 
 ### D-111 The generic item list is a fallback, not a supplement — suppress it when a real visual exists

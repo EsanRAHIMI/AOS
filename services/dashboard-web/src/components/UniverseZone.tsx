@@ -2,6 +2,8 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { buildDomainInsight } from '@/lib/domainInsight';
+import { actionsFor } from '@/lib/domainActions';
+import { DomainActionControl } from './domains/DomainActionControl';
 
 /** Phase AC+ — one zone of the Command Universe. Client component so every
  *  zone can summon Jarvis with its own contextual command via the event
@@ -12,7 +14,7 @@ export interface ZoneData {
   title: string;
   status: string;
   headline: string;
-  items: Array<{ label: string; detail: string; tone: string; href?: string }>;
+  items: Array<{ label: string; detail: string; tone: string; href?: string; itemId?: string }>;
   setupHint: string;
   jarvisCommand: string;
   href: string;
@@ -140,9 +142,16 @@ export function UniverseZone({ zone, children, tall }: { zone: ZoneData; childre
       {!insight && (zone.status === 'setup_needed' || zone.status === 'not_configured') && (
         <div className="m" style={{ fontSize: 10.5, lineHeight: 1.5, padding: '6px 8px', borderRadius: 6, border: '1px dashed var(--border)', background: 'var(--glass-2)' }}>{zone.setupHint}</div>
       )}
-      <div style={{ marginTop: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-        <button type="button" className="chip" style={{ cursor: 'pointer', fontSize: 10.5 }} onClick={() => summonJarvis(zone.jarvisCommand)} title={`Ask Jarvis: “${zone.jarvisCommand}”`}>◈ Jarvis</button>
-        <Link href={zone.href} className="chip" style={{ fontSize: 10.5, textDecoration: 'none' }}>Open</Link>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="chip" style={{ cursor: 'pointer', fontSize: 10.5 }} onClick={() => summonJarvis(zone.jarvisCommand)} title={`Ask Jarvis: “${zone.jarvisCommand}”`}>◈ Jarvis</button>
+          <Link href={zone.href} className="chip" style={{ fontSize: 10.5, textDecoration: 'none' }}>Open</Link>
+          {/* Phase AF.3 — real, per-domain suggested actions (add data /
+              create task / open a real page), driven entirely by the
+              domainActions manifest — no zone gets a control that doesn't
+              map to a real backend path. */}
+          {actionsFor(zone.zoneId).map((a) => <DomainActionControl key={a.id} action={a} />)}
+        </div>
       </div>
     </div>
   );

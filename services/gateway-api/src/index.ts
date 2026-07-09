@@ -15,6 +15,7 @@ import {
   collection,
   COLLECTIONS,
   EVENT_TYPES,
+  IMPORTANT_OPERATOR_EVENT_TYPES,
   INTERNAL_TOKEN_HEADER,
   ROLE_HEADER,
   REQUEST_ID_HEADER,
@@ -2219,6 +2220,11 @@ async function main(): Promise<void> {
         const result: IngestionResult = { source: `ingestion:${kind}`, kind, recordsCreated: created, recordsUpdated: updated, confidence: 0.9, missingData: graph.missingData, nextSuggestedConnector: nextConnectorFor(kind) };
         const ev = buildEvidence({ type: 'health_check_result', taskId: null, serviceName: null, summary: `Personal ingestion ${kind}: +${created}/${updated} updated (user scope)`, data: { kind, created, updated } });
         await evidenceCol.insertOne(ev);
+        // Phase AF.4 — real, minimal event so the dashboard's realtime block
+        // store (and any other SSE consumer) can react to a personal-reality
+        // mutation without polling. Carries the real ingestion kind so a
+        // listener can map it to the affected Domain Canvas block(s).
+        await ctx.publisher.publish({ type: EVENT_TYPES.REALITY_INGESTED, taskId: null, payload: { kind, created, updated, userId: actor.primaryUserId, message: `Reality ingested: ${kind} (+${created}/${updated})` } });
         return success({ ...result, evidenceId: ev.evidenceId });
       });
 
@@ -2427,6 +2433,31 @@ async function main(): Promise<void> {
         // Learn from the decision — scoped to the user, kind by outcome.
         const stamp = userStamp(actor);
         await scopedMemories.insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${nba.title}” (${nba.category}, score ${nba.priorityScore}). ${act === 'reject' ? 'Deprioritize similar suggestions.' : 'Similar suggestions are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
+        // Phase AF.4 — real mutation event (previously this endpoint published nothing).
+        await ctx.publisher.publish({ type: EVENT_TYPES.NEXT_ACTION_DECIDED, taskId: null, payload: { actionId: nba.actionId, status, userId: actor.primaryUserId, message: `Next action ${status}: ${nba.title.slice(0, 80)}` } });
+        return success({ status });
+      });
+
+      // Phase AF.3 — the Opportunity Radar zone could show real ranked
+      // opportunities since AF.2 but had no way to act on one; this mirrors
+      // the next-actions decision endpoint immediately above exactly (same
+      // scope enforcement, same learn-from-decision memory write) rather
+      // than inventing a new pattern for what is structurally the same kind
+      // of "decide on a proposed record" operation.
+      app.post<{ Params: { id: string }; Body: { action?: string } }>('/v1/me/reality/opportunities/:id/decision', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const actor = await enforceScoped(req, reply, { action: 'update', resource: 'personal_opportunities', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
+        if (!actor) return reply;
+        const act = String(req.body?.action ?? '');
+        if (!['accept', 'reject', 'follow_up'].includes(act)) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'action must be accept|reject|follow_up'));
+        const opp = await personalOpportunities.findOne({ opportunityId: req.params.id, scope: 'user', userId: actor.primaryUserId });
+        if (!opp) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'opportunity not found in your scope'));
+        const status = act === 'accept' ? 'accepted' : act === 'reject' ? 'rejected' : 'in_progress';
+        await personalOpportunities.updateOne({ opportunityId: opp.opportunityId }, { $set: { status, updatedAt: nowIso() } });
+        const stamp = userStamp(actor);
+        await scopedMemories.insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${opp.title}” (${opp.category}, impact ${opp.impactScore}). ${act === 'reject' ? 'Deprioritize similar opportunities.' : 'Similar opportunities are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
+        // Phase AF.4 — real mutation event (previously this endpoint published nothing).
+        await ctx.publisher.publish({ type: EVENT_TYPES.OPPORTUNITY_DECIDED, taskId: null, payload: { opportunityId: opp.opportunityId, status, userId: actor.primaryUserId, message: `Opportunity ${status}: ${opp.title.slice(0, 80)}` } });
         return success({ status });
       });
 
@@ -2522,10 +2553,19 @@ async function main(): Promise<void> {
       // writes its own evidence record). Nothing is invented; missing sources
       // are reported not_configured. shared/jarvis only ranks/compacts what
       // it is given — it never fetches or guesses on its own.
+      // Phase AF.4 — the four blocks below (safe-mode check, memory facts,
+      // system-check-or-counts, personal graph) were previously four
+      // sequential `await`s with no data dependency between them — total
+      // latency was their SUM. `intentCategory` (the only thing any of them
+      // branches on) is already known before this function is called, so
+      // none of them needs another block's result first. Running them via
+      // Promise.allSettled makes total latency the SLOWEST of the four
+      // instead of the sum — a real, measurable latency cut on every turn,
+      // not just the tool-executing ones.
       const gatherJarvisFacts = async (authCtx: AuthContext, scopeClass: ReturnType<typeof classifyGoalScope>, intentCategory: string): Promise<JarvisContextFact[]> => {
         const facts: JarvisContextFact[] = [];
-        const safeNow = await isSafeMode();
-        facts.push({ label: 'safe_mode', detail: safeNow ? 'ON — mutations are blocked' : 'off', status: 'known', weight: safeNow ? 9 : 2 });
+
+        const safeModePromise = isSafeMode().then((safeNow) => ([{ label: 'safe_mode', detail: safeNow ? 'ON — mutations are blocked' : 'off', status: 'known' as const, weight: safeNow ? 9 : 2 }]));
 
         // Phase AE.1 — ALWAYS retrieve the owner's own stated priority/decision/
         // blocker memory FIRST, regardless of intent category. This is the fix
@@ -2535,48 +2575,63 @@ async function main(): Promise<void> {
         // are deliberately higher than anything system health can produce below
         // (max ~10) — an explicit stated priority must outrank a routine
         // unhealthy-service warning, never the other way around.
-        try {
-          const recentMemFacts = await jarvisMemoryFacts.find({ actorId: authCtx.actorId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray();
-          const priorityFact = pickActivePriorityFact(recentMemFacts);
-          if (priorityFact) facts.push({ label: 'user_priority', detail: priorityFact.content, status: 'known', weight: 20, href: '/me' });
-          for (const bf of recentMemFacts.filter((f) => f.kind === 'blocker').slice(0, 3)) {
-            facts.push({ label: 'user_blocker', detail: bf.content, status: 'known', weight: 12 });
-          }
-          for (const df of recentMemFacts.filter((f) => f.kind === 'decision' && f.factId !== priorityFact?.factId).slice(0, 2)) {
-            facts.push({ label: 'user_decision', detail: df.content, status: 'known', weight: 11 });
-          }
-        } catch { /* memory retrieval is best-effort — a turn never hard-fails on this */ }
-
-        if (intentCategory === 'system_status' || intentCategory === 'general_conversation') {
-          const sys = await execSystemCheck();
-          const d = sys.data as { pendingApprovals?: number; openIncidents?: number } | undefined;
-          facts.push({ label: 'system_check', detail: sys.summary, status: 'known', weight: 10, href: '/operations' });
-          if (d) {
-            facts.push({ label: 'pending_approvals', detail: String(d.pendingApprovals ?? 0), status: 'known', weight: (d.pendingApprovals ?? 0) > 0 ? 8 : 1, href: '/approvals' });
-            facts.push({ label: 'open_incidents', detail: String(d.openIncidents ?? 0), status: 'known', weight: (d.openIncidents ?? 0) > 0 ? 9 : 1, href: '/incidents' });
-          }
-        } else {
-          const [apprCount, incAll] = await Promise.all([
-            approvals.countDocuments({ status: 'pending' }),
-            incidents.find({}, { projection: { _id: 0 } }).limit(50).toArray(),
-          ]);
-          const incOpen = incAll.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
-          facts.push({ label: 'pending_approvals', detail: String(apprCount), status: 'known', weight: apprCount > 0 ? 6 : 1, href: '/approvals' });
-          facts.push({ label: 'open_incidents', detail: incOpen.length ? incOpen.slice(0, 2).map((i) => i.title).join('; ') : '0', status: 'known', weight: incOpen.length ? 7 : 1, href: '/incidents' });
-        }
-
-        if (scopeClass.scope === 'user') {
+        const memoryPromise = (async (): Promise<JarvisContextFact[]> => {
+          const out: JarvisContextFact[] = [];
           try {
-            const gi = await loadGraphInput(authCtx);
-            const graph = buildPersonalGraph(gi);
-            facts.push({ label: 'personal_missing_data', detail: graph.missingData.length ? graph.missingData.slice(0, 3).join('; ') : 'nothing critical', status: graph.missingData.length ? 'not_configured' : 'known', weight: graph.missingData.length ? 6 : 2, href: '/me' });
-            const ranked = scoreNextActions(gi, userStamp(authCtx));
-            const topAction = ranked[0];
-            if (topAction) facts.push({ label: 'top_next_action', detail: `${topAction.title} — ${topAction.reason}`, status: 'known', weight: 9, href: '/me' });
-            facts.push({ label: 'calendar_connector', detail: gi.activeConsents.includes('calendar') ? 'connected' : 'not_configured', status: gi.activeConsents.includes('calendar') ? 'known' : 'not_configured', weight: 3 });
-            facts.push({ label: 'email_connector', detail: gi.activeConsents.includes('email') ? 'connected' : 'not_configured', status: gi.activeConsents.includes('email') ? 'known' : 'not_configured', weight: 3 });
-          } catch { /* keep going with global facts only — a turn never hard-fails on this */ }
-        }
+            const recentMemFacts = await jarvisMemoryFacts.find({ actorId: authCtx.actorId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray();
+            const priorityFact = pickActivePriorityFact(recentMemFacts);
+            if (priorityFact) out.push({ label: 'user_priority', detail: priorityFact.content, status: 'known', weight: 20, href: '/me' });
+            for (const bf of recentMemFacts.filter((f) => f.kind === 'blocker').slice(0, 3)) {
+              out.push({ label: 'user_blocker', detail: bf.content, status: 'known', weight: 12 });
+            }
+            for (const df of recentMemFacts.filter((f) => f.kind === 'decision' && f.factId !== priorityFact?.factId).slice(0, 2)) {
+              out.push({ label: 'user_decision', detail: df.content, status: 'known', weight: 11 });
+            }
+          } catch { /* memory retrieval is best-effort — a turn never hard-fails on this */ }
+          return out;
+        })();
+
+        const systemPromise = (async (): Promise<JarvisContextFact[]> => {
+          const out: JarvisContextFact[] = [];
+          if (intentCategory === 'system_status' || intentCategory === 'general_conversation') {
+            const sys = await execSystemCheck();
+            const d = sys.data as { pendingApprovals?: number; openIncidents?: number } | undefined;
+            out.push({ label: 'system_check', detail: sys.summary, status: 'known', weight: 10, href: '/operations' });
+            if (d) {
+              out.push({ label: 'pending_approvals', detail: String(d.pendingApprovals ?? 0), status: 'known', weight: (d.pendingApprovals ?? 0) > 0 ? 8 : 1, href: '/approvals' });
+              out.push({ label: 'open_incidents', detail: String(d.openIncidents ?? 0), status: 'known', weight: (d.openIncidents ?? 0) > 0 ? 9 : 1, href: '/incidents' });
+            }
+          } else {
+            const [apprCount, incAll] = await Promise.all([
+              approvals.countDocuments({ status: 'pending' }),
+              incidents.find({}, { projection: { _id: 0 } }).limit(50).toArray(),
+            ]);
+            const incOpen = incAll.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
+            out.push({ label: 'pending_approvals', detail: String(apprCount), status: 'known', weight: apprCount > 0 ? 6 : 1, href: '/approvals' });
+            out.push({ label: 'open_incidents', detail: incOpen.length ? incOpen.slice(0, 2).map((i) => i.title).join('; ') : '0', status: 'known', weight: incOpen.length ? 7 : 1, href: '/incidents' });
+          }
+          return out;
+        })();
+
+        const personalPromise = (async (): Promise<JarvisContextFact[]> => {
+          const out: JarvisContextFact[] = [];
+          if (scopeClass.scope === 'user') {
+            try {
+              const gi = await loadGraphInput(authCtx);
+              const graph = buildPersonalGraph(gi);
+              out.push({ label: 'personal_missing_data', detail: graph.missingData.length ? graph.missingData.slice(0, 3).join('; ') : 'nothing critical', status: graph.missingData.length ? 'not_configured' : 'known', weight: graph.missingData.length ? 6 : 2, href: '/me' });
+              const ranked = scoreNextActions(gi, userStamp(authCtx));
+              const topAction = ranked[0];
+              if (topAction) out.push({ label: 'top_next_action', detail: `${topAction.title} — ${topAction.reason}`, status: 'known', weight: 9, href: '/me' });
+              out.push({ label: 'calendar_connector', detail: gi.activeConsents.includes('calendar') ? 'connected' : 'not_configured', status: gi.activeConsents.includes('calendar') ? 'known' : 'not_configured', weight: 3 });
+              out.push({ label: 'email_connector', detail: gi.activeConsents.includes('email') ? 'connected' : 'not_configured', status: gi.activeConsents.includes('email') ? 'known' : 'not_configured', weight: 3 });
+            } catch { /* keep going with global facts only — a turn never hard-fails on this */ }
+          }
+          return out;
+        })();
+
+        const results = await Promise.allSettled([safeModePromise, memoryPromise, systemPromise, personalPromise]);
+        for (const r of results) if (r.status === 'fulfilled') facts.push(...r.value);
 
         if (intentCategory === 'meta_self_assessment' || intentCategory === 'general_conversation') {
           facts.push({ label: 'aos_current_phase', detail: AOS_SELF_KNOWLEDGE.currentPhase, status: 'known', weight: 5 });
@@ -2618,33 +2673,38 @@ async function main(): Promise<void> {
         await jarvisTurns.insertOne(turn);
         await ctx.publisher.publish({ type: EVENT_TYPES.JARVIS_TURN_ANSWERED, taskId: null, payload: { turnId: turn.turnId, category: args.intent.category, language: args.intent.language, message: `Jarvis (${args.intent.category}): ${response.reply.slice(0, 140)}` } });
 
-        // Phase AE item 1 — memory ingestion: extract durable facts (projects,
-        // priorities, decisions, blockers, preferences) from the owner's OWN
-        // message text, not from Jarvis's reply. Never blocks the turn.
-        try {
-          const { result: extraction, usedFallback: memUsedFallback } = await extractMemoryFacts(jarvisRouter, args.text, { forceFallback: args.forceFallback, taskId: null });
-          if (extraction.facts.length) {
-            const memFacts = buildMemoryFacts({ turnId: turn.turnId, actorId: args.authCtx.actorId, scope: args.scopeClass.scope === 'user' ? 'user' : 'global', result: extraction, usedLlm: !memUsedFallback });
-            if (memFacts.length) await jarvisMemoryFacts.insertMany(memFacts);
-          }
-        } catch { /* memory extraction is best-effort; never blocks the reply */ }
-
-        // Phase AE item 5 — score this answer against the context it claims
-        // to be grounded in. Stored for later inspection, never blocks the turn.
-        try {
-          const score = scoreJarvisAnswer({
-            turnId: turn.turnId,
-            replyText: response.reply,
-            replyLanguage: response.language,
-            groundedIn: response.groundedIn ?? [],
-            suggestedFollowUpsCount: response.suggestedFollowUps.length,
-            intentLanguage: args.intent.language,
-            intentCategory: args.intent.category,
-            packetLabels: facts.map((f) => f.label),
-            packetHasNotConfigured: facts.some((f) => f.status === 'not_configured'),
-          });
-          await jarvisAnswerScores.insertOne(score);
-        } catch { /* scoring is best-effort; never blocks the reply */ }
+        // Phase AF.4 — memory extraction was previously `await`ed here despite
+        // being commented "best-effort; never blocks the turn" — that comment
+        // was only true about correctness (wrapped in try/catch), not about
+        // latency: it's a full 3rd sequential LLM call blocking every single
+        // reply. The reply the user is waiting on does not depend on this
+        // fact ever being written before it's shown, so it now genuinely
+        // runs in the background instead of merely failing safely in the
+        // foreground. Same for answer scoring (cheap, but no reason to make
+        // the user wait on it either).
+        void (async () => {
+          try {
+            const { result: extraction, usedFallback: memUsedFallback } = await extractMemoryFacts(jarvisRouter, args.text, { forceFallback: args.forceFallback, taskId: null });
+            if (extraction.facts.length) {
+              const memFacts = buildMemoryFacts({ turnId: turn.turnId, actorId: args.authCtx.actorId, scope: args.scopeClass.scope === 'user' ? 'user' : 'global', result: extraction, usedLlm: !memUsedFallback });
+              if (memFacts.length) await jarvisMemoryFacts.insertMany(memFacts);
+            }
+          } catch { /* memory extraction is best-effort; never blocks the reply */ }
+          try {
+            const score = scoreJarvisAnswer({
+              turnId: turn.turnId,
+              replyText: response.reply,
+              replyLanguage: response.language,
+              groundedIn: response.groundedIn ?? [],
+              suggestedFollowUpsCount: response.suggestedFollowUps.length,
+              intentLanguage: args.intent.language,
+              intentCategory: args.intent.category,
+              packetLabels: facts.map((f) => f.label),
+              packetHasNotConfigured: facts.some((f) => f.status === 'not_configured'),
+            });
+            await jarvisAnswerScores.insertOne(score);
+          } catch { /* scoring is best-effort; never blocks the reply */ }
+        })();
 
         return { reply: response.reply, language: response.language, suggestedFollowUps: response.suggestedFollowUps };
       };
@@ -3064,6 +3124,14 @@ async function main(): Promise<void> {
       const recordStep = async (session: OperatorRuntimeSession, stepDef: PlanStep, narration: string, observation: string, status: string): Promise<void> => {
         await opSteps.insertOne({ stepRecordId: genId('ostep'), runtimeSessionId: session.runtimeSessionId, stepId: stepDef.stepId, toolId: stepDef.toolId, narration, observation, status, createdAt: nowIso() });
         await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_STEP_COMPLETED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, toolId: stepDef.toolId, status, message: narration } });
+        // Phase AF.4 — previously `opSessions` was only written ONCE, at the
+        // very end of a `runLoop` invocation (when it finished, failed, or
+        // paused for approval). That was invisible to the client's session
+        // poll while several tool steps ran back-to-back inside a single
+        // invocation. Persisting after every step is what makes backgrounding
+        // `runLoop` (below) actually show real incremental progress instead
+        // of one silent gap followed by a sudden final-state jump.
+        await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: { status: session.status, currentStep: session.currentStep, plan: session.plan, observations: session.observations, context: session.context, evidenceIds: session.evidenceIds, nextAction: session.nextAction } }).catch(() => { /* best-effort progress persistence — the final write at the end of runLoop remains authoritative */ });
       };
 
       /** Run the loop until completion or a pause point (approval / user input / failure). */
@@ -3213,6 +3281,43 @@ async function main(): Promise<void> {
         const list = await opSessions.find({ status: { $in: ['planning', 'running', 'waiting_approval', 'waiting_user_input', 'verifying'] } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(1).toArray();
         return success(list[0] ?? null);
       });
+      // Phase AF.4.1 — the live operation feed. Real, persisted data only —
+      // every field here is a direct read from a collection that already
+      // existed (opSessions/opPermissions/tasks/events/jarvisTurns); nothing
+      // is invented or placeholder. This exists because the frontend had no
+      // way to reconstruct "what's happening / what just happened" after a
+      // page refresh — session/approval/event state lived only in React
+      // memory (see docs/decision-log.md D-12x). Uses the same active-status
+      // set as `/v1/operator/sessions/active` above, plus a small recent
+      // window of terminal sessions so a just-finished operation's result is
+      // still visible for a moment after it completes, not just while active.
+      //
+      // Phase AF.4.4 — `activeSessions`' limit(5) was a correctness bug, not
+      // just a tight cap: a genuinely still-running/waiting-approval session
+      // could silently vanish from Overview/Live Activity the moment a 6th
+      // one started, even though it hadn't finished. Raised to 20 — cheap
+      // (indexed status filter, single-owner-scale document counts) and
+      // large enough that hitting it would itself be a signal something
+      // unusual is happening. `recentSessions`/`recentTasks`/`recentEvents`
+      // are lower-stakes (already-finished history, not "is this still
+      // running") but were raised too so a busy stretch doesn't age a
+      // just-finished result out of view before the next real event arrives
+      // to refresh it.
+      app.get('/v1/operator/live-state', async (req, reply) => {
+        if (!guard(req)) return deny(reply);
+        const ACTIVE_SESSION_STATUSES = ['planning', 'running', 'waiting_approval', 'verifying'] as const;
+        const [activeSessions, recentSessions, pendingApprovals, recentTasks, recentEvents, recentJarvisTurns] = await Promise.all([
+          opSessions.find({ status: { $in: ACTIVE_SESSION_STATUSES } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(20).toArray(),
+          opSessions.find({ status: { $in: ['completed', 'failed'] } }, { projection: { _id: 0 } }).sort({ completedAt: -1 }).limit(10).toArray(),
+          opPermissions.find({ status: 'pending' }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray(),
+          tasks.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(10).toArray(),
+          events.find({ type: { $in: [...IMPORTANT_OPERATOR_EVENT_TYPES] } }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
+          jarvisTurns.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(5).toArray(),
+        ]);
+        const headline = activeSessions[0] ?? recentSessions[0] ?? null;
+        const activeOperationSummary = headline ? `${headline.goal} — ${headline.status.replace(/_/g, ' ')}` : null;
+        return success({ activeSessions, recentSessions, pendingApprovals, recentTasks, recentEvents, recentJarvisTurns, activeOperationSummary, generatedAt: nowIso() });
+      });
       app.get<{ Params: { id: string } }>('/v1/operator/sessions/:id', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const [s, steps, runs, perms] = await Promise.all([
@@ -3291,6 +3396,7 @@ async function main(): Promise<void> {
           runtimeSessionId: genId('osess'), userId: role, goal: text, status: 'planning', currentStep: 0,
           plan: planned.steps, toolRunIds: [], approvalIds: [], observations: [], context: { scopeMode: scopeClass.mode }, evidenceIds: [],
           reportSummary: '', memoryIds: [], nextAction: '', startedAt: nowIso(), completedAt: null,
+          composedReply: '', composedLanguage: '', composedFollowUps: [],
           scope: scopeClass.scope,
           tenantId: scopeClass.scope === 'global' ? undefined : authCtx.activeTenantId,
           createdBy: authCtx.actorId,
@@ -3299,13 +3405,37 @@ async function main(): Promise<void> {
         if (scopeClass.scope === 'user') session.context.scopeUserId = authCtx.primaryUserId;
         await opSessions.insertOne(session);
         await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_SESSION_STARTED, taskId: null, payload: { runtimeSessionId: session.runtimeSessionId, goal: text.slice(0, 120), scope: scopeClass.scope, message: `Operator session started (${scopeClass.mode}): ${planned.narration}` } });
-        const done = await runLoop(session, role, tools);
 
-        // Compose a grounded natural-language reply around the REAL pipeline
-        // result instead of returning only the mechanical narration string.
-        const planSummary = done.reportSummary || done.observations[done.observations.length - 1] || planned.narration;
-        const answer = await composeAndRecordJarvisTurn({ text, intent, authCtx, scopeClass, mode, planSummary, forceFallback });
-        return success({ kind: 'session', narration: planned.narration, reply: answer.reply, language: answer.language, suggestedFollowUps: answer.suggestedFollowUps, session: done, scopeContext });
+        // Phase AF.4 — this used to `await runLoop(...)` (every tool step,
+        // real network/DB calls) THEN `await composeAndRecordJarvisTurn`
+        // (an LLM call) before responding at all — the exact root cause of
+        // 10+ second waits for any goal that runs real tools. The session is
+        // already persisted above with a real plan and status='planning', so
+        // the client can be told about it immediately; `runLoop` now persists
+        // its own progress after every step (see `recordStep`), so the
+        // client's existing 2.5s session poll shows genuine incremental
+        // progress instead of one long silent block. The LLM-composed reply
+        // lands on `session.composedReply` once ready, for the poll to pick
+        // up — never a second synchronous wait.
+        void (async () => {
+          try {
+            const done = await runLoop(session, role, tools);
+            const planSummary = done.reportSummary || done.observations[done.observations.length - 1] || planned.narration;
+            const answer = await composeAndRecordJarvisTurn({ text, intent, authCtx, scopeClass, mode, planSummary, forceFallback });
+            await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: { composedReply: answer.reply, composedLanguage: answer.language, composedFollowUps: answer.suggestedFollowUps } });
+          } catch (e) {
+            ctx.log.error({ err: e, runtimeSessionId: session.runtimeSessionId }, 'background operator session failed');
+            await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: { status: 'failed', reportSummary: 'Internal error running the session — see server logs.', completedAt: nowIso() } }).catch(() => { /* nothing more we can do */ });
+          }
+        })();
+
+        // Phase AF.3 — session replies now carry the same real, already-
+        // classified intentCategory that answer-kind replies always have
+        // (Phase AD). Previously only 'answer' replies exposed it (recorded
+        // as an honest gap in D-104); tool-routed goals are exactly the kind
+        // of reply most likely to concern a specific Domain Canvas zone, so
+        // leaving it off here was the bigger gap of the two.
+        return success({ kind: 'session', narration: planned.narration, reply: planned.narration, language: detectLanguage(text), suggestedFollowUps: [], session, scopeContext, intentCategory: intent.category });
       });
 
       app.post<{ Params: { id: string }; Body: { action?: string } }>('/v1/operator/permissions/:id/decision', async (req, reply) => {
@@ -3321,6 +3451,14 @@ async function main(): Promise<void> {
         const approve = req.body?.action === 'approve';
         await opPermissions.updateOne({ permissionId: perm.permissionId }, { $set: { status: approve ? 'approved' : 'rejected', decidedBy: role, decidedAt: nowIso() } });
         await writeAudit({ actorType: 'human', actorId: role, role, action: `operator_permission_${approve ? 'approved' : 'rejected'}`, targetType: 'operator_permission', targetId: perm.permissionId });
+        // Phase AF.4.1 — this endpoint previously updated state but published
+        // nothing, so neither the live operation feed nor any SSE listener
+        // could ever observe the moment a decision was made (only the
+        // eventual session completion, seconds later). Publish immediately,
+        // before the (possibly slow) synchronous step execution below, so
+        // the client's optimistic "approving…" UI has a real event to
+        // reconcile against even if the step itself takes a moment.
+        await ctx.publisher.publish({ type: EVENT_TYPES.OPERATOR_APPROVAL_DECIDED, taskId: null, payload: { runtimeSessionId: perm.runtimeSessionId, permissionId: perm.permissionId, decision: approve ? 'approved' : 'rejected', message: `${approve ? 'Approved' : 'Rejected'}: ${perm.prompt.slice(0, 100)}` } });
         const session = await opSessions.findOne({ runtimeSessionId: perm.runtimeSessionId }, { projection: { _id: 0 } });
         if (!session) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'runtime session not found'));
         const stepDef = session.plan.find((s) => s.stepId === perm.stepId);
@@ -3358,9 +3496,26 @@ async function main(): Promise<void> {
             session.currentStep = session.plan.indexOf(stepDef) + 1;
           }
           session.status = 'running';
-          const tools2 = await liveRegistry();
-          const done = await runLoop(session, role, tools2);
-          return success({ decided: approve ? 'approved' : 'rejected', session: done });
+          // Phase AF.4 — the just-decided step already ran synchronously
+          // above (the caller needs to know THAT outcome immediately), but
+          // this used to also `await runLoop(...)` for every REMAINING step
+          // in the plan before responding — the exact "approval result
+          // propagation is slow" complaint. Persist the post-decision state
+          // now (recordStep already did this for the executed step) and
+          // respond immediately; any remaining steps continue in the
+          // background and keep persisting their own progress, same as the
+          // initial session-kind path above.
+          await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: session }, { upsert: true });
+          void (async () => {
+            try {
+              const tools2 = await liveRegistry();
+              await runLoop(session, role, tools2);
+            } catch (e) {
+              ctx.log.error({ err: e, runtimeSessionId: session.runtimeSessionId }, 'background post-approval runLoop failed');
+              await opSessions.updateOne({ runtimeSessionId: session.runtimeSessionId }, { $set: { status: 'failed', reportSummary: 'Internal error resuming the session — see server logs.', completedAt: nowIso() } }).catch(() => { /* nothing more we can do */ });
+            }
+          })();
+          return success({ decided: approve ? 'approved' : 'rejected', session });
         }
         return success({ decided: approve ? 'approved' : 'rejected', session });
       });

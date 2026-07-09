@@ -2,11 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { voiceStartAction, voiceEndSessionAction } from '@/app/voice/actions';
-import { operatorCommandAction, getRuntimeSessionAction, decideRuntimePermissionAction, type RuntimeSessionView, type OperatorCommandResult, type ScopeContextView } from '@/app/operator/actions';
+import { operatorCommandAction, getRuntimeSessionAction, decideRuntimePermissionAction, getLiveStateAction, type RuntimeSessionView, type OperatorCommandResult, type ScopeContextView } from '@/app/operator/actions';
 import { getBriefingAction, type JarvisBriefingView } from '@/app/jarvis/actions';
 import { useRealtimeVoiceSession, type RealtimeState } from '@/hooks/useRealtimeVoiceSession';
 import { UtteranceGate } from '@/lib/utteranceGate';
 import { domainLinkFor, type DomainLink } from '@/lib/domainLinks';
+import { invalidateBlocks } from '@/components/UniverseProvider';
+import { blocksForApprovalDecision } from '@/lib/realtimeBlocks';
 
 /**
  * Phase X — Operator Console; Phase AF.1 — promoted to the persistent Jarvis
@@ -25,7 +27,10 @@ import { domainLinkFor, type DomainLink } from '@/lib/domainLinks';
  */
 
 type ConsoleState = 'idle' | 'listening' | 'capturing' | 'finalizing' | 'thinking' | 'waiting_approval' | 'executing' | 'speaking' | 'error';
-interface LogItem { who: 'user' | 'operator'; text: string; domain?: DomainLink | null }
+// Phase AF.3 — `intentCategory` is the real, already-classified category
+// behind the domain link (never a separate guess); carried alongside so the
+// result block can show "what Jarvis understood" honestly.
+interface LogItem { who: 'user' | 'operator'; text: string; domain?: DomainLink | null; intentCategory?: string }
 
 const ACTIVE_STATUSES = ['planning', 'running', 'verifying', 'waiting_approval'];
 const STEP_GLYPH: Record<string, string> = { done: '✓', failed: '✕', running: '▸', pending: '○', skipped: '–', awaiting_approval: '⏸', manual_required: '!' };
@@ -50,6 +55,9 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
   const [listening, setListening] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [hint, setHint] = useState('');
+  // Phase AF.4.1 — optimistic approval-click feedback: set the instant the
+  // user clicks Approve/Reject, cleared once the real decision resolves.
+  const [decidingAction, setDecidingAction] = useState<'approve' | 'reject' | null>(null);
 
   const gateRef = useRef<UtteranceGate | null>(null);
   if (!gateRef.current) gateRef.current = new UtteranceGate();
@@ -67,6 +75,8 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
   const rtActiveRef = useRef(false);
   const speakerRef = useRef(true);
   const sessionRef = useRef<RuntimeSessionView | null>(null);
+  // Phase AF.4 — dedup key for approval announcements; see applySession.
+  const announcedApprovalIdRef = useRef<string | null>(null);
   speakerRef.current = speaker;
   logRef.current = log;
   sessionRef.current = session;
@@ -106,6 +116,40 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
     };
     window.addEventListener('aos:jarvis', onSummon);
     return () => window.removeEventListener('aos:jarvis', onSummon);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Phase AF.4.1 — reload active/recent operation state on mount instead of
+  // starting from pure React memory. This is the actual fix for "refresh
+  // and Jarvis forgets everything, has to go hunt through Tasks": the real
+  // data was always persisted (opSessions/opPermissions/jarvisTurns), it
+  // was just never re-read. Runs once regardless of `open` — the ambient
+  // (collapsed) strip also needs `session` populated to correctly show
+  // "Jarvis · working" immediately after a refresh, not just the expanded
+  // panel. Guards against clobbering a log already seeded by the
+  // `aos:jarvis` summon effect or the "open" click handler above.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const live = await getLiveStateAction();
+      const headline = live.activeSessions[0] ?? live.recentSessions[0] ?? null;
+      if (!headline || cancelled) return;
+      // `live-state`'s session records don't carry `pendingPermission`
+      // (that requires the per-session detail join) — fetch the full view
+      // for the one session that matters, same shape the poll loop uses.
+      const full = await getRuntimeSessionAction(headline.runtimeSessionId);
+      if (cancelled) return;
+      applySession(full ?? headline, false);
+      setLog((c) => {
+        if (c.length > 0) return c;
+        const isActive = ACTIVE_STATUSES.includes(headline.status);
+        const text = isActive
+          ? `Resuming — ${headline.goal} (${headline.status.replace(/_/g, ' ')}).`
+          : `Last operation: ${headline.goal} — ${headline.status}.${headline.composedReply ? ` ${headline.composedReply.slice(0, 160)}` : ''}`;
+        return [{ who: 'operator', text }];
+      });
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -153,9 +197,9 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
     setState(rtActiveRef.current ? 'listening' : 'idle');
   };
 
-  const say = (text: string, domain: DomainLink | null = null): void => {
+  const say = (text: string, domain: DomainLink | null = null, intentCategory = ''): void => {
     if (!text || !gate.acceptAssistant(text)) return;
-    setLog((c) => [...c, { who: 'operator', text, domain }]);
+    setLog((c) => [...c, { who: 'operator', text, domain, intentCategory }]);
     speak(text);
   };
 
@@ -165,18 +209,40 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
     setSession(next);
     if (!next) return;
     if (ACTIVE_STATUSES.includes(next.status)) {
-      if (next.status === 'waiting_approval') { setState('waiting_approval'); if (announce && next.pendingPermission) say(`Approval needed: ${next.pendingPermission.prompt}`); }
-      else setState('executing');
+      if (next.status === 'waiting_approval') {
+        setState('waiting_approval');
+        // Phase AF.4 — this used to say() "Approval needed: ..." on EVERY
+        // call with announce=true, and the poll effect calls applySession
+        // with announce=true every 2.5s for as long as status stays
+        // 'waiting_approval' — which it does until the user decides. That's
+        // the exact repeated-bubble bug from real testing: a stable key
+        // (the permission id) is tracked here so the SAME approval only
+        // ever gets announced once; a genuinely NEW approval (a different
+        // permissionId) still announces normally.
+        const permId = next.pendingPermission?.permissionId ?? null;
+        if (announce && permId && announcedApprovalIdRef.current !== permId) {
+          say(`Approval needed: ${next.pendingPermission!.prompt}`);
+          announcedApprovalIdRef.current = permId;
+        }
+      } else {
+        setState('executing');
+      }
     } else {
       setState('idle');
+      announcedApprovalIdRef.current = null;
       const finishedNow = !prev || ACTIVE_STATUSES.includes(prev.status) || prev.runtimeSessionId !== next.runtimeSessionId;
       if (announce && finishedNow) {
         if (next.status === 'completed') {
-          const spoken = next.nextAction?.startsWith('Question:')
+          // Phase AF.4 — prefer the backgrounded LLM-composed reply once
+          // it's ready (grounded, natural-language); fall back to the
+          // deterministic reportSummary the same way as before if the
+          // composition hasn't landed yet (e.g. it's still finishing a
+          // beat after the tool loop itself completed).
+          const spoken = next.composedReply || (next.nextAction?.startsWith('Question:')
             ? next.nextAction
             : (next.reportSummary?.includes('Question:')
               ? next.reportSummary.slice(next.reportSummary.lastIndexOf('Question:')).trim()
-              : (next.reportSummary || 'Goal completed.'));
+              : (next.reportSummary || 'Goal completed.')));
           say(spoken);
         } else if (next.status === 'failed') say(`The goal failed. ${next.observations[next.observations.length - 1] ?? ''} Next: ${next.nextAction}`.trim());
       }
@@ -208,11 +274,22 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
     setInterimText('');
     setCapabilities([]);
     setFollowUps([]);
-    setLog((c) => [...c, { who: 'user', text: text.trim() }]);
+    // Phase AF.4.1 — immediate "thinking" feedback. Real user testing found
+    // the console looked frozen/dead between submitting a goal and the
+    // eventual reply — this fixes it with a real, honest status line (not a
+    // fake progress bar) the instant the goal is accepted, before any
+    // network round trip. Pushed directly to `log`, not through `say()` —
+    // this is a visual pulse, not something that needs to be spoken.
+    setLog((c) => [...c, { who: 'user', text: text.trim() }, { who: 'operator', text: 'Goal received — thinking…' }]);
     setState('thinking');
     try {
       const r = await operatorCommandAction(text.trim());
-      if (r.kind === 'ignored') { setLog((c) => c.slice(0, -1)); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
+      // Remove the optimistic "thinking" line before any real reply is
+      // appended — every branch below adds its own real narration via
+      // `say()`, so this placeholder must not linger alongside it.
+      const dropThinking = (): void => setLog((c) => (c.length > 0 && c[c.length - 1]?.text === 'Goal received — thinking…' ? c.slice(0, -1) : c));
+      if (r.kind === 'ignored') { setLog((c) => c.slice(0, -2)); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
+      dropThinking();
       if (r.kind === 'error') { say(r.reply); setState('error'); return; }
       if (r.kind === 'capabilities') { setCapabilities(r.groups); say(r.spoken); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       // Phase AD — grounded direct answer: no fake tool session, just a real,
@@ -220,14 +297,18 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
       // AF.1 Step 7 — attach a real domain link when the classified intent
       // maps to one, so the reply can point back at the part of the
       // universe it's about.
-      if (r.kind === 'answer') { setScopeCtx(r.scopeContext); setFollowUps(r.suggestedFollowUps); say(r.reply, domainLinkFor(r.intentCategory)); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
+      if (r.kind === 'answer') { setScopeCtx(r.scopeContext); setFollowUps(r.suggestedFollowUps); say(r.reply, domainLinkFor(r.intentCategory), r.intentCategory); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
       if (r.kind === 'clarify') { say(r.reply); setState(rtActiveRef.current ? 'listening' : 'idle'); return; }
-      // Runtime session started.
+      // Runtime session started. Phase AF.3 — session replies now carry a
+      // real intentCategory too (previously answer-kind only), so a
+      // tool-routed goal can point back at the zone it concerns exactly
+      // like a direct answer already could.
       setScopeCtx(r.scopeContext);
       setFollowUps(r.suggestedFollowUps);
-      if (r.reply) say(r.reply);
+      if (r.reply) say(r.reply, domainLinkFor(r.intentCategory), r.intentCategory);
       applySession(r.session, true);
     } catch {
+      setLog((c) => (c.length > 0 && c[c.length - 1]?.text === 'Goal received — thinking…' ? c.slice(0, -1) : c));
       say('Command failed — kernel unreachable.');
       setState('error');
     } finally {
@@ -241,11 +322,29 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
   }, [pathname]);
 
   async function decide(action: 'approve' | 'reject'): Promise<void> {
-    if (!session?.pendingPermission) return;
+    if (!session?.pendingPermission || decidingAction) return;
+    // Phase AF.4.1 — optimistic feedback: real user testing found the UI
+    // froze for a few seconds after clicking Approve with no acknowledgment
+    // that the click registered. `decidingAction` disables both buttons and
+    // swaps the clicked one's label to "Approving…"/"Rejecting…"
+    // immediately, before the network call — reconciled with the real
+    // backend state (and cleared) once the response lands.
+    setDecidingAction(action);
     setState('executing');
-    const next = await decideRuntimePermissionAction(session.pendingPermission.permissionId, action);
-    if (action === 'reject') say('Rejected. The step was skipped.');
-    applySession(next, true);
+    try {
+      const next = await decideRuntimePermissionAction(session.pendingPermission.permissionId, action);
+      if (action === 'reject') say('Rejected. The step was skipped.');
+      applySession(next, true);
+      // Phase AF.4 — an approval decision can affect Domain Canvas blocks
+      // (e.g. a system repair task now running, a pending-approval count
+      // change) even though `OperatorConsole` is mounted at the layout
+      // level, outside `UniverseProvider`'s tree — `invalidateBlocks` is
+      // the module-level, provider-optional bridge for exactly this case
+      // (safe no-op if the homepage/provider isn't currently mounted).
+      invalidateBlocks(blocksForApprovalDecision());
+    } finally {
+      setDecidingAction(null);
+    }
   }
 
   /* ------------- browser STT fallback (Phase 19.5 pipeline) ------------- */
@@ -415,13 +514,27 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
         {log.map((m, i) => (
           <div key={i} style={{ alignSelf: m.who === 'user' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
             <div className={m.who === 'user' ? 'glass' : ''} style={{ padding: '8px 11px', borderRadius: 10, fontSize: 13, background: m.who === 'operator' ? 'var(--glass-2)' : undefined, border: m.who === 'operator' ? '1px solid var(--border)' : undefined }}>{m.text}</div>
-            {/* Phase AF.1 Step 7 — domain reference: points this specific
-                reply back at the real zone it concerns, real intentCategory
-                only, never guessed. */}
-            {m.domain && (
-              <a href={m.domain.href} className="chip" style={{ fontSize: 10, textDecoration: 'none', marginTop: 4, display: 'inline-block' }}>
-                Related: {m.domain.title} →
-              </a>
+            {/* Phase AF.1 Step 7 / AF.3 — a small, real result block: which
+                domain this concerns and what Jarvis classified the goal as
+                (both the exact real intentCategory, never guessed — Phase
+                AF.3 extended this to session-kind replies too, previously
+                answer-kind only). Kept intentionally small: the fuller
+                "what will happen" detail already lives in the runtime
+                session panel below (plan/pendingPermission/nextAction) —
+                this is not a second parallel state system. */}
+            {(m.domain || m.intentCategory) && (
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
+                {m.domain && (
+                  <a href={m.domain.href} className="chip" style={{ fontSize: 10, textDecoration: 'none' }}>
+                    Related: {m.domain.title} →
+                  </a>
+                )}
+                {m.intentCategory && (
+                  <span className="chip m" style={{ fontSize: 9.5 }} title="What Jarvis classified this goal as">
+                    understood as: {m.intentCategory.replace(/_/g, ' ')}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         ))}
@@ -542,8 +655,8 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
                 </div>
                 <div style={{ fontSize: 12, marginBottom: 8 }}>{session.pendingPermission.prompt}</div>
                 <div className="actions">
-                  <button type="button" className="btn btn-ok" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => void decide('approve')}>Approve</button>
-                  <button type="button" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => void decide('reject')}>Reject</button>
+                  <button type="button" disabled={decidingAction !== null} className="btn btn-ok" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => void decide('approve')}>{decidingAction === 'approve' ? 'Approving…' : 'Approve'}</button>
+                  <button type="button" disabled={decidingAction !== null} className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => void decide('reject')}>{decidingAction === 'reject' ? 'Rejecting…' : 'Reject'}</button>
                 </div>
               </div>
             )}

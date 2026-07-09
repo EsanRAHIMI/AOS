@@ -133,6 +133,15 @@ export const OperatorRuntimeSessionSchema = z.object({
   nextAction: z.string().default(''),
   startedAt: IsoDate,
   completedAt: z.string().nullable().default(null),
+  // Phase AF.4 — the grounded, LLM-composed reply is now produced in the
+  // background (after the HTTP response already returned an immediate,
+  // deterministic acknowledgement), so it needs somewhere to land once
+  // ready. The client's existing session poll picks it up here instead of
+  // waiting for it synchronously. Empty string = not composed yet (still
+  // running, or this was never a route_to_planner turn).
+  composedReply: z.string().default(''),
+  composedLanguage: z.string().default(''),
+  composedFollowUps: z.array(z.string()).default([]),
 }).merge(ScopeFieldsSchema);
 export type OperatorRuntimeSession = z.infer<typeof OperatorRuntimeSessionSchema>;
 

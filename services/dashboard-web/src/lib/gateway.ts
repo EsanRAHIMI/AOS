@@ -203,6 +203,19 @@ export const gateway = {
   operatorSession: (id: string) => call<{ session: Record<string, unknown>; steps: unknown[]; toolRuns: unknown[]; permissions: Array<Record<string, unknown>> }>(`/v1/operator/sessions/${id}`),
   decideOperatorPermission: (id: string, action: string) => call<{ decided: string; session: Record<string, unknown> }>(`/v1/operator/permissions/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   operatorMemories: () => call<Array<Record<string, unknown>>>('/v1/operator/memories'),
+  // Phase AF.4.1 — the persistent live operation feed: real, already-
+  // persisted sessions/approvals/tasks/events/turns, queried fresh on every
+  // call (never cached client-side beyond what the caller does itself).
+  operatorLiveState: () => call<{
+    activeSessions: Array<Record<string, unknown>>;
+    recentSessions: Array<Record<string, unknown>>;
+    pendingApprovals: Array<Record<string, unknown>>;
+    recentTasks: Array<Record<string, unknown>>;
+    recentEvents: Array<Record<string, unknown>>;
+    recentJarvisTurns: Array<Record<string, unknown>>;
+    activeOperationSummary: string | null;
+    generatedAt: string;
+  }>('/v1/operator/live-state'),
   // Phase AA — Scope, Identity & Multi-Tenant Governance
   meContext: () => call<{ actor: { actorId: string; displayName: string; roles: string[]; isOwner: boolean }; tenant: { tenantId: string; name: string; kind: string } | null; activeScope: string; safeMode: boolean; activeGoals: number; activeConsents: number; governance: string }>('/v1/me/context'),
   meProfile: () => call<Record<string, unknown>>('/v1/me/profile'),
@@ -231,10 +244,12 @@ export const gateway = {
     call<Record<string, unknown>>('/v1/me/reality/ingest', { method: 'POST', body: JSON.stringify(payload) }),
   realityReview: (type: 'daily' | 'weekly') => call<Record<string, unknown>>('/v1/me/reality/review', { method: 'POST', body: JSON.stringify({ type }) }),
   decideNextAction: (id: string, action: 'accept' | 'reject' | 'complete') => call<{ status: string }>(`/v1/me/reality/next-actions/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  // Phase AF.3 — mirrors decideNextAction for the Opportunity Radar zone.
+  decideOpportunity: (id: string, action: 'accept' | 'reject' | 'follow_up') => call<{ status: string }>(`/v1/me/reality/opportunities/${id}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
   // Phase AC+ — Command Universe
   // Phase AD adds: suggestedPrompts, todaySummary, systemHealthSummary, memoryInsights.
   universe: () => call<{
-    zones: Array<{ zoneId: string; title: string; status: string; headline: string; items: Array<{ label: string; detail: string; tone: string; href?: string }>; setupHint: string; jarvisCommand: string; href: string; metrics: Array<{ label: string; value: string; tone: string }> }>;
+    zones: Array<{ zoneId: string; title: string; status: string; headline: string; items: Array<{ label: string; detail: string; tone: string; href?: string; itemId?: string }>; setupHint: string; jarvisCommand: string; href: string; metrics: Array<{ label: string; value: string; tone: string }> }>;
     actor: { displayName: string };
     generatedAt: string;
     suggestedPrompts: string[];

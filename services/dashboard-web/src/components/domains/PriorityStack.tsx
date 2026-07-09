@@ -2,6 +2,9 @@
 import Link from 'next/link';
 import type { ZoneData } from '../UniverseZone';
 import { extractNumberAfter, firstSegment } from '@/lib/zoneParsing';
+import { DecisionButtons } from '@/app/me/controls';
+import { useOptionalRefresh } from '@/components/UniverseProvider';
+import { blocksForNextActionDecision } from '@/lib/realtimeBlocks';
 
 /**
  * Phase AF.2 — Today & Priorities domain visual.
@@ -13,8 +16,16 @@ import { extractNumberAfter, firstSegment } from '@/lib/zoneParsing';
  * backend already writes), and a category tag. Rows with no parseable score
  * (the overdue/approval special rows) fall back to showing their real
  * detail text instead of a fabricated bar.
+ *
+ * Phase AF.3 — a real next-best-action row now carries its real `itemId`
+ * (buildUniverseZones() forwards `actionId`, previously dropped), so this
+ * can render the existing `DecisionButtons` (already used at /me, reused
+ * — not duplicated) for exactly the rows that are individually decidable.
+ * The overdue/approval synthetic rows have no itemId and correctly get no
+ * decide control.
  */
 export function PriorityStack({ zone }: { zone: ZoneData }) {
+  const refresh = useOptionalRefresh();
   if (zone.items.length === 0) {
     return <div className="m" style={{ fontSize: 11, padding: '2px 0' }}>Nothing ranked yet.</div>;
   }
@@ -42,7 +53,15 @@ export function PriorityStack({ zone }: { zone: ZoneData }) {
             {cat && <span className="chip" style={{ fontSize: 9.5, flexShrink: 0, textTransform: 'capitalize' }}>{cat}</span>}
           </div>
         );
-        return it.href ? <Link key={i} href={it.href} style={{ textDecoration: 'none', color: 'inherit' }}>{row}</Link> : <div key={i}>{row}</div>;
+        // Decide controls are a sibling below the row, not nested inside the
+        // Link — a button inside an anchor is broken markup and would fire
+        // navigation on every click.
+        return (
+          <div key={i}>
+            {it.href ? <Link href={it.href} style={{ textDecoration: 'none', color: 'inherit' }}>{row}</Link> : row}
+            {it.itemId && <div style={{ marginTop: 4, marginLeft: 22 }}><DecisionButtons actionId={it.itemId} onDecided={() => refresh(blocksForNextActionDecision())} /></div>}
+          </div>
+        );
       })}
     </div>
   );

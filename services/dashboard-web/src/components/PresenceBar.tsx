@@ -1,5 +1,6 @@
 'use client';
 import { summonJarvis } from './UniverseZone';
+import { RelativeTime } from './RelativeTime';
 import type { JarvisBriefingView } from '@/app/jarvis/actions';
 
 /**
@@ -11,19 +12,13 @@ import type { JarvisBriefingView } from '@/app/jarvis/actions';
  * gap identified in docs/living-command-universe-vision.md §A.8. No
  * hardcoded values: every field below is read straight from the briefing
  * prop; an honest empty/unreachable state renders when it is null.
+ *
+ * Phase AF.4.1 — this component used to compute its own "Xs ago" freshness
+ * label inline during render, which caused a real server/client hydration
+ * mismatch (see `RelativeTime.tsx`'s header comment for the exact root
+ * cause). That computation now lives in `<RelativeTime>`, which is safe by
+ * construction.
  */
-
-function relativeFreshness(iso: string): string {
-  if (!iso) return 'unknown';
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return 'just now';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  return `${h}h ago`;
-}
 
 function confidenceLabel(c: number): { label: string; tone: 'ok' | 'warn' | 'err' } {
   if (c >= 0.75) return { label: `${Math.round(c * 100)}% confidence`, tone: 'ok' };
@@ -58,7 +53,7 @@ export function PresenceBar({ briefing, memoryInsights }: { briefing: JarvisBrie
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <span className={`badge ${conf.tone}`}>{conf.label}</span>
-          <span className="m" style={{ fontSize: 11 }} title={briefing.dataFreshness}>as of {relativeFreshness(briefing.dataFreshness)}</span>
+          <span className="m" style={{ fontSize: 11 }} title={briefing.dataFreshness}>as of <RelativeTime iso={briefing.dataFreshness} /></span>
         </div>
       </div>
 

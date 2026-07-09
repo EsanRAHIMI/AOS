@@ -1681,3 +1681,421 @@ operator replies still have no `intentCategory` (pre-existing AF.1 gap, unchange
 effect is visual-only — it does not yet expand a zone's `children` visual or pre-fetch anything beyond what
 the page already loads. `next build` still unverified in this sandbox (see Verification above).
 Scope: `services/dashboard-web/src/{app,components,lib}/**`, `scripts/`, `docs/`.
+
+## Phase AF.3 — Jarvis Guided Control & Domain Action Layer — COMPLETE (2026-07-09)
+Closes AF.2's biggest remaining gap: Jarvis could point at a zone but could not guide, edit, act on, or manage
+it. Investigation before coding found that most of the needed infrastructure already existed but was either
+disconnected (session replies never carried `intentCategory`) or built-but-invisible (`gateway.realityIngest()`
+and `gateway.decideNextAction()` were already real, scope-enforced, and already used at `/me`, just never
+surfaced in the Domain Canvas) — so this phase is mostly wiring, plus two small additive gap-fixes, not new
+architecture.
+
+Delivered (shared — additive, no breaking change):
+- `ZoneItem` gains an optional `itemId` — only set for the two zones with a real, individually decidable
+  record (`daily`'s next-best-action rows get the real `actionId`; `opportunities`' rows get the real
+  `opportunityId`). Synthetic rows (overdue-item / approval-count) and every other zone's items correctly
+  have no `itemId`, so no decide control can ever render for a non-record.
+
+Delivered (gateway-api):
+- `/v1/operator/command`'s `session`-kind response now includes the real, already-classified
+  `intentCategory` (previously answer-kind only — recorded as an honest gap in AF.1's D-104; tool-routed
+  goals are exactly the replies most likely to concern a specific zone, so this closed the bigger half).
+- New `POST /v1/me/reality/opportunities/:id/decision` (accept/reject/follow_up) — a direct mirror of the
+  existing next-actions decision endpoint immediately above it: same `enforceScoped`, same
+  learn-from-decision `scopedMemories` write. No new mutation pattern invented.
+
+Delivered (dashboard-web — session intentCategory end-to-end):
+- `operator/actions.ts` stopped hardcoding `intentCategory: ''` for session-kind replies; `OperatorConsole`'s
+  `submitCommand` now passes `domainLinkFor(r.intentCategory)` on the session branch too, so a tool-routed
+  goal ("check the whole system", "review my finances") gets the same "Related: Zone →" chip an answer-kind
+  reply already did.
+
+Delivered (dashboard-web — the domain action manifest, `src/lib/domainActions.ts`):
+- Pure data, no React: per-zone real actions (`add_data` → real ingest kind + real field names only,
+  `create_task` → real orchestrator-routed task, `open_link` → a real existing page). `daily` and
+  `opportunities` deliberately have no zone-level actions — see per-item decisions below. `ventures`'
+  "add blocker" honestly routes through the real `risk` ingestion kind (no fabricated blocker field on
+  `PersonalProject`); "next action" honestly routes through real task creation (no fabricated next-action
+  field) — the same no-invented-schema-field discipline AF.2 established for the visuals now applies to
+  actions too.
+
+Delivered (dashboard-web — real controls, no unused components):
+- `DomainActionControl.tsx` — one component rendering all three action kinds: `add_data` expands into a
+  per-kind field form (preview line shows exactly what will be created before Confirm) posting through the
+  new `ingestDomainDataAction` (generalizes the existing `ingestRealityFactAction` to accept the real
+  per-kind optional fields, still the same `gateway.realityIngest()`); `create_task` expands into a
+  pre-filled, editable goal field posting through the existing, unchanged `createTaskAction`; `open_link` is
+  a plain chip. Wired into every `UniverseZone` footer via the manifest.
+- `app/me/controls.tsx` gained `OpportunityDecisionButtons` (Save/Follow up/Reject), a direct mirror of the
+  existing `DecisionButtons` (Accept/Decline/Done) — both now render per-item wherever a real `itemId` is
+  present: `DecisionButtons` in `PriorityStack.tsx`, `OpportunityDecisionButtons` in `OpportunityRadar.tsx`.
+  Rendered as a sibling below the item row, not nested inside its `Link` (a button inside an anchor is
+  broken markup and would fire navigation on every click).
+
+Delivered (dashboard-web — a real, minimal result block):
+- `OperatorConsole`'s log entries gained `intentCategory` alongside the existing domain chip — a small,
+  honest "understood as: {category}" line under any reply that has one. Deliberately did not build a second
+  parallel "what will happen" state system: the existing runtime session panel (plan/pendingPermission/
+  nextAction, unchanged since Phase X) already is that, for the one class of action that needs owner
+  approval; the new add-data/opportunity-decision actions are the same no-approval, scope-enforced tier
+  ingestion and next-action decisions already were, so they get an in-form preview instead, not a fake
+  approval gate for a class of action that was never gated by one.
+
+Verification:
+- **Phase AF.3 smoke PASS (29/29)** (`scripts/phaseaf3-domain-action-layer-smoke.mjs`) — every zone has a
+  real zone-level action or a real per-item decision path (never neither); every `add_data` action's
+  ingestKind is a real, documented ingestion kind; no duplicate action ids; AF.1's priority guarantee and
+  AF.2's live-zone-silence guarantee re-verified.
+- Regression: AF.1 Focus Row smoke **11/11**, AF.2 Domain Canvas smoke **21/21**, both green.
+- `shared` `tsc` clean; `gateway-api` `tsc --noEmit` clean; `dashboard-web` `tsc --noEmit` clean (zero errors,
+  first pass, across all new/edited files). `next build` not attempted — same pre-existing sandbox limitation
+  documented in the AF.1/AF.2 entries above.
+
+Honest remaining gaps: "save" on an opportunity maps to `status: accepted` (there is no separate "saved"
+state in `PersonalOpportunity`'s schema) — semantically the closest real transition, not a fabricated one,
+but worth a dedicated status later if the distinction matters. No manual ingestion kind exists for
+opportunities themselves (they are AOS-derived only), so there is intentionally no "add opportunity" control.
+`PersonalProject` still has no first-class blocker/next-action field — both route through adjacent real
+records (risk / task) rather than a schema change, which is honest but not the same as a dedicated field.
+`next build` still unverified in this sandbox.
+Scope: `shared/src/personal/index.ts`, `services/gateway-api/src/index.ts`,
+`services/dashboard-web/src/{app,components,lib}/**`, `scripts/`, `docs/`.
+
+## Phase AF.4 — Realtime Block Runtime, Fast Jarvis Response & Operation Lifecycle Fix — COMPLETE (2026-07-09)
+Real-user testing of AF.3 surfaced that the runtime, not the UI surface, was the bottleneck: Jarvis replies
+took 10+ seconds, domain actions required a full page refresh to see their own effect, and the persistent
+shell repeated the same "Approval needed" bubble on every 2.5s poll tick until the user decided. This phase
+fixes the actual architecture behind all three, plus wires the block-invalidation model the Domain Canvas
+needed from AF.1 onward but never had.
+
+**Why the old runtime felt slow/manual (root cause):** `/v1/operator/command`'s session branch ran three
+sequential LLM-bound operations before responding at all — classify, the full synchronous `runLoop` tool
+loop, then `composeAndRecordJarvisTurn`'s grounded reply composition (itself gated behind an *awaited*
+"best-effort" memory-extraction call, despite the comment implying otherwise). `gatherJarvisFacts` also ran
+four independent DB fetches sequentially with no data dependency between them. Separately, `runLoop`
+persisted `opSessions` only once per invocation (at the very end) — so even backgrounding the loop would have
+looked frozen mid-execution with no way to observe incremental progress.
+
+**What changed (background execution + incremental persistence):**
+- `gatherJarvisFacts` now runs its four independent fetch blocks via `Promise.allSettled` instead of four
+  sequential awaits.
+- `composeAndRecordJarvisTurn`'s memory-fact extraction and answer scoring are now genuinely fire-and-forget
+  (`void (async () => {...})()`, each still individually try/catch-wrapped, never silently swallowing an
+  error — a failure sets `status: 'failed'` honestly instead of leaving the session stuck).
+- `/v1/operator/command`'s session branch and `/v1/operator/permissions/:id/decision`'s post-approval
+  continuation both now return immediately after inserting/updating the session record, with the actual
+  `runLoop` + composition backgrounded the same way. The client's existing 2.5s session poll (unchanged)
+  picks up progress as it happens.
+- `recordStep` now also persists the running session's `status/currentStep/plan/observations/context/
+  evidenceIds/nextAction` into `opSessions` on every step (previously only written to the separate `opSteps`
+  log), so a backgrounded `runLoop` shows genuine incremental progress instead of a single jump from
+  `planning` to `completed`.
+- `OperatorRuntimeSession` gained `composedReply/composedLanguage/composedFollowUps` so the backgrounded,
+  LLM-grounded reply lands in the same polled record the client already reads — no second endpoint.
+
+**Duplicate approval messages — the actual bug and the fix:** `applySession` narrated `waiting_approval`
+unconditionally on every poll tick with `announce=true`, and the poll runs every 2.5s for as long as a
+session stays in that status — which it does until the user acts. A ref-keyed by the real `permissionId`
+(`announcedApprovalIdRef`) now gates the `say()` call so the *same* pending approval is announced exactly
+once; a genuinely new approval (different `permissionId`) still announces normally, and the ref resets when
+the session leaves the active-status set.
+
+**Realtime block invalidation model:** `src/lib/realtimeBlocks.ts` is a pure, React-free manifest of the 12
+named blocks the product brief specifies (`presence, focus, health, daily, life, finance, ventures, growth,
+opportunities, systems, channels, live-pulse`) and the real, grounded mapping from every ingestion kind /
+decision / task-creation / approval-decision / SSE event type to the blocks it actually affects — no
+speculative mappings; kinds with no real effect on any tracked block (`profile`, `asset`, `tech_watch`)
+honestly map to an empty array. `UniverseProvider` (new client context, seeded server-side from `page.tsx`'s
+existing fetch for a fast first paint) exposes `refresh(blocks)`: since only one combined `/v1/me/universe`
+endpoint exists, it refetches that endpoint but merges the result so ONLY the zone objects matching a
+requested block are replaced — every other zone keeps its previous reference, so unaffected components skip
+re-render. This is the "block-level" behavior the brief asks for, built honestly on the one real backend
+endpoint that exists rather than inventing a per-block API. A `window` `CustomEvent` (`aos:invalidate-blocks`,
+mirroring the existing `aos:jarvis` precedent) lets `OperatorConsole` — mounted at the layout level, outside
+`UniverseProvider`'s tree — request a refresh too; `invalidateBlocks()` is a safe no-op if no provider is
+mounted. `LiveEvents.tsx` (the app's one existing SSE connection) now also calls `invalidateBlocks` on every
+relevant event, covering the "task finished while I was elsewhere" case, without opening a second connection.
+Three new backend events (`reality.ingested`, `next_action.decided`, `opportunity.decided`) were added at
+their real mutation points in gateway-api specifically so this bridge has something honest to listen for.
+
+**Domain action UX fixes:** `DomainActionControl.tsx` now calls `useOptionalRefresh()` with the correct real
+block list after every successful `add_data`/`create_task` submission, wraps both server-action calls in
+try/catch with an `error` state that keeps the form open and shows the real error message on failure
+(previously no error handling existed at all), and auto-collapses back to the closed chip ~1.4s after a
+visible success badge instead of staying open indefinitely. `create_task` now calls a new
+`createTaskInlineAction` (a non-redirecting sibling of the existing `createTaskAction`) — the original
+always `redirect()`s to `/tasks/:id`, which would have navigated the user off the homepage the instant they
+used an inline Domain Canvas control, directly against the "update in place" requirement.
+`DecisionButtons`/`OpportunityDecisionButtons` (`app/me/controls.tsx`) gained an optional `onDecided`
+callback, wired from `PriorityStack.tsx`/`OpportunityRadar.tsx` via `useOptionalRefresh()` — the `/me` pages
+that also render these components don't pass the callback and are unaffected. `OperatorConsole.decide()`
+calls `invalidateBlocks(blocksForApprovalDecision())` after an approval/reject resolves.
+
+**Homepage architecture:** `page.tsx` is now a thin server shell (one `Promise.all` initial fetch, unchanged
+data, unchanged fast first paint) that hands its result to `UniverseProvider`; all the interactive JSX that
+used to be static in `page.tsx` (Identity Strip, Presence Bar, Focus Row, all nine Domain Canvas zones, live
+pulse) moved into a new client component, `HomeLive.tsx`, which reads from `useUniverse()` instead of props.
+A block currently mid-refresh gets a subtle opacity dip (0.6, 0.2s transition) rather than a spinner overlay
+— visible feedback without a fake loading state on blocks that aren't actually being touched.
+
+Verification:
+- **Phase AF.4 smoke PASS (36/36)** (`scripts/phaseaf4-realtime-block-smoke.mjs`) — every real `add_data`
+  action's ingestKind resolves to a real, non-fabricated block list; health/finance ingest specifically
+  invalidates their own zone; next-action/opportunity decisions invalidate their real zone plus `focus`;
+  every new SSE event this phase publishes has a real block mapping; `BLOCK_IDS` matches the brief's exact
+  12-block manifest; an unknown event type honestly returns an empty array.
+- Regression: AF.1 Focus Row smoke **11/11**, AF.2 Domain Canvas smoke **21/21**, AF.3 Domain Action Layer
+  smoke **29/29** — all still green, unchanged.
+- `shared` `tsc` clean, `gateway-api` `tsc --noEmit` clean, `dashboard-web` `tsc --noEmit` clean (zero errors,
+  across all new/edited files in this phase).
+- Not covered by an automated script (documented, not silently skipped): the duplicate-approval-message fix
+  is React-state-driven (a `useRef` dedup key) with no pure function to unit test — verified by code review;
+  `UniverseProvider.refresh()`'s actual network-merge behavior needs a browser/DOM environment. Both need a
+  manual UI pass (see the phase's final report for the exact steps).
+
+Honest remaining gaps: there is still no per-block backend endpoint — `refresh()` always refetches the one
+combined `/v1/me/universe` route and merges client-side, so a "block-level" refresh is real in effect (only
+the affected zone's React state changes) but not in network cost (the whole universe payload is refetched
+every time). `ctx`/`session`-derived identity-strip bits (safe-mode banner text, consent count, owner badge)
+are intentionally still static per-navigation props, not part of the block-invalidation model. `next build`
+still unverified in this sandbox (same pre-existing limitation noted in every prior AF phase entry).
+Scope: `shared/src/{operator,constants}/index.ts`, `services/gateway-api/src/index.ts`,
+`services/dashboard-web/src/{app,components,lib}/**`, `scripts/`, `docs/`.
+
+## Phase AF.4.1 — Persistent Live Operation Feed, Hydration Fix & Approval UX Hardening — COMPLETE (2026-07-09)
+Real-user testing of AF.4 found the runtime was genuinely faster but still felt dead on arrival: no visible
+"thinking" state before a reply, a multi-second frozen approval click, a real hydration error, and — the
+sharpest complaint — a page refresh erased all operation context, forcing a manual trip through Tasks to
+reconstruct what Jarvis had done. Investigation confirmed all of this was a *reload* problem, not a
+*persistence* problem: every relevant record (`opSessions`, `opPermissions`, `tasks`, `events`, `jarvisTurns`)
+was already real and durable — `OperatorConsole` simply never read any of it back on mount, and the homepage
+had no query against it at all.
+
+**Hydration fix.** `PresenceBar.tsx` (a `'use client'` component fed a server-provided `dataFreshness`
+timestamp) computed `Date.now() - new Date(iso).getTime()` directly in its render body — evaluated once
+during SSR, again a moment later during client hydration, producing a different "Xs ago" string each time: a
+real value mismatch, not a false positive. Audited every other `timeAgo(`/`Date.now()` render-time call site
+in the app (55 files call the shared `timeAgo()` helper) and confirmed zero others combine `'use client'`
+with a direct render-time call — every other caller is a plain Server Component, computed once, server-only,
+no client re-render to mismatch against. Fix: a new `RelativeTime.tsx` renders a stable, non-time-dependent
+placeholder (`…`) on both the server pass and the client's first render, then computes the real label only
+inside `useEffect` (which never runs during SSR), ticking every 5s afterward. `PresenceBar` now renders
+`<RelativeTime iso={...} />` instead of computing the label itself.
+
+**Persistent operation feed.** New `GET /v1/operator/live-state` (gateway-api) — real, already-persisted data
+only: `activeSessions` (opSessions, active-status set), `recentSessions` (last completed/failed, so a result
+stays visible briefly after finishing), `pendingApprovals` (opPermissions, status pending), `recentTasks`
+(tasks, newest 5), `recentEvents` (events, filtered to a new authoritative `IMPORTANT_OPERATOR_EVENT_TYPES`
+allowlist in `shared/src/constants` — shared by both the backend query and the frontend SSE subscription so
+they can't silently drift apart), `recentJarvisTurns` (jarvisTurns, newest 5), and a computed
+`activeOperationSummary`. A new `operator.approval.decided` event was added and published from the approval
+decision endpoint, which previously updated state but published nothing — no SSE listener or live-state
+consumer could ever observe the moment a decision was made, only the eventual session completion seconds
+later.
+
+**Overview Active Operations module.** New `ActiveOperationsPanel.tsx`, rendered on the homepage right below
+the Presence Bar: active/waiting sessions with real status and next-action text, pending approvals with risk
+level and a "Review" link into Jarvis, the most recent finished session's result (composed reply or report
+summary), and recent task chips linking to their real Mission Control page (`/tasks/:id`). Renders nothing
+when there's genuinely no content — never a fake "no activity" filler. "Dismiss" only hides the panel in
+local component state for the current view; it never mutates any backend record. Seeded server-side on first
+paint (`page.tsx` now fetches `getLiveStateAction()` alongside the existing universe/briefing fetch, added to
+the same `Promise.all` so it doesn't add a serial round trip) and refreshed client-side via the existing
+`UniverseProvider`/`realtimeBlocks` invalidation model — a new `'live-pulse'` block (already reserved in
+AF.4's 12-block manifest but previously unused) is now the real target for every operator lifecycle event.
+The existing "Live activity" card was upgraded the same way: `LiveEvents` now accepts `initialEvents` (seeded
+from the same live-state snapshot) instead of always starting empty with "Waiting for events…", and merges
+new SSE events in via a new pure `mergeDedupedEvents`/`eventDedupeKey` helper (`lib/eventDedupe.ts`) so an
+event delivered both in the initial snapshot and moments later over SSE — a real possibility right after page
+load — renders exactly once, chronologically ordered.
+
+**Jarvis shell persistence + narration.** `OperatorConsole` now reloads on mount: fetches live-state, and for
+the active-or-most-recent session, fetches the full per-session detail (same call the poll loop already used)
+so `pendingPermission` is populated too — a session reloaded as `waiting_approval` now genuinely shows its
+approve/reject card again, not just a status label. Seeds the chat log with one honest "Resuming — {goal}
+({status})" or "Last operation: {goal} — {status}. {result}" line when the log is otherwise empty (guarded so
+it never clobbers a log already seeded by the existing `aos:jarvis` summon path). Submitting a goal now pushes
+an immediate "Goal received — thinking…" line to the log before the network call starts (not spoken — a
+visual pulse, not new narration), removed once a real reply lands, fixing the "looks frozen" complaint without
+touching the announcement-dedup logic AF.4 already fixed.
+
+**Approval UX.** Approve/Reject clicks are now optimistic: a `decidingAction` state disables both buttons and
+swaps the clicked one's label to "Approving…"/"Rejecting…" immediately, before the network call, reconciled
+once the real response lands — the multi-second frozen-click complaint is fixed without inventing a fake
+success state (the buttons stay disabled until the real decision resolves; if it fails, `finally` clears the
+state honestly).
+
+Verification:
+- **Phase AF.4.1 smoke PASS (18/18)** (`scripts/phaseaf4-1-live-operation-feed-smoke.mjs`) — new operator
+  lifecycle events map to the `'live-pulse'` block; `blocksForApprovalDecision`/`blocksForSessionStarted`
+  include it; `eventDedupeKey`/`mergeDedupedEvents` correctly collapse an exact duplicate, keep two genuinely
+  different events, preserve chronological order, and respect the cap; a structural source-inspection check
+  confirms `PresenceBar.tsx` no longer calls `Date.now()` directly and renders `<RelativeTime>`, and that
+  `RelativeTime.tsx` only computes its label inside `useEffect`, never in the render body.
+- Regression: AF.1 Focus Row **11/11**, AF.2 Domain Canvas **21/21**, AF.3 Domain Action Layer **29/29**, AF.4
+  Realtime Block Runtime **36/36** — all still green, unchanged (115/115 total across every phase smoke test).
+- `shared` `tsc` clean, `gateway-api` `tsc --noEmit` clean, `dashboard-web` `tsc --noEmit` clean (zero errors,
+  across all new/edited files in this phase).
+- Not covered by an automated script (documented, not silently skipped): the live-state endpoint's actual
+  Mongo query behavior needs a live database (this sandbox has no mongod) — verified by code review and the
+  gateway-api typecheck instead. `OperatorConsole`'s mount-time reload and optimistic approval buttons are
+  React-state-driven with no pure function to unit test — verified by code review; needs a manual UI pass
+  (see this phase's final report for the exact steps). True SSR/hydration reproduction needs a real Next.js
+  render pass in a browser or a running `next build`, unavailable in this sandbox — the structural source
+  check above is the closest verification available here.
+
+Honest remaining gaps: operator session/approval queries (`live-state`, `sessions/active`) are still global,
+not scoped per-user, matching the pre-existing behavior of every other operator endpoint — a correct future
+fix (the schema already carries `userId`) but out of scope for this bug-fix phase. `recentEvents`' `message`
+field falls back to the empty string when a backend event's payload has no `message` key (a few older event
+types predate the `message` convention) — rendered as the bare event type in that case, not fabricated text.
+`next build` still unverified in this sandbox, as in every prior AF phase entry.
+Scope: `shared/src/constants/index.ts`, `services/gateway-api/src/index.ts`,
+`services/dashboard-web/src/{app,components,lib}/**`, `scripts/`, `docs/`.
+
+## Phase AF.4.2 — Re-verification + Actor-Scoping Investigation — COMPLETE (2026-07-09)
+A follow-up request asked for a fresh, independent investigation of the AF.4.1 deliverables (not a re-trust of
+the prior report) plus explicit actor/scope-aware filtering on `GET /v1/operator/live-state` "where the
+existing system supports it." Re-ran every check from scratch: re-read the current `OperatorConsole.tsx`
+(confirmed the mount-time `getLiveStateAction()` hydration, the `announcedApprovalIdRef` dedup, the
+`decidingAction` optimistic-approval state, and the "Goal received — thinking…" immediate narration are all
+genuinely present and wired, not just claimed), re-typechecked all three packages clean, and reran the full
+115-check smoke suite (AF.1 11, AF.2 21, AF.3 29, AF.4 36, AF.4.1 18) fresh — all green, no regressions.
+
+**Actor-scoping investigation (the one substantive new question).** Traced every collection `live-state`
+reads: `OperatorRuntimeSession.userId` is a required schema field, but at creation
+(`services/gateway-api/src/index.ts`, session literal) it is set to `role` (the declared RBAC role string,
+e.g. `'owner'`) — not a real per-actor `primaryUserId`. `OperatorToolPermission` has no actor field at all
+(only reachable by joining through `runtimeSessionId`). `Task` has `createdBy` and an optional `ScopeFieldsSchema`
+merge, but `GET /v1/tasks` has never filtered by either. Checked every sibling endpoint this data model
+already has (`/v1/operator/sessions`, `/v1/operator/sessions/active`, `/v1/tasks`, `/v1/events`,
+`/v1/approvals`) — none of them apply actor/user filtering; this is a consistent, existing architectural
+choice: personal-reality data (`/v1/me/*`, via `enforceScoped`/`resolveAuth`/`primaryUserId`) is the one
+sub-system with real per-user scoping in this codebase, while operator/kernel-level state (sessions, tasks,
+approvals, events) is treated as the single shared kernel operational plane, visible to whoever the RBAC
+`guard()`/role check already permits to call the endpoint at all.
+
+**Decision:** did not add per-record actor filtering to `live-state`. Filtering `opSessions` by the exact
+`role` string would be technically real (the field exists) but risks a false negative for the person this
+whole phase is trying to help — the single human owner — the moment a session was ever created under a
+different declared role (e.g. an automated `'agent'`-role goal), silently hiding real, active operations from
+the Overview/Jarvis shell. That would directly regress this phase's core requirement ("the user can refresh
+Overview and still see active/recent operations"). The existing `guard(req)` RBAC gate remains the real,
+already-supported access boundary for this endpoint — consistent with every sibling endpoint — and is
+documented here as the answer to "scoped correctly... where the existing system supports it" rather than
+inventing a filtering scheme the data model doesn't cleanly support. See D-124.
+
+**`next build` attempted directly this time** (not just noted as unverified): fails with
+`Failed to load SWC binary for linux/arm64` — the sandbox's `node_modules` has no
+`@next/swc-linux-arm64-gnu`/`-musl` native binary installed (Next.js 16.2's Rust-based SWC compiler ships as a
+platform-specific optional dependency; this aarch64 Linux sandbox's `pnpm install` never pulled it, and
+`next build`'s WASM fallback also isn't installed). `tsc --noEmit` remains the verification ceiling available
+here across all three packages; a real `next build` needs to run in an environment with that native
+dependency present (e.g. the actual Dokploy deployment target).
+
+No files changed in this phase beyond documentation — investigation confirmed AF.4.1's implementation is
+correct as shipped and identified no code defect requiring a fix.
+Scope: `docs/phase-log.md`, `docs/decision-log.md` only.
+
+## Phase AF.4.3 — Live Activity Module Rebuild (One Item Per Operation) — COMPLETE (2026-07-09)
+Scoped fix, requested explicitly as "fix only the Live Activity module, do not redesign the app." Root cause:
+`LiveEvents.tsx` rendered the raw `events` collection one row per event with no grouping and no size bound —
+a single Jarvis goal produced 4-5 separate lines (session started, approval requested, tool failed, session
+completed, ...) that never updated in place, and the `.feed` container had no `max-height`/`overflow`, so the
+box grew with the page.
+
+**Grouping key.** New pure `lib/operationFeed.ts` (`buildOperationFeed`) groups everything by the real,
+already-existing stable identity each record carries: `runtimeSessionId` for a Jarvis operator session,
+`taskId` for a kernel task. A pending approval is folded into its own session's card (matched by the same
+`runtimeSessionId`) rather than rendered as a separate item — an approval isn't a distinct operation from the
+session it blocks. Only events with neither id (`reality.ingested`, `service.registered`, ...) become their
+own standalone card, which is correct since each is a genuine one-off occurrence, not a multi-step operation.
+Every subsequent event/approval/session update for the same key patches that one `Map` entry (title/status/
+latest message/history) — it is structurally impossible for the same operation to produce two rows.
+
+**What each card shows.** Title (goal or event message), kind badge (session/task/event), a normalized status
+label with color tone (planning/running/waiting approval/waiting on you/completed/failed/cancelled for
+sessions; completed/failed/pending/running for tasks), the latest real message, small meta (e.g. risk level),
+a relative timestamp (via the existing hydration-safe `<RelativeTime>`, not a new inline `Date.now()` — this
+pass deliberately did not reintroduce the AF.4.1 hydration bug in a new component), a real link (`/tasks/:id`
+for kernel tasks, "Open Jarvis" for sessions), and a collapsed-by-default "N more" expander revealing up to 6
+recent merged messages as detail history.
+
+**Container.** `LiveEvents` no longer uses the shared, globally-referenced `.feed` CSS class (12 other pages
+depend on it — editing it would have violated "do not touch unrelated parts"). Its operation-card list instead
+uses a scoped inline `maxHeight: 340, overflowY: 'auto'` wrapper, so the box has a fixed footprint and scrolls
+internally instead of stretching the page.
+
+**Data flow.** `LiveEvents` now reads `useUniverse().liveState` directly (sessions/approvals/tasks, already
+kept fresh by the existing 'live-pulse' block-invalidation model from AF.4/AF.4.1 — unchanged) instead of a
+static `initialEvents` prop, and merges its own SSE-arriving events into a small local buffer via the existing
+`mergeDedupedEvents` for instant per-event feedback ahead of the next live-state refetch. `HomeLive.tsx`'s
+outer wrapper card (which duplicated a "Live activity" heading around `LiveEvents`' own card) was removed in
+favor of rendering `<LiveEvents />` directly — the only other file touched, and only because it's this
+module's direct container.
+
+Verification:
+- **Phase AF.4.3 smoke PASS (16/16)** (`scripts/phaseaf4-3-live-activity-feed-smoke.mjs`) — a session plus its
+  own 3 lifecycle events plus its approval collapses to exactly one card; a task and an unrelated session stay
+  two distinct cards; duplicate/repeated events never create extra cards; an identity-less event becomes one
+  standalone card; a completed session shows its real composed result, not a stale status; newest-updated
+  operation sorts first; the cap is respected.
+- Regression: AF.1 11/11, AF.2 21/21, AF.3 29/29, AF.4 36/36, AF.4.1 18/18 — all still green (131/131 total).
+- `shared` `tsc` clean (unchanged), `gateway-api` `tsc --noEmit` clean (unchanged, no backend files touched
+  this phase), `dashboard-web` `tsc --noEmit` clean.
+
+Honest remaining gaps: `recentTasks`/`recentEvents` are still capped at the backend's existing live-state
+limits (5 tasks, 30 events) — a very busy day could still see an operation's supporting events age out of that
+window before the card is rebuilt from a fresh snapshot, in which case the card falls back to whatever the
+next real event/session update carries (never fake data, just a smaller history list). The collapsed detail
+history caps at 6 entries per card — older merged messages for a very long-running operation are dropped, not
+retained. `next build` still unverified in this sandbox per the standing SWC-binary limitation (D-124/AF.4.2).
+Scope: `services/dashboard-web/src/{lib/operationFeed.ts (new), components/LiveEvents.tsx,
+components/HomeLive.tsx, app/operator/actions.ts}`, `scripts/`, `docs/`.
+
+## Phase AF.4.4 — Live-State Cap Hardening — COMPLETE (2026-07-09)
+User-selected follow-up ("continue AF.4.x hardening") targeting the exact gaps AF.4.3 had just documented as
+honest remaining limitations: `recentTasks` capped at 5, `recentEvents` capped at 30, and — found during fresh
+investigation of `GET /v1/operator/live-state`, not previously flagged — `activeSessions` capped at 5, which
+is a real correctness bug rather than a cosmetic tight limit: a 6th concurrently active or waiting-approval
+session simply disappeared from both the Overview panel and the Live Activity feed with no indication anything
+was hidden.
+
+**Backend (`services/gateway-api/src/index.ts`, `/v1/operator/live-state`).** Raised Mongo query limits:
+`activeSessions` 5→20, `recentSessions` 5→10, `recentTasks` 5→10, `recentEvents` 30→50. `pendingApprovals`
+left at 10 (unchanged) — approvals are inherently a small, quickly-resolved "waiting on you" set on a
+single-operator system, so the existing limit was never actually binding. See D-127.
+
+**Frontend companion fix (`ActiveOperationsPanel.tsx`).** The Overview module's active-sessions list was the
+only list in that component with no render-time cap (`pendingApprovals`/`recentTasks` already used
+`.slice(0,3)`). Raising the backend limit to 20 without capping the render would have let a busy day balloon
+the homepage summary to 20 rows, defeating its purpose as a concise glance view. Added `.slice(0, 4)` plus an
+honest "+N more active — open Jarvis" link (real count, real destination) rather than silently truncating or
+inventing an "and more..." label. See D-128. The full, scrollable Live Activity feed (AF.4.3) is unaffected by
+this cap and continues to show every active operation as a real card.
+
+**Scope discipline.** This pass intentionally addressed only the numeric-cap class of gap explicitly named in
+the user's selected option (live-state's 5-task/30-event caps) plus the one additional correctness issue found
+during investigation of the same endpoint (`activeSessions`). No pure-logic contract in `operationFeed.ts` or
+`eventDedupe.ts` changed — only Mongo `.limit()` values and one React `.slice()` render cap — so the full
+existing regression suite was the correct and sufficient verification, not a reason to write new smoke checks.
+Per-actor scoping (raised as an option in the same user answer) was not revisited: AF.4.2/D-124 already
+concluded, after real investigation, that the underlying data model has no genuine per-actor field to scope
+by, and nothing in this pass changed that.
+
+Verification:
+- Both edited files typecheck clean: `gateway-api` `tsc --noEmit` exit 0, `dashboard-web` `tsc --noEmit` exit 0.
+- Full regression suite re-run after recompiling every phase's pure lib files: AF.1 11/11, AF.2 21/21, AF.3
+  29/29, AF.4 36/36, AF.4.1 18/18, AF.4.3 16/16 — **131/131 passing**, unchanged, confirming the cap/slice
+  edits altered no pure-logic behavior.
+- `next build` still unverified in this sandbox per the standing SWC-binary limitation (D-124/AF.4.2) — no
+  change in this phase.
+
+Honest remaining gaps: `recentEvents` (50) and `recentTasks` (10) are still finite windows, not unbounded
+history — an extremely high-volume day could still theoretically age out supporting detail for an old
+operation before its card patches from a fresh snapshot; this is a deliberately chosen tradeoff (bounded
+payload size on every `live-state` call) rather than an oversight. Per-actor scoping remains unimplemented by
+design (D-124), not by omission. No other "rough edges" were identified or addressed in this pass — this phase
+was intentionally scoped to the caps issue only.
+Scope: `services/gateway-api/src/index.ts`, `services/dashboard-web/src/components/ActiveOperationsPanel.tsx`,
+`docs/`.

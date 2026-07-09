@@ -420,9 +420,49 @@ export const EVENT_TYPES = {
   JARVIS_MEMORY_EXTRACTED: 'jarvis.memory.extracted',
   JARVIS_BRIEFING_GENERATED: 'jarvis.briefing.generated',
   JARVIS_SESSION_SUMMARIZED: 'jarvis.session.summarized',
+  // Phase AF.4 — Realtime Block Runtime: these three mutation points
+  // (personal-reality ingest, next-action decision, opportunity decision)
+  // previously published nothing at all, so no SSE consumer could ever know
+  // they happened. Minimal, honest additions — no event invented on the
+  // frontend, only real backend mutation points instrumented.
+  REALITY_INGESTED: 'reality.ingested',
+  NEXT_ACTION_DECIDED: 'next_action.decided',
+  OPPORTUNITY_DECIDED: 'opportunity.decided',
+  // Phase AF.4.1 — the approval decision endpoint updated `opPermissions`/
+  // `opSessions` directly but never published anything, so neither the live
+  // operation feed nor any SSE listener could ever observe "approved" or
+  // "rejected" as a distinct moment (only the eventual session completion).
+  OPERATOR_APPROVAL_DECIDED: 'operator.approval.decided',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
+
+/**
+ * Phase AF.4.1 — the authoritative "this matters in a lifecycle feed" event
+ * allowlist, shared by gateway-api's `GET /v1/operator/live-state` query and
+ * dashboard-web's `LiveEvents`/live-state consumers, so the backend filter
+ * and the frontend SSE subscription can never silently drift apart. Anything
+ * NOT in this list (per-step tool execution, voice telemetry, workspace
+ * iteration noise, etc.) is real and still recorded in `events`/`opSteps`,
+ * just not surfaced by default in the concise operation narrative — Mission
+ * Control / the task detail timeline remains the place for full detail.
+ */
+export const IMPORTANT_OPERATOR_EVENT_TYPES = [
+  EVENT_TYPES.TASK_CREATED,
+  EVENT_TYPES.TASK_COMPLETED,
+  EVENT_TYPES.TASK_FAILED,
+  EVENT_TYPES.APPROVAL_REQUESTED,
+  EVENT_TYPES.APPROVAL_DECIDED,
+  EVENT_TYPES.OPERATOR_SESSION_STARTED,
+  EVENT_TYPES.OPERATOR_APPROVAL_REQUESTED,
+  EVENT_TYPES.OPERATOR_APPROVAL_DECIDED,
+  EVENT_TYPES.OPERATOR_TOOL_FAILED,
+  EVENT_TYPES.OPERATOR_SESSION_COMPLETED,
+  EVENT_TYPES.REALITY_INGESTED,
+  EVENT_TYPES.NEXT_ACTION_DECIDED,
+  EVENT_TYPES.OPPORTUNITY_DECIDED,
+  EVENT_TYPES.JARVIS_TURN_ANSWERED,
+] as const;
 
 /**
  * S3 key prefixes. Every object lives under one of these. Pattern:

@@ -74,6 +74,24 @@ export async function createTaskAction(formData: FormData): Promise<void> {
   redirect('/tasks');
 }
 
+/**
+ * Phase AF.4 — same real RBAC-gated task creation as `createTaskAction`
+ * above, but WITHOUT the `redirect()`. `createTaskAction` always navigates
+ * to `/tasks/:id` — correct for the dedicated task-creation forms, but
+ * wrong for an inline Domain Canvas control: navigating a person away from
+ * the homepage the instant they create a task is the opposite of "update
+ * in place, no full page refresh." Same permission check, same gateway
+ * call, same revalidation — just returns instead of redirecting.
+ */
+export async function createTaskInlineAction(formData: FormData): Promise<{ taskId: string | null }> {
+  await requirePermission('createTask');
+  const goal = String(formData.get('goal') ?? '').trim();
+  if (!goal) return { taskId: null };
+  const created = await gateway.createTask(goal);
+  revalidatePath('/tasks');
+  return { taskId: created?.taskId ?? null };
+}
+
 export async function approveAction(formData: FormData): Promise<void> {
   await requirePermission('decideApproval');
   const id = String(formData.get('id'));

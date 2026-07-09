@@ -449,7 +449,12 @@ export function analyzeResume(input: { rawText: string; skills: string[]; career
 
 export type ZoneStatus = 'live' | 'setup_needed' | 'not_configured' | 'attention';
 
-export interface ZoneItem { label: string; detail: string; tone: 'ok' | 'warn' | 'err' | 'neutral'; href?: string }
+// Phase AF.3 — `itemId` is optional and only present when an item is a real,
+// individually decidable record (a next-best-action or an opportunity).
+// The overdue-item / approval-count synthetic rows and most other zones'
+// items intentionally have no itemId — they aren't a single actionable
+// record, so no decide control should ever render for them.
+export interface ZoneItem { label: string; detail: string; tone: 'ok' | 'warn' | 'err' | 'neutral'; href?: string; itemId?: string }
 
 export interface UniverseZone {
   zoneId: 'health' | 'daily' | 'life' | 'finance' | 'ventures' | 'growth' | 'opportunities' | 'systems' | 'presence';
@@ -537,7 +542,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
     status: proposed.length || input.latestBriefing ? 'live' : 'setup_needed',
     headline: proposed[0] ? `Top: ${proposed[0].title}` : 'No ranked priorities yet — build your baseline first.',
     items: [
-      ...proposed.slice(0, 3).map((a) => ({ label: a.title.slice(0, 60), detail: `${a.category} · score ${a.priorityScore}`, tone: (a.category === 'risk' ? 'warn' : 'ok') as ZoneItem['tone'], href: '/me' })),
+      ...proposed.slice(0, 3).map((a) => ({ label: a.title.slice(0, 60), detail: `${a.category} · score ${a.priorityScore}`, tone: (a.category === 'risk' ? 'warn' : 'ok') as ZoneItem['tone'], href: '/me', itemId: a.actionId })),
       ...(overdueLife.length ? [{ label: `${overdueLife.length} overdue personal item(s)`, detail: overdueLife[0]?.title ?? '', tone: 'err' as const }] : []),
       ...(g.pendingApprovals ? [{ label: `${g.pendingApprovals} approval(s) waiting`, detail: 'decisions unblock execution', tone: 'warn' as const, href: '/approvals' }] : []),
     ],
@@ -620,7 +625,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
     zoneId: 'opportunities', title: 'Opportunity Radar', href: '/me/opportunities',
     status: rankedOpps.length ? 'live' : 'setup_needed',
     headline: rankedOpps[0] ? `Top upside: “${rankedOpps[0].title}” (value ${rankedOpps[0].valueScore}).` : 'No upside recorded — research provider not_configured, nothing is invented.',
-    items: rankedOpps.slice(0, 4).map((o) => ({ label: o.title.slice(0, 55), detail: `${o.category} · value ${o.valueScore} · conf ${o.confidence}`, tone: 'ok', href: '/me/opportunities' })),
+    items: rankedOpps.slice(0, 4).map((o) => ({ label: o.title.slice(0, 55), detail: `${o.category} · value ${o.valueScore} · conf ${o.confidence}`, tone: 'ok', href: '/me/opportunities', itemId: o.opportunityId })),
     setupHint: 'Ingest opportunity candidates or accept AOS-proposed ones; real market research arrives with the research provider phase.',
     jarvisCommand: 'Find the best opportunities for me based on my goals and current assets.',
     metrics: [{ label: 'open', value: String(rankedOpps.length), tone: rankedOpps.length ? 'ok' : 'neutral' }, { label: 'top value', value: rankedOpps[0] ? String(rankedOpps[0].valueScore) : '—', tone: 'ok' }],

@@ -40,6 +40,15 @@ export interface RuntimeSessionView {
   evidenceCount: number;
   pendingPermission: { permissionId: string; prompt: string; riskLevel: string; ownerOnly: boolean } | null;
   workspace: WorkspaceTelemetry | null;
+  /** Phase AF.4 — populated once the backgrounded LLM composition for this
+   *  session finishes; empty until then. Preferred over `reportSummary` for
+   *  the spoken/shown completion narration when present. */
+  composedReply: string;
+  /** Phase AF.4.3 — needed to order/timestamp session cards in the Live
+   *  Activity operation feed; not previously mapped through even though the
+   *  backend record always has them. */
+  startedAt: string;
+  completedAt: string | null;
 }
 
 function toWorkspaceTelemetry(raw: unknown): WorkspaceTelemetry | null {
@@ -78,6 +87,9 @@ function toView(sessionRaw: Record<string, unknown> | null | undefined, permissi
     reportSummary: String(s.reportSummary ?? ''),
     evidenceCount: (s.evidenceIds ?? []).length,
     pendingPermission: pending ? { permissionId: String(pending.permissionId), prompt: String(pending.prompt), riskLevel: String(pending.riskLevel), ownerOnly: Boolean(pending.ownerOnly) } : null,
+    composedReply: String(s.composedReply ?? ''),
+    startedAt: String(s.startedAt ?? ''),
+    completedAt: s.completedAt ? String(s.completedAt) : null,
   };
 }
 
@@ -123,7 +135,10 @@ export async function operatorCommandAction(text: string): Promise<OperatorComma
     return {
       kind: 'session', reply, spoken: reply, groups: [], session: withPerm,
       scopeContext: (r.scopeContext as ScopeContextView | undefined) ?? null,
-      language: String(r.language ?? ''), suggestedFollowUps: (r.suggestedFollowUps as string[] | undefined) ?? [], intentCategory: '',
+      // Phase AF.3 — the gateway now sends a real intentCategory on session
+      // replies too (previously hardcoded '' here, the actual cause of
+      // domain links never appearing on tool-routed replies).
+      language: String(r.language ?? ''), suggestedFollowUps: (r.suggestedFollowUps as string[] | undefined) ?? [], intentCategory: String(r.intentCategory ?? ''),
     };
   }
   if (kind === 'clarify') return { kind: 'clarify', reply: String(r.reply ?? ''), spoken: String(r.reply ?? ''), groups: [], ...empty };
@@ -140,4 +155,57 @@ export async function decideRuntimePermissionAction(id: string, action: 'approve
   if (!r?.session) return null;
   const sid = String((r.session as Record<string, unknown>).runtimeSessionId ?? '');
   return getRuntimeSessionAction(sid);
+}
+
+/* ------------------------- Phase AF.4.1 — live state ------------------------- */
+
+export interface PendingApprovalView { permissionId: string; runtimeSessionId: string; prompt: string; riskLevel: string; ownerOnly: boolean; createdAt: string }
+export interface RecentTaskView { taskId: string; goal: string; status: string; createdAt: string; updatedAt: string }
+export interface LiveEventView { type: string; message: string; createdAt: string; runtimeSessionId: string | null; taskId: string | null; permissionId: string | null }
+export interface RecentJarvisTurnView { turnId: string; text: string; reply: string; createdAt: string }
+
+export interface LiveStateView {
+  activeSessions: RuntimeSessionView[];
+  recentSessions: RuntimeSessionView[];
+  pendingApprovals: PendingApprovalView[];
+  recentTasks: RecentTaskView[];
+  recentEvents: LiveEventView[];
+  recentJarvisTurns: RecentJarvisTurnView[];
+  activeOperationSummary: string | null;
+  generatedAt: string;
+}
+
+const EMPTY_LIVE_STATE: LiveStateView = { activeSessions: [], recentSessions: [], pendingApprovals: [], recentTasks: [], recentEvents: [], recentJarvisTurns: [], activeOperationSummary: null, generatedAt: '' };
+
+/**
+ * Phase AF.4.1 — the one real read behind both the homepage Active
+ * Operations panel and `OperatorConsole`'s on-mount reload. Real, persisted
+ * data only (see `GET /v1/operator/live-state`'s header comment in
+ * gateway-api) — no field here is fabricated for a "not yet happened" case;
+ * arrays are simply empty when there's genuinely nothing to show.
+ */
+export async function getLiveStateAction(): Promise<LiveStateView> {
+  const r = await gateway.operatorLiveState();
+  if (!r) return EMPTY_LIVE_STATE;
+  return {
+    activeSessions: r.activeSessions.map((s) => toView(s)).filter((s): s is RuntimeSessionView => s !== null),
+    recentSessions: r.recentSessions.map((s) => toView(s)).filter((s): s is RuntimeSessionView => s !== null),
+    pendingApprovals: r.pendingApprovals.map((p) => ({
+      permissionId: String(p.permissionId ?? ''), runtimeSessionId: String(p.runtimeSessionId ?? ''),
+      prompt: String(p.prompt ?? ''), riskLevel: String(p.riskLevel ?? ''), ownerOnly: Boolean(p.ownerOnly), createdAt: String(p.createdAt ?? ''),
+    })),
+    recentTasks: r.recentTasks.map((t) => ({ taskId: String(t.taskId ?? ''), goal: String(t.goal ?? ''), status: String(t.status ?? ''), createdAt: String(t.createdAt ?? ''), updatedAt: String(t.updatedAt ?? t.createdAt ?? '') })),
+    recentEvents: r.recentEvents.map((e) => {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      return {
+        type: String(e.type ?? ''), message: String(payload.message ?? ''), createdAt: String(e.createdAt ?? ''),
+        runtimeSessionId: payload.runtimeSessionId ? String(payload.runtimeSessionId) : null,
+        taskId: e.taskId ? String(e.taskId) : null,
+        permissionId: payload.permissionId ? String(payload.permissionId) : null,
+      };
+    }),
+    recentJarvisTurns: r.recentJarvisTurns.map((t) => ({ turnId: String(t.turnId ?? ''), text: String(t.text ?? ''), reply: String(t.reply ?? ''), createdAt: String(t.createdAt ?? '') })),
+    activeOperationSummary: r.activeOperationSummary,
+    generatedAt: r.generatedAt,
+  };
 }

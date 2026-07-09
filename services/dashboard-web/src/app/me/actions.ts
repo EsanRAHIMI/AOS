@@ -66,3 +66,44 @@ export async function ingestRealityFactAction(formData: FormData): Promise<void>
   revalidatePath('/me');
   revalidatePath('/me/reality');
 }
+
+/**
+ * Phase AF.3 — the Domain Canvas's "Add data" controls need per-kind
+ * structured fields (health level, finance amount/cadence, life
+ * domain/dueDate, etc.), not just title/description. Rather than a
+ * duplicate ingestion path, this reads only the documented optional field
+ * names `POST /v1/me/reality/ingest` already accepts per kind (see
+ * shared/src/personal/index.ts's ingest handler) and forwards through the
+ * same real `gateway.realityIngest()` used above. Unknown/blank fields are
+ * simply omitted — nothing invented, nothing silently coerced past what the
+ * backend already validates.
+ */
+const NUMERIC_FIELDS = new Set(['level', 'amount']);
+const OPTIONAL_FIELDS = ['description', 'metric', 'level', 'note', 'concern', 'domain', 'itemType', 'dueDate', 'importance', 'amount', 'currency', 'cadence', 'incomePotential', 'tags', 'targetSkill', 'severity', 'mitigation', 'streamType', 'monthlyEstimate', 'systemType', 'assetType'];
+
+export async function ingestDomainDataAction(formData: FormData): Promise<void> {
+  const kind = String(formData.get('kind') ?? '').trim();
+  const title = String(formData.get('title') ?? '').trim();
+  if (!kind || !title) return;
+  const data: Record<string, unknown> = { title };
+  for (const field of OPTIONAL_FIELDS) {
+    const raw = formData.get(field);
+    if (raw === null) continue;
+    const str = String(raw).trim();
+    if (!str) continue;
+    if (field === 'concern') { data[field] = str === 'true' || str === 'on'; continue; }
+    if (NUMERIC_FIELDS.has(field)) { const n = Number(str); if (!Number.isNaN(n)) data[field] = n; continue; }
+    if (field === 'tags') { data[field] = str.split(',').map((t) => t.trim()).filter(Boolean); continue; }
+    data[field] = str;
+  }
+  await gateway.realityIngest({ kind, source: 'domain_canvas_add_data', confidence: 1, data });
+  revalidatePath('/');
+  revalidatePath('/me');
+  revalidatePath('/me/reality');
+}
+
+export async function decideOpportunityAction(id: string, decision: 'accept' | 'reject' | 'follow_up'): Promise<void> {
+  await gateway.decideOpportunity(id, decision);
+  revalidatePath('/');
+  revalidatePath('/me/opportunities');
+}

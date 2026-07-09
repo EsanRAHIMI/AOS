@@ -2,6 +2,9 @@
 import Link from 'next/link';
 import type { ZoneData } from '../UniverseZone';
 import { extractNumberAfter, firstSegment } from '@/lib/zoneParsing';
+import { OpportunityDecisionButtons } from '@/app/me/controls';
+import { useOptionalRefresh } from '@/components/UniverseProvider';
+import { blocksForOpportunityDecision } from '@/lib/realtimeBlocks';
 
 /**
  * Phase AF.2 — Opportunity Radar domain visual.
@@ -10,8 +13,13 @@ import { extractNumberAfter, firstSegment } from '@/lib/zoneParsing';
  * X/Y are the real `valueScore`/`confidence` computed by `rankOpportunities()`
  * in shared/src/personal — this renders those already-computed scores as
  * ranked dual bars instead of a bullet list, no re-scoring client-side.
+ *
+ * Phase AF.3 — each item now carries its real `itemId` (opportunityId,
+ * previously dropped), so Save/Follow up/Reject (`OpportunityDecisionButtons`,
+ * wired to the new opportunity decision endpoint) can render per row.
  */
 export function OpportunityRadar({ zone }: { zone: ZoneData }) {
+  const refresh = useOptionalRefresh();
   if (zone.items.length === 0) {
     return <div className="m" style={{ fontSize: 11, padding: '2px 0' }}>No upside recorded yet.</div>;
   }
@@ -37,7 +45,12 @@ export function OpportunityRadar({ zone }: { zone: ZoneData }) {
             {confidence !== null && <span className="m" style={{ fontSize: 10 }}>confidence {confidence}</span>}
           </div>
         );
-        return it.href ? <Link key={i} href={it.href} style={{ textDecoration: 'none', color: 'inherit' }}>{row}</Link> : <div key={i}>{row}</div>;
+        return (
+          <div key={i}>
+            {it.href ? <Link href={it.href} style={{ textDecoration: 'none', color: 'inherit' }}>{row}</Link> : row}
+            {it.itemId && <div style={{ marginTop: 4 }}><OpportunityDecisionButtons opportunityId={it.itemId} onDecided={() => refresh(blocksForOpportunityDecision())} /></div>}
+          </div>
+        );
       })}
     </div>
   );
