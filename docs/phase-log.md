@@ -2994,3 +2994,25 @@ download. First live Actions run occurs on next push to GitHub (not possible fro
 environment; commands proven identical locally).
 
 Scope: `.github/workflows/ci.yml` (new), `docs/{testing-and-ci.md, phase-log.md}`.
+
+## Phase K1.4a — Scope-By-Construction Data Layer — COMPLETE (2026-07-10)
+
+**Goal (master-direction §C.5/§J.3, first half):** `scopedCollection(ctx)` exists, exported,
+and its isolation guarantees are pinned by tests. ADDITIVE only — no route behavior changes.
+
+**What was built:** `shared/src/db/scoped.ts` — reads `$and`-guarded (caller filters narrow,
+never widen), inserts actor-stamped with conflicting scope fields rejected, scope identity
+immutable via update (incl. dotted paths), fail-closed construction, injectable-collection
+test seam. Exported through `shared/src/db/index.ts`.
+
+**Verification:** 14 new contract tests (hostile-filter read, smuggled-write rejection,
+scope-migration rejection, guarded deleteMany, project/case binding, fail-closed
+construction) — full suite now **107/107 green**; `tsc` build clean on shared.
+Docs: multi-tenant-governance.md (enforcement section), decision-log D-156.
+
+**Remaining for K1.4 (deferred to the gateway split):** migrate kernel routes onto the
+wrapper; lint rule confining raw `collection()` to global kernel collections; automated
+cross-tenant probes against a live kernel.
+
+Scope: `shared/{src/db/scoped.ts(new), src/db/index.ts, test/scoped-collection.contract.test.ts(new)}`,
+`docs/{multi-tenant-governance.md, decision-log.md, phase-log.md}`.

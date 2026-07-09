@@ -2,6 +2,19 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.4a Scope-By-Construction Data Layer
+
+### D-156 `scopedCollection(ctx)` — isolation moves from convention to construction
+Phase AA's scope model was enforced by convention (routes remembering to call the helpers).
+K1.4a adds the structural half (master-direction §C.5): a wrapper over `collection()` where the
+scope guard is merged under `$and` on every read/update/delete (caller filters can only narrow,
+never widen), inserts are stamped from the ACTOR's identity with conflicting scope fields
+rejected, and scope identity fields are immutable via update. Fail closed on missing identifiers.
+Deliberately ADDITIVE in this commit: no existing route changes behavior; kernel routes migrate
+onto it during the K1 gateway split, together with a lint rule confining raw `collection()` to
+global kernel collections. Test seam: an injectable collection, so isolation guarantees are
+tested without a database (14 contract tests).
+
 ## 2026-07-10 — Phase K1.1 Test Substrate (master-direction.md era begins)
 
 ### D-155 Event `source` re-asserted required — first bug caught by contract tests

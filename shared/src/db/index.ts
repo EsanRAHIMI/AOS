@@ -64,3 +64,6 @@ export function setTestDb(testDb: Db): void {
 
 export { COLLECTIONS };
 export type { Db, Collection };
+
+// K1.4a — scope-by-construction data access (master-direction §C.5).
+export { scopedCollection, type ScopedContext, type ScopedCollection } from './scoped.js';
