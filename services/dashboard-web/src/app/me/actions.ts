@@ -6,6 +6,7 @@ import { gateway } from '@/lib/gateway';
 export async function decideActionAction(id: string, decision: 'accept' | 'reject' | 'complete'): Promise<void> {
   await gateway.decideNextAction(id, decision);
   revalidatePath('/me');
+  revalidatePath('/daily'); // Phase AF.5 — the dedicated Today & Priorities room shows the same records.
 }
 
 export async function runReviewAction(type: 'daily' | 'weekly'): Promise<void> {
@@ -100,10 +101,20 @@ export async function ingestDomainDataAction(formData: FormData): Promise<void> 
   revalidatePath('/');
   revalidatePath('/me');
   revalidatePath('/me/reality');
+  // Phase AF.5 — a domain action can now be submitted from inside a
+  // dedicated room, not just the homepage card, so every room that could
+  // plausibly show this kind's records needs revalidating too. Cheap and
+  // correct beats guessing which single room the ingest kind maps to.
+  revalidatePath('/health');
+  revalidatePath('/life');
+  revalidatePath('/finance');
+  revalidatePath('/ventures');
+  revalidatePath('/growth');
 }
 
 export async function decideOpportunityAction(id: string, decision: 'accept' | 'reject' | 'follow_up'): Promise<void> {
   await gateway.decideOpportunity(id, decision);
   revalidatePath('/');
   revalidatePath('/me/opportunities');
+  revalidatePath('/opportunities'); // Phase AF.5 — the dedicated Opportunity Radar room.
 }

@@ -107,6 +107,7 @@ import {
   type PersonalBriefingRun,
   type StrategyReviewRun,
   buildUniverseZones,
+  aggregateFinance,
   type PersonalHealthState,
   type PersonalLifeItem,
   type PersonalFinanceItem,
@@ -157,6 +158,7 @@ import {
   type EvidenceRecord,
   llmStatusFromEnv,
   gitHubDeliveryFromEnv,
+  webSearchStatusFromEnv,
   type ServiceActivation,
   type DeploymentChecklist,
   type MonitorRun,
@@ -780,11 +782,14 @@ async function main(): Promise<void> {
         if (!guard(req)) return deny(reply);
         return success(await repairTasks.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray());
       });
-      // Integration status: GitHub real/prepared, LLM real/fallback.
+      // Integration status: GitHub real/prepared, LLM real/fallback, web
+      // search real/not_configured (Phase AG — this endpoint was previously
+      // silent on research entirely; internet-research-service's search
+      // status now reports honestly here too).
       app.get('/v1/system/integrations', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const gh = gitHubDeliveryFromEnv();
-        return success({ github: { configured: gh.configured, mode: gh.configured ? 'github_api' : 'prepared' }, llm: llmStatusFromEnv() });
+        return success({ github: { configured: gh.configured, mode: gh.configured ? 'github_api' : 'prepared' }, llm: llmStatusFromEnv(), research: webSearchStatusFromEnv() });
       });
       app.get('/v1/llm/status', async (req, reply) => {
         if (!guard(req)) return deny(reply);
@@ -2317,6 +2322,69 @@ async function main(): Promise<void> {
         const memoryInsights = memRecent.map((m) => m.content);
 
         return { zones, actor: { displayName: graph.profile?.displayName || 'Esan' }, generatedAt: nowIso(), suggestedPrompts, todaySummary, systemHealthSummary, memoryInsights };
+      });
+
+      // Phase AF.5 — dedicated per-domain routes. `/v1/me/universe` above
+      // deliberately returns only sliced zone summaries (top 3-6 items) for
+      // the homepage grid. The nine dedicated domain rooms (`/health`,
+      // `/daily`, `/life`, `/finance`, `/ventures`, `/growth`,
+      // `/opportunities`, `/systems`, `/presence`) need the FULL underlying
+      // records so clicking "Open" on a zone leads somewhere real and
+      // comprehensive instead of repeating the same 3-item summary. This
+      // endpoint reuses the exact same scoped queries as `/v1/me/universe`
+      // (same collections, same userId filter, same `buildUniverseZones()`
+      // for the shared status/headline/metrics header) and additionally
+      // returns the complete, unsliced per-domain arrays. One endpoint for
+      // all nine domains — not nine separate ones — so every dedicated room
+      // is guaranteed to read from the same real, consistent snapshot.
+      realityGet('/v1/me/universe/detail', async (actor) => {
+        const uid = actor.primaryUserId ?? '';
+        const uFilter = { scope: 'user' as const, userId: uid };
+        const [graph, health, life, finance, learning, nbas, allNbas, briefing, connectors, svcCount, incRaw, op, activeSession, recentEvents, safe] = await Promise.all([
+          loadGraphInput(actor),
+          personalHealthStates.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray(),
+          personalLifeItems.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray(),
+          personalFinanceItems.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(300).toArray(),
+          personalLearningTracks.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
+          nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
+          nextBestActions.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
+          personalBriefingRuns.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),
+          connectorAccounts.find({ userId: uid }, { projection: { _id: 0 } }).limit(50).toArray(),
+          (async () => { try { const r = await fetch(`${env.SERVICE_REGISTRY_URL}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, signal: AbortSignal.timeout(3000) }); const b = (await r.json()) as { data?: unknown[] }; return Array.isArray(b.data) ? b.data.length : 0; } catch { return 0; } })(),
+          incidents.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
+          operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(1).toArray(),
+          opSessions.find({ status: { $in: ['planning', 'running', 'waiting_approval', 'verifying'] } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(1).toArray(),
+          events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray(),
+          isSafeMode(),
+        ]);
+        const activeOp = op[0] && !['completed', 'failed', 'rolled_back', 'cancelled'].includes(op[0].status) ? op[0] : null;
+        const openIncidentsList = incRaw.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
+        const kernel = {
+          services: svcCount,
+          openIncidents: openIncidentsList.length,
+          pendingApprovals: graph.pendingApprovals, safeMode: safe,
+          activeOperation: activeOp ? `${activeOp.goal} (${activeOp.status})` : null,
+          activeRuntimeGoal: activeSession[0]?.goal ?? null,
+          recentEvents: recentEvents.map((e) => (e.payload as { message?: string })?.message ?? e.type),
+        };
+        const zones = buildUniverseZones({
+          graph, healthStates: health, lifeItems: life, financeItems: finance,
+          learningTracks: learning.map((t) => ({ title: t.title, targetSkill: t.targetSkill, status: t.status })),
+          nextActions: nbas, latestBriefing: briefing[0] ?? null, kernel,
+          connectors: connectors.map((c) => ({ connectorType: c.connectorType, status: c.status })),
+        });
+        return {
+          zones, generatedAt: nowIso(),
+          health: { states: health },
+          life: { items: life },
+          finance: { items: finance, aggregate: aggregateFinance(finance) },
+          daily: { proposedActions: nbas, allActions: allNbas, latestBriefing: briefing[0] ?? null, pendingApprovals: graph.pendingApprovals },
+          ventures: { projects: graph.projects },
+          growth: { learningTracks: learning, goals: graph.goals },
+          opportunities: { ranked: rankOpportunities(graph.opportunities.filter((o) => ['proposed', 'accepted', 'in_progress'].includes(o.status))) },
+          systems: { kernel, openIncidents: openIncidentsList, recentEventsRaw: recentEvents.map((e) => ({ type: e.type, message: (e.payload as { message?: string })?.message ?? e.type, createdAt: e.createdAt })) },
+          presence: { connectors: connectors.map((c) => ({ connectorType: c.connectorType, status: c.status, createdAt: c.createdAt })) },
+        };
       });
 
       // Phase AE item 7 — the daily command briefing: ranked priorities across

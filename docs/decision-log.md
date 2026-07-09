@@ -2,6 +2,81 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-09 — Phase AG Real Research & Intelligence Fabric
+
+### D-132 Tavily as the first real web-search provider, behind a swappable `WebSearchProvider` interface
+Chosen over Serper/Bing because it's purpose-built for LLM/RAG grounding (returns concise content
+snippets ready to feed a prompt, not raw HTML to parse) and has a single-endpoint REST API with no
+OAuth flow — matching the existing "direct `fetch()`, no SDK" style already used for
+Anthropic/OpenAI/GitHub/Dokploy clients in this codebase (`shared/src/llm`, `shared/src/github`,
+`shared/src/dokploy`). The `WebSearchProvider` interface is provider-agnostic by design — a second
+provider can be added later without touching `runResearch()`. `webSearchProviderFromEnv()` returns
+`null` (not a Mock provider) when `TAVILY_API_KEY` is unset — there is no honest deterministic
+stand-in for "the internet said X", unlike the LLM router's `MockProvider`, which validly returns
+an empty completion for its caller to handle via the existing fallback path.
+
+### D-133 `sourceMode` tracked separately from `mode` — a real LLM does not mean a real URL
+`ResearchRun`/`ResearchReport`/`ResearchSource.mode` already tracked whether the LLM call was real
+or fallback. That said nothing about whether the *source URLs* were ever verified to exist — before
+this phase, even "real" mode meant an LLM recalling plausible-looking URLs from training data, the
+exact "no fake success" violation flagged in `TECHNICAL-REPORT.md` §9 and `docs/roadmap.md`'s
+carried-forward research-fabric item. New `sourceMode: 'search_api' | 'llm_only' |
+'curated_fallback'` is orthogonal: a run can be `mode: 'real'` (genuine LLM reasoning) with
+`sourceMode: 'llm_only'` (URLs unverified) at the same time — both facts are true and both are now
+surfaced, including as separate badges in the `/research` dashboard pages, rather than collapsed
+into one "real" label that overstated what was actually verified.
+
+### D-134 When grounded, source URLs are always rebuilt from the real search results, never from the LLM's echo
+`runResearch()` asks the LLM to "echo back" the given search result URLs in its structured output
+(so the schema-required `sources` field is still populated), but the final `ResearchSource` records
+are constructed directly from the original `WebSearchResult[]` the provider returned — the LLM's own
+`sources` field is discarded entirely when grounded. An LLM can typo, truncate, or subtly alter a
+URL even under an explicit instruction to reproduce it exactly; rebuilding from the original data
+makes that class of error structurally impossible rather than trusting the model to be faithful.
+Verified directly in `scripts/phaseag-research-fabric-smoke.mjs` with a fake router that
+deliberately echoes a different, wrong URL.
+
+### D-135 A configured search provider with no LLM still returns real results, never degrades to canned fallback text
+The pre-existing `fallbackResearch()` (curated, hand-written OWASP/NIST text) is now used only when
+*neither* search *nor* a real LLM is available. When search succeeds but the LLM is unavailable or
+fallback-forced, a new `fallbackFromSearchResults()` builds findings directly from the real
+retrieved snippets instead — configuring search should never make output *worse* than the
+LLM-recall path it's meant to improve on.
+
+## 2026-07-09 — Phase AF.5 Dedicated Per-Domain Routes
+
+### D-129 One `/v1/me/universe/detail` endpoint for all nine domains, not nine separate endpoints
+Each dedicated room needs the FULL unsliced records for its domain, not the 3-6 item homepage
+summary `/v1/me/universe` returns. Rather than add nine narrow endpoints (one per domain, each
+duplicating the same scoped-query pattern), one endpoint reuses the exact same collections, same
+`userId` filter, and the same `buildUniverseZones()` call as `/v1/me/universe`, and additionally
+returns the complete per-domain arrays. This guarantees every room reads from one consistent
+snapshot and keeps the "comparable" requirement structural rather than aspirational — a ninth
+endpoint could quietly drift in shape from the other eight; one shared endpoint cannot.
+
+### D-130 A dedicated room is a front door, not a replacement for an existing deep page
+`/me/reality`, `/me/projects`, `/me/opportunities`, `/me/resume`, `/operations`, and
+`/settings/connectors` already did real, deep, CRUD-style management for some domains before this
+phase. Rebuilding all of that inside nine new rooms would have duplicated working UI for no
+reason. Instead every room (`DomainRoom` component) follows the identical structure — header,
+metrics, visual, actions, "go deeper," full record list — and the "go deeper" section links onward
+to whichever pre-existing page already manages that domain in more depth
+(`services/dashboard-web/src/lib/domainRoomLinks.ts` is the single manifest for this mapping).
+Domains with no pre-existing deep page (life, finance,
+most of daily, and learning tracks specifically) rely on the room's own full record list being the
+complete picture — nothing was invented to fill the gap.
+
+### D-131 Zone hrefs changed for all nine domains, including two that already worked
+`systems` (`/operations`) and `presence` (`/settings/connectors`) already pointed at real,
+dedicated, comprehensive pages before this phase — only health/life (colliding on `/me/reality`),
+finance (mismatched to `/me/opportunities`), daily/ventures/growth/opportunities (generic or
+partially-dedicated) were the documented complaints
+(`docs/living-command-universe-vision.md` §A.4). Systems and presence were changed anyway, to
+`/systems` and `/presence`, so that "click Open on any zone" behaves identically across all nine —
+a comparable front door for every domain — rather than seven zones landing on a new room and two
+zones landing directly on an old page with a different visual language. Both new rooms deep-link
+straight back to the original pages, so no existing functionality was removed or hidden.
+
 ## 2026-07-09 — Phase AF.4.4 Live-State Cap Hardening
 
 ### D-127 `activeSessions` limit raised 5→20 as a correctness fix, not a cosmetic tweak

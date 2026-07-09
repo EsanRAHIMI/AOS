@@ -70,6 +70,16 @@ export const LlmEnvSchema = z.object({
 });
 
 /**
+ * Phase AG — real web search grounding for internet-research-service.
+ * Optional: `webSearchProviderFromEnv()` (shared/src/research) returns null
+ * when unset, and the research engine falls back to its pre-existing
+ * LLM-recall/curated behavior, honestly marked as such.
+ */
+export const ResearchEnvSchema = z.object({
+  TAVILY_API_KEY: z.string().optional().default(''),
+});
+
+/**
  * Parse process.env against a schema, exiting with a readable error if invalid.
  */
 export function loadEnv<T extends z.ZodTypeAny>(schema: T, source: NodeJS.ProcessEnv = process.env): z.infer<T> {

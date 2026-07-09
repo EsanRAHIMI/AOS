@@ -522,7 +522,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   const hm = latestHealthByMetric(input.healthStates);
   const concerns = input.healthStates.filter((h) => h.concern);
   zones.push({
-    zoneId: 'health', title: 'Body & Health', href: '/me/reality',
+    zoneId: 'health', title: 'Body & Health', href: '/health',
     status: hm.size === 0 ? 'setup_needed' : concerns.length ? 'attention' : 'live',
     headline: hm.size === 0 ? 'No health data yet — the body map activates with your first report.' : `${hm.size} metric(s) tracked${concerns.length ? `, ${concerns.length} concern(s) flagged` : ''}.`,
     items: [...hm.values()].slice(0, 6).map((h) => ({ label: h.metric, detail: h.level !== null ? `${h.level}/10${h.note ? ` — ${h.note.slice(0, 40)}` : ''}` : h.value || h.note.slice(0, 40), tone: h.concern ? 'warn' : 'ok' })),
@@ -538,7 +538,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   const proposed = input.nextActions.filter((a) => a.status === 'proposed');
   const overdueLife = input.lifeItems.filter((l) => l.dueDate && l.dueDate < nowIso().slice(0, 10) && l.status === 'active');
   zones.push({
-    zoneId: 'daily', title: 'Today & Priorities', href: '/me',
+    zoneId: 'daily', title: 'Today & Priorities', href: '/daily',
     status: proposed.length || input.latestBriefing ? 'live' : 'setup_needed',
     headline: proposed[0] ? `Top: ${proposed[0].title}` : 'No ranked priorities yet — build your baseline first.',
     items: [
@@ -559,7 +559,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   const byDomain = new Map<string, number>();
   for (const l of lifeActive) byDomain.set(l.domain, (byDomain.get(l.domain) ?? 0) + 1);
   zones.push({
-    zoneId: 'life', title: 'Family & Home', href: '/me/reality',
+    zoneId: 'life', title: 'Family & Home', href: '/life',
     status: lifeActive.length ? (lifeActive.some((l) => l.importance === 'high') ? 'attention' : 'live') : 'setup_needed',
     headline: lifeActive.length ? `${lifeActive.length} active item(s) across ${byDomain.size} domain(s).` : 'Your personal world is not mapped yet.',
     items: lifeActive.slice(0, 5).map((l) => ({ label: l.title.slice(0, 60), detail: `${l.domain} · ${l.itemType}${l.dueDate ? ` · due ${l.dueDate}` : ''}`, tone: l.importance === 'high' ? 'warn' : 'neutral' })),
@@ -572,7 +572,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   const fin = aggregateFinance(input.financeItems);
   const finRisks = g.risks.filter((r) => r.tags.includes('financial') || /income|money|financ/i.test(r.title));
   zones.push({
-    zoneId: 'finance', title: 'Money & Commitments', href: '/me/opportunities',
+    zoneId: 'finance', title: 'Money & Commitments', href: '/finance',
     status: input.financeItems.length === 0 ? 'setup_needed' : fin.net < 0 ? 'attention' : 'live',
     headline: input.financeItems.length === 0
       ? 'No financial structure recorded — amounts are never invented.'
@@ -598,7 +598,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   // 5 — Businesses / projects / ventures
   const activeProjects = g.projects.filter((p) => p.status === 'active');
   zones.push({
-    zoneId: 'ventures', title: 'Ventures & Projects', href: '/me/projects',
+    zoneId: 'ventures', title: 'Ventures & Projects', href: '/ventures',
     status: activeProjects.length ? 'live' : 'setup_needed',
     headline: activeProjects.length ? `${activeProjects.length} active project(s); ${activeProjects.filter((p) => p.incomePotential === 'high').length} with high income potential.` : 'No ventures recorded yet.',
     items: activeProjects.slice(0, 5).map((p) => ({ label: p.title.slice(0, 55), detail: `income: ${p.incomePotential} · ${p.linkedGoalIds.length} goal link(s)`, tone: p.incomePotential === 'high' ? 'ok' : 'neutral', href: '/me/projects' })),
@@ -610,7 +610,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   // 6 — Learning / growth / career
   const activeTracks = input.learningTracks.filter((t) => t.status === 'active');
   zones.push({
-    zoneId: 'growth', title: 'Learning & Growth', href: '/me/resume',
+    zoneId: 'growth', title: 'Learning & Growth', href: '/growth',
     status: activeTracks.length || g.goals.length ? 'live' : 'setup_needed',
     headline: activeTracks.length ? `${activeTracks.length} learning track(s) active.` : g.goals.length ? 'Goals exist but no learning tracks — what should you learn next?' : 'No growth direction recorded yet.',
     items: activeTracks.slice(0, 4).map((t) => ({ label: t.title.slice(0, 55), detail: t.targetSkill ? `→ ${t.targetSkill}` : '', tone: 'ok' })),
@@ -622,7 +622,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   // 7 — Investments / opportunities / strategic upside
   const rankedOpps = rankOpportunities(g.opportunities.filter((o) => ['proposed', 'accepted', 'in_progress'].includes(o.status)));
   zones.push({
-    zoneId: 'opportunities', title: 'Opportunity Radar', href: '/me/opportunities',
+    zoneId: 'opportunities', title: 'Opportunity Radar', href: '/opportunities',
     status: rankedOpps.length ? 'live' : 'setup_needed',
     headline: rankedOpps[0] ? `Top upside: “${rankedOpps[0].title}” (value ${rankedOpps[0].valueScore}).` : 'No upside recorded — research provider not_configured, nothing is invented.',
     items: rankedOpps.slice(0, 4).map((o) => ({ label: o.title.slice(0, 55), detail: `${o.category} · value ${o.valueScore} · conf ${o.confidence}`, tone: 'ok', href: '/me/opportunities', itemId: o.opportunityId })),
@@ -634,7 +634,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   // 8 — Systems / infrastructure / AI kernel
   const k = input.kernel;
   zones.push({
-    zoneId: 'systems', title: 'AI Kernel & Systems', href: '/operations',
+    zoneId: 'systems', title: 'AI Kernel & Systems', href: '/systems',
     status: k.openIncidents > 0 ? 'attention' : 'live',
     headline: `${k.services} service(s) registered · ${k.openIncidents} open incident(s) · safe mode ${k.safeMode ? 'ON' : 'off'}${k.activeRuntimeGoal ? ` · operator: “${k.activeRuntimeGoal.slice(0, 50)}”` : ''}.`,
     items: [
@@ -653,7 +653,7 @@ export function buildUniverseZones(input: UniverseInput): UniverseZone[] {
   // 9 — Social / presence
   const social = input.connectors.filter((c) => ['social', 'twitter', 'x', 'linkedin', 'youtube', 'instagram', 'github'].includes(c.connectorType));
   zones.push({
-    zoneId: 'presence', title: 'Presence & Channels', href: '/settings/connectors',
+    zoneId: 'presence', title: 'Presence & Channels', href: '/presence',
     status: social.length ? 'live' : 'not_configured',
     headline: social.length ? `${social.length} channel account(s) registered.` : 'No channels connected — presence intelligence activates with consented, read-only connectors.',
     items: social.slice(0, 4).map((c) => ({ label: c.connectorType, detail: c.status, tone: c.status === 'connected' ? 'ok' : 'neutral', href: '/settings/connectors' })),

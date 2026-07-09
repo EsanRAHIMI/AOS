@@ -2099,3 +2099,142 @@ design (D-124), not by omission. No other "rough edges" were identified or addre
 was intentionally scoped to the caps issue only.
 Scope: `services/gateway-api/src/index.ts`, `services/dashboard-web/src/components/ActiveOperationsPanel.tsx`,
 `docs/`.
+
+## Phase AF.5 — Dedicated Per-Domain Routes ("Command Universe follow-through") — COMPLETE (2026-07-09)
+Closes the gap the documentation audit's recommended-next-phase named explicitly: every Command
+Universe zone's "Open" link led to a generic or outright mismatched page —
+`health` and `life` both pointed at `/me/reality` (a collision), `finance` pointed at
+`/me/opportunities` (wrong domain entirely), and `daily`/`ventures`/`growth`/`opportunities`
+pointed at pages that existed but weren't built as a comparable front door for the zone
+specifically. `systems` and `presence` already had real dedicated pages (`/operations`,
+`/settings/connectors`) but with a different visual language than a Command Universe room. User's
+explicit requirement for the fix: "Strong, complete, comparable, and comprehensive."
+
+**Backend.** New `GET /v1/me/universe/detail` (`services/gateway-api/src/index.ts`) reuses the
+exact same scoped queries as `/v1/me/universe` — same collections, same `userId` filter, same
+`buildUniverseZones()` call for the shared header/metrics — and additionally returns the complete,
+unsliced per-domain arrays (all health states, all life items, all finance items + the real
+`aggregateFinance()` result, all proposed and historical next-actions, all projects, all learning
+tracks + goals, all ranked opportunities, open incidents + recent events, all connector accounts).
+One endpoint for nine domains, not nine endpoints, so every room is guaranteed to read a consistent
+snapshot (D-129). `aggregateFinance` is now exported and imported directly in gateway-api rather
+than only used internally inside `buildUniverseZones()`.
+
+**Frontend — one comparable template, nine rooms.** New `DomainRoom` component
+(`services/dashboard-web/src/components/domains/DomainRoom.tsx`) is the single structure every
+room uses: header (title/subtitle/breadcrumb/"Ask Jarvis"), the zone's real metrics row, the same
+domain visual already used on the homepage (visual continuity — `BodyMap`, `FinanceFlow`,
+`PriorityStack`, `HouseholdMap`, `VentureBoard`, `SkillLanes`, `OpportunityRadar`, `SystemPulse`,
+`PresenceBadges`) plus the zone's real domain actions, a "go deeper" section linking to whichever
+pre-existing richer page already manages that domain (D-130), and the complete, unsliced record
+list for that domain (not the homepage's 3-6 item summary). Nine new routes:
+`/health`, `/daily`, `/life`, `/finance`, `/ventures`, `/growth`, `/opportunities`, `/systems`,
+`/presence` — none collided with any of the ~69 existing route directories. New
+`services/dashboard-web/src/lib/domainRoomLinks.ts` is the single manifest mapping each zone to its
+real deeper links (empty array where no deeper page exists yet — never a fabricated link). New
+`JarvisOpenButton.tsx` isolates the one client-side control the otherwise-server-rendered
+`DomainRoom` needs.
+
+**Wiring.** All nine zone `href` values in `shared/src/personal/index.ts`'s `buildUniverseZones()`
+were changed to their new dedicated room (D-131 explains why `systems`/`presence` changed too, even
+though their old targets already worked). `services/dashboard-web/src/app/me/actions.ts`'s
+`revalidatePath()` calls were extended so actions taken from inside a dedicated room (domain
+actions, opportunity decisions, next-action decisions) invalidate the correct room(s) on next load.
+
+Verification:
+- **Phase AF.5 smoke PASS (29/29)** (`scripts/phaseaf5-domain-rooms-smoke.mjs`) — calls the real,
+  compiled `buildUniverseZones()` (not a hand-written claim) and asserts: all 9 zones present, each
+  zone's href is its own dedicated room, all 9 hrefs are unique (the original health/life collision
+  is now structurally impossible), and no zone still points at any pre-AF.5 generic page.
+- Regression: AF.1 11/11, AF.2 21/21, AF.3 29/29, AF.4 36/36, AF.4.1 18/18, AF.4.3 16/16 — all still
+  green (131/131), unaffected since no pure-logic module from an earlier phase changed. **160/160
+  cumulative total.**
+- `shared` `tsc -p tsconfig.json` clean, `gateway-api` `tsc --noEmit` clean, `dashboard-web`
+  `tsc --noEmit` clean (one real type error found and fixed during this pass: `DomainRoom`'s
+  metric-tone mapping needed explicit narrowing from `string` to the `MetricCard` tone union).
+- `next build` still unverified in this sandbox per the standing SWC-binary limitation (D-124).
+
+Honest remaining gaps: the "go deeper" links are informational, not yet contextual — they always
+point to the same page for a domain regardless of which specific record you're looking at (e.g.
+the finance room's "Go deeper" section has no page to link to at all, since no dedicated finance
+management page exists yet — the room's own full list is the only view). The nine rooms have not
+been visually verified in a real browser in this sandbox (no working `next build`/dev server check
+here — only source-level and typecheck verification). Item-level hrefs inside each zone's homepage
+card summary (`items[].href`, e.g. `/me` for daily's top-3 actions) were intentionally left
+pointing at their original destinations rather than redirected to the new rooms — low-value churn
+for this pass, not a defect.
+Scope: `services/gateway-api/src/index.ts`, `shared/src/personal/index.ts`,
+`services/dashboard-web/src/{app/{health,daily,life,finance,ventures,growth,opportunities,systems,presence}/page.tsx (new),
+components/domains/{DomainRoom.tsx,JarvisOpenButton.tsx} (new), lib/{gateway.ts,domainRoomLinks.ts (new)},
+app/me/actions.ts}`, `scripts/`, `docs/`.
+
+## Phase AG — Real Research & Intelligence Fabric — COMPLETE (2026-07-09)
+Closes the single most-cited gap across every audit document in this repo, including the
+untouched Persian `TECHNICAL-REPORT.md` §9 (written 2026-07-05, before this phase):
+`internet-research-service` had no real web-search API. Its "real" mode meant only that the LLM
+call was real — the cited source URLs still came from the model's own training-data recall (or, if
+neither search nor LLM was available, hand-curated OWASP/NIST text). This is exactly the class of
+overstatement the project's own "no fake success" principle otherwise forbids.
+
+**New provider abstraction.** `shared/src/research/index.ts` (new module): `WebSearchProvider`
+interface + `TavilyProvider` (direct `fetch()` to Tavily's REST API, no SDK — mirrors the existing
+`LlmProvider`/GitHub/Dokploy client style), `webSearchProviderFromEnv()` (returns `null`, not a fake
+provider, when `TAVILY_API_KEY` is unset — see D-132), `webSearchStatusFromEnv()`, and
+`estimateReliability(url)` (a conservative domain-based heuristic — `.gov`/`.edu`/OWASP/NIST/etc. →
+high, reddit/medium/quora/blogspot → low, everything else → medium, never invented as high).
+
+**`runResearch()` rewritten for real grounding.** When a search provider is configured,
+`shared/src/intelligence/index.ts`'s `runResearch()` now fetches real results FIRST, feeds them to
+the LLM as grounding context (genuine retrieval-augmented generation, not "ask the model what it
+remembers"), and — critically — rebuilds the final `ResearchSource` records directly from the
+original real search results rather than trusting the LLM's echoed `sources` field, which makes URL
+hallucination/mistyping structurally impossible when grounded (D-134). A new `fallbackFromSearchResults()`
+means a configured search provider with no available LLM still returns real retrieved content
+instead of degrading to canned fallback text (D-135). A search-provider failure (bad key, rate
+limit, network) is caught and treated exactly like "not configured" — never an uncaught error,
+never a fake success — with an honest `[web search unavailable: ...]` note prepended to the summary.
+
+**New `sourceMode` field, orthogonal to the existing `mode`.** `ResearchRun`/`ResearchReport`/
+`ResearchSource` (`shared/src/schemas/intelligence.ts`) gained `sourceMode: 'search_api' | 'llm_only'
+| 'curated_fallback'` (D-133) — a real LLM (`mode: 'real'`) does not mean a real, verified URL; only
+`sourceMode: 'search_api'` does. Both the `/research` list and `/research/:id` detail pages
+(`services/dashboard-web/src/app/research/`) now show this as a second badge alongside `mode`, so
+the dashboard no longer collapses "the LLM was real" and "the sources were verified" into one
+overstated label.
+
+**Wiring.** `services/internet-research-service/src/index.ts` builds the provider once at boot from
+`TAVILY_API_KEY` and passes it into every `runResearch()` call; narration events and the task
+response now report `sourceMode` alongside `mode`. `GET /v1/system/integrations`
+(`services/gateway-api/src/index.ts`) — which previously reported only `github`/`llm` and was
+silent on research entirely — now includes `research: { configured, provider }` via
+`webSearchStatusFromEnv()`.
+
+Verification:
+- **Phase AG smoke PASS (23/23)** (`scripts/phaseag-research-fabric-smoke.mjs`) — against the real
+  compiled `runResearch()`/`estimateReliability()`/`webSearchProviderFromEnv()`: reliability
+  heuristic correctness; provider returns `null` (never a fake) when unconfigured; grounded runs
+  produce `sourceMode: 'search_api'` with sources exactly matching the real search results — even
+  when a fake LLM deliberately echoes a different, wrong URL, proving the hallucinated URL never
+  reaches the stored record; ungrounded runs honestly report `llm_only`/`curated_fallback`; a
+  failing search call degrades gracefully with an honest note; a configured-search/no-LLM run still
+  returns real retrieved findings, not canned fallback text.
+- Regression: all prior phases unaffected (AF.1 11/11 … AF.5 29/29 — **183/183 cumulative total**).
+- `shared` `tsc -p tsconfig.json` clean, `gateway-api`/`internet-research-service`/`dashboard-web`
+  `tsc --noEmit` clean.
+- `next build` still unverified in this sandbox per the standing SWC-binary limitation (D-124) —
+  unchanged, no attempt made this phase.
+
+Honest remaining gaps: only one provider (Tavily) is wired, though the interface supports more —
+Serper/Bing were considered and deliberately deferred (D-132), not built. `estimateReliability()` is
+a domain-pattern heuristic, not a real fact-checking or citation-verification system — it can be
+wrong about a specific unfamiliar domain (defaults to `medium`, never fabricates `high`). No new
+env credential was actually exercised end-to-end in this sandbox (no real `TAVILY_API_KEY`
+available here) — verification is at the pure-logic/integration-contract level (real HTTP call
+shape, real response parsing, real fallback wiring), not a live network call against Tavily's API;
+the owner must set `TAVILY_API_KEY` and verify a real call in an environment with network egress.
+Research sources still aren't fed back into daily briefing/opportunity scoring/reports —
+`docs/roadmap.md`'s carried-forward item #6 ("let research feed daily briefing, opportunity
+scoring...") remains open.
+Scope: `shared/src/{research/index.ts (new), intelligence/index.ts, schemas/intelligence.ts,
+env/index.ts, index.ts}`, `services/{internet-research-service/src/index.ts, gateway-api/src/index.ts,
+dashboard-web/src/app/research/{page.tsx,[id]/page.tsx}}`, `.env.example`, `scripts/`, `docs/`.

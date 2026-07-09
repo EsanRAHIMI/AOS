@@ -33,6 +33,7 @@ fail fast with a readable error. Real secrets are never committed.
 | `LLM_MAX_COST_PER_TASK_USD` | per-task budget gate |
 | `LLM_SAFE_MODE_FALLBACK` | force deterministic fallback |
 | `VOICE_*` | realtime voice model/session settings |
+| `TAVILY_API_KEY` | Phase AG — real web search grounding for `internet-research-service` (`shared/src/research`). Optional: unset falls back to LLM-recall/curated knowledge, honestly marked via `sourceMode: 'llm_only' \| 'curated_fallback'` on every research record, never silently upgraded to "real". |
 
 ## Delivery and Operations
 

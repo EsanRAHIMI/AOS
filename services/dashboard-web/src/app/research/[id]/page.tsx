@@ -4,6 +4,10 @@ import { PageHeader, EmptyState } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 const tone = (r: string) => (r === 'high' ? 'ok' : r === 'low' ? 'err' : 'warn');
+// Phase AG — see services/dashboard-web/src/app/research/page.tsx for why
+// sourceMode is tracked separately from mode.
+const SOURCE_MODE_LABEL: Record<string, string> = { search_api: 'live web search', llm_only: 'LLM recall (unverified URL)', curated_fallback: 'curated fallback' };
+const sourceModeTone = (m: string) => (m === 'search_api' ? 'ok' : m === 'llm_only' ? 'warn' : '');
 
 export default async function ResearchDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -19,7 +23,12 @@ export default async function ResearchDetail({ params }: { params: Promise<{ id:
         title={String(r.topic)}
         subtitle={String(r.summary)}
         crumbs={[['/research', 'Research'], [`/research/${id}`, 'report']]}
-        actions={<span className={`badge ${r.mode === 'real' ? 'ok' : 'warn'}`}>{String(r.mode)}</span>}
+        actions={
+          <div style={{ display: 'flex', gap: 6 }}>
+            <span className={`badge ${r.mode === 'real' ? 'ok' : 'warn'}`}>{String(r.mode)}</span>
+            {r.sourceMode ? <span className={`badge ${sourceModeTone(String(r.sourceMode))}`} title="Where the cited source URLs came from">{SOURCE_MODE_LABEL[String(r.sourceMode)] ?? String(r.sourceMode)}</span> : null}
+          </div>
+        }
       />
       <div className="grid cols-2">
         <div className="card">

@@ -257,6 +257,23 @@ export const gateway = {
     systemHealthSummary: { servicesRegistered: number; openIncidents: number; pendingApprovals: number; safeMode: boolean; activeOperation: string | null };
     memoryInsights: string[];
   }>('/v1/me/universe'),
+  // Phase AF.5 — full, unsliced per-domain records backing the nine
+  // dedicated Command Universe rooms (/health, /daily, /life, /finance,
+  // /ventures, /growth, /opportunities, /systems, /presence). Same scoped
+  // snapshot as universe() above, just not sliced to a 3-6 item summary.
+  universeDetail: () => call<{
+    zones: Array<{ zoneId: string; title: string; status: string; headline: string; items: Array<{ label: string; detail: string; tone: string; href?: string; itemId?: string }>; setupHint: string; jarvisCommand: string; href: string; metrics: Array<{ label: string; value: string; tone: string }> }>;
+    generatedAt: string;
+    health: { states: Array<Record<string, unknown>> };
+    life: { items: Array<Record<string, unknown>> };
+    finance: { items: Array<Record<string, unknown>>; aggregate: { monthlyIn: number; monthlyOut: number; net: number; obligations: number; upcoming: Array<Record<string, unknown>>; hasAmounts: boolean } };
+    daily: { proposedActions: Array<Record<string, unknown>>; allActions: Array<Record<string, unknown>>; latestBriefing: Record<string, unknown> | null; pendingApprovals: number };
+    ventures: { projects: Array<Record<string, unknown>> };
+    growth: { learningTracks: Array<Record<string, unknown>>; goals: Array<Record<string, unknown>> };
+    opportunities: { ranked: Array<Record<string, unknown>> };
+    systems: { kernel: { services: number; openIncidents: number; pendingApprovals: number; safeMode: boolean; activeOperation: string | null; activeRuntimeGoal: string | null; recentEvents: string[] }; openIncidents: Array<Record<string, unknown>>; recentEventsRaw: Array<{ type: string; message: string; createdAt: string }> };
+    presence: { connectors: Array<{ connectorType: string; status: string; createdAt?: string }> };
+  }>('/v1/me/universe/detail'),
   // Phase AF.1 — Living Command Universe Foundation. The daily command
   // briefing (built in Phase AE, corrected in AE.1) had ZERO consumers in the
   // dashboard until this method — the single most concrete "built but

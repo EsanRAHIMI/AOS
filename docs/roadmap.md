@@ -320,6 +320,24 @@ duplicated event dump. Full phase-by-phase detail (AF.1 through AF.4.4,
 7 sub-phases) is in `phase-log.md`; decisions D-108 through D-128 in
 `decision-log.md`.
 
+## Phase AF.5 — Dedicated Per-Domain Routes — DONE (2026-07-09)
+Closed the "Command Universe follow-through" gap: every zone's "Open" link now leads to its own
+dedicated room (`/health`, `/daily`, `/life`, `/finance`, `/ventures`, `/growth`, `/opportunities`,
+`/systems`, `/presence`) built on one shared, comparable template (`DomainRoom`), showing the
+complete unsliced record set per domain via a new `GET /v1/me/universe/detail` endpoint, with
+"go deeper" links into whichever pre-existing richer page already manages that domain. 29/29 new
+smoke + 131/131 regression unchanged. See `phase-log.md`; decisions D-129 through D-131.
+
+## Phase AG — Real Research & Intelligence Fabric — DONE (2026-07-09)
+Closed the most-cited gap across every audit document (including the untouched Persian
+`TECHNICAL-REPORT.md`): `internet-research-service` had no real web-search API. New
+`shared/src/research` provider abstraction (`TavilyProvider`, `webSearchProviderFromEnv`,
+`estimateReliability`); `runResearch()` now grounds on real search results with structurally
+guaranteed URL integrity (source records are rebuilt from the real results, never trusted from the
+LLM's echo); new `sourceMode: 'search_api' | 'llm_only' | 'curated_fallback'` field tracked
+separately from the existing `mode`, surfaced as its own badge in the `/research` dashboard pages.
+23/23 new smoke + 183/183 cumulative regression. See `phase-log.md`; decisions D-132 through D-135.
+
 ## Carried-forward directions (not yet scheduled or phase-lettered)
 
 These themes from the earlier AA–AE "NEXT" planning are still real and still
@@ -334,8 +352,11 @@ those same letters. Assign a fresh phase name only when work actually starts.
 4. Point Dokploy diagnostics at the live instance and capture parser/endpoint deltas honestly.
 
 **Real research & intelligence fabric**
-5. Add a real web search + fetch provider (`internet-research-service` currently has none — LLM-only or curated fallback) with citation extraction, source reliability, and freshness.
-6. Store research sources separately from synthesized reports; add watch topics; feed daily briefing/opportunity scoring/reports.
+5. ~~Add a real web search + fetch provider~~ — **DONE, Phase AG** (2026-07-09): `TavilyProvider` +
+   `webSearchProviderFromEnv()` (`shared/src/research`), `runResearch()` grounds on real results with
+   source-URL integrity guaranteed structurally, honest `sourceMode` tracking. See `docs/phase-log.md`.
+6. Still open: research sources aren't yet fed into daily briefing/opportunity scoring/reports; no
+   watch-topics scheduler; only one provider (Tavily) is wired though the interface supports more.
 
 **Multi-user operating layer**
 7. Onboard real second users/tenants on top of the Phase AA scope/RBAC skeleton (today only Esan is seeded as owner).
@@ -354,7 +375,7 @@ those same letters. Assign a fresh phase name only when work actually starts.
 16. Approval-gated connector write actions with previews and evidence; public-service/citizen workflows only after tenant policy, audit, and privacy gates pass.
 
 **Command Universe follow-through**
-17. Dedicated per-domain routes (no `/finance`, `/health`, etc. exist yet — zones live only on the homepage; `living-command-universe-vision.md` Section A finding #4).
+17. ~~Dedicated per-domain routes~~ — **DONE, Phase AF.5** (2026-07-09): all nine zones now link to their own room (`/health`, `/daily`, `/life`, `/finance`, `/ventures`, `/growth`, `/opportunities`, `/systems`, `/presence`). See `docs/phase-log.md`.
 18. `next build` verification once this sandbox has a working SWC binary (or an equivalent CI environment) for linux/arm64.
 
 ## Technology direction

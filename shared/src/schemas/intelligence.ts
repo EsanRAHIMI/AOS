@@ -41,6 +41,20 @@ export type LlmBudgetEvent = z.infer<typeof LlmBudgetEventSchema>;
 
 /* -------------------- Internet research -------------------- */
 
+/**
+ * Phase AG — `sourceMode` is orthogonal to `mode` below: `mode` says whether
+ * the LLM call was real or fallback; `sourceMode` says whether the *source
+ * URLs themselves* came from a real web search API, from the LLM's own
+ * recall (no search configured), or from hand-curated fallback knowledge
+ * (no search AND no LLM). A run can have a real LLM (`mode: 'real'`) with
+ * `sourceMode: 'llm_only'` — the summary is genuinely reasoned, but the
+ * source URLs were never independently verified to exist. Only
+ * `sourceMode: 'search_api'` means the URLs were returned by an actual
+ * search engine call this run.
+ */
+export const ResearchSourceModeSchema = z.enum(['search_api', 'llm_only', 'curated_fallback']);
+export type ResearchSourceMode = z.infer<typeof ResearchSourceModeSchema>;
+
 export const ResearchSourceSchema = z.object({
   sourceId: z.string(),
   runId: z.string(),
@@ -51,6 +65,7 @@ export const ResearchSourceSchema = z.object({
   freshnessDays: z.number().nullable().default(null),
   reliability: z.enum(['high', 'medium', 'low']).default('medium'),
   excerpt: z.string().default(''),
+  sourceMode: ResearchSourceModeSchema.default('llm_only'),
   createdAt: IsoDate,
 });
 export type ResearchSource = z.infer<typeof ResearchSourceSchema>;
@@ -66,6 +81,7 @@ export const ResearchReportSchema = z.object({
   sourceIds: z.array(z.string()).default([]),
   evidenceId: z.string().nullable().default(null),
   mode: z.enum(['real', 'fallback']).default('fallback'),
+  sourceMode: ResearchSourceModeSchema.default('llm_only'),
   createdAt: IsoDate,
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;
@@ -77,6 +93,7 @@ export const ResearchRunSchema = z.object({
   status: z.enum(['completed', 'failed']).default('completed'),
   sourceCount: z.number().default(0),
   mode: z.enum(['real', 'fallback']).default('fallback'),
+  sourceMode: ResearchSourceModeSchema.default('llm_only'),
   traceId: z.string().nullable().default(null),
   createdAt: IsoDate,
 });

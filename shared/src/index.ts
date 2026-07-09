@@ -61,3 +61,5 @@ export * from './scope/index.js';
 export * from './personal/index.js';
 // Phase AD — Jarvis Intelligence Core & Living Command Home
 export * from './jarvis/index.js';
+// Phase AG — Real Research & Intelligence Fabric
+export * from './research/index.js';

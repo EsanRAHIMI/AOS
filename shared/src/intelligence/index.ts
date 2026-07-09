@@ -10,8 +10,10 @@ import { z } from 'zod';
 import { genId, nowIso } from '../utils/index.js';
 import type { LlmRouter, StructuredResult } from '../llm/index.js';
 import { promptFor } from '../llm/prompts.js';
+import type { WebSearchProvider, WebSearchResult } from '../research/index.js';
+import { estimateReliability } from '../research/index.js';
 import type {
-  ResearchRun, ResearchSource, ResearchReport,
+  ResearchRun, ResearchSource, ResearchReport, ResearchSourceMode,
   ReviewReport, QaReport, IntelligenceReport,
 } from '../schemas/intelligence.js';
 import type { LlmTrace } from '../schemas/capability.js';
@@ -77,26 +79,71 @@ export interface ResearchResult {
   trace: LlmTrace;
 }
 
-export async function runResearch(topic: string, opts: EngineOpts): Promise<ResearchResult> {
+/** Phase AG — deterministic fallback that still uses REAL search results
+ *  when a provider is configured but the LLM is not (or is fallback-forced).
+ *  Configuring search should never degrade to canned text when live results
+ *  actually exist — it degrades only to "no synthesis," which is honest. */
+function fallbackFromSearchResults(topic: string, results: WebSearchResult[]): z.infer<typeof LlmResearchSchema> {
+  return {
+    summary: `Retrieved ${results.length} real web result(s) for "${topic}" from a live search provider. No LLM synthesis was performed this run (deterministic fallback), so findings below are the raw retrieved titles/snippets, not a summary.`,
+    findings: results.slice(0, 6).map((r) => `${r.title}: ${r.snippet.slice(0, 180)}`),
+    recommendations: ['Review the cited sources directly — configure an LLM provider for synthesized findings and recommendations.'],
+    sources: results.map((r) => ({ title: r.title, url: r.url, publisher: r.publisher, publishedAt: r.publishedAt, reliability: estimateReliability(r.url), excerpt: r.snippet })),
+  };
+}
+
+export async function runResearch(topic: string, opts: EngineOpts & { searchProvider?: WebSearchProvider | null }): Promise<ResearchResult> {
   const prompt = promptFor('internet-research-service:research');
+
+  // Phase AG — fetch REAL search results first, if a provider is configured.
+  // A search failure (bad key, network, rate limit) is caught and treated
+  // exactly like "no provider configured" — never surfaced as an uncaught
+  // error, never silently retried into a fake success.
+  let searchResults: WebSearchResult[] = [];
+  let searchError: string | null = null;
+  if (opts.searchProvider) {
+    try {
+      searchResults = await opts.searchProvider.search(topic, { maxResults: 6 });
+    } catch (e) {
+      searchError = e instanceof Error ? e.message : 'web search failed';
+    }
+  }
+  const grounded = searchResults.length > 0;
+
   const out: StructuredResult<z.infer<typeof LlmResearchSchema>> = await opts.router.generateStructured(LlmResearchSchema, {
     agentId: 'internet-research-service', taskType: 'web_research', taskId: opts.taskId ?? null,
     system: prompt.system, promptVersion: prompt.version, forceFallback: opts.forceFallback,
-    prompt: `Topic: ${topic}\nReturn summary, findings, recommendations and at least 3 cited sources (title,url,publisher,publishedAt,reliability,excerpt).`,
-    fallback: () => fallbackResearch(topic),
+    prompt: grounded
+      ? `Topic: ${topic}\nHere are real, freshly retrieved web search results — base your summary, findings, and recommendations ONLY on these; do not invent or add other sources; echo these exact titles/URLs back in your sources array:\n\n${searchResults.map((r, i) => `${i + 1}. ${r.title} — ${r.url}\n${r.snippet}`).join('\n\n')}`
+      : `Topic: ${topic}\nReturn summary, findings, recommendations and at least 3 cited sources (title,url,publisher,publishedAt,reliability,excerpt).`,
+    fallback: () => (grounded ? fallbackFromSearchResults(topic, searchResults) : fallbackResearch(topic)),
   });
+
   const runId = genId('rresearch');
   const now = nowIso();
   const mode: 'real' | 'fallback' = out.trace.usedFallback ? 'fallback' : 'real';
-  const sources: ResearchSource[] = out.data.sources.map((s) => ({
+
+  // Phase AG — the critical integrity rule: when grounded, source URLs are
+  // ALWAYS rebuilt directly from the real search results, never taken from
+  // the LLM's echoed `sources` field. An LLM can typo, truncate, or subtly
+  // alter a URL even when asked to "echo it back exactly" — rebuilding from
+  // the original real data makes that class of error structurally
+  // impossible rather than trusting the model to be faithful.
+  const sourceMode: ResearchSourceMode = grounded ? 'search_api' : (out.trace.usedFallback ? 'curated_fallback' : 'llm_only');
+  const sourceData = grounded
+    ? searchResults.map((r) => ({ title: r.title, url: r.url, publisher: r.publisher, publishedAt: r.publishedAt, reliability: estimateReliability(r.url), excerpt: r.snippet }))
+    : out.data.sources;
+
+  const sources: ResearchSource[] = sourceData.map((s) => ({
     sourceId: genId('rsrc'), runId, title: s.title, url: s.url, publisher: s.publisher,
-    publishedAt: s.publishedAt, freshnessDays: null, reliability: s.reliability, excerpt: s.excerpt, createdAt: now,
+    publishedAt: s.publishedAt, freshnessDays: null, reliability: s.reliability, excerpt: s.excerpt, sourceMode, createdAt: now,
   }));
-  const run: ResearchRun = { runId, taskId: opts.taskId ?? null, topic, status: 'completed', sourceCount: sources.length, mode, traceId: out.trace.traceId, createdAt: now };
+  const run: ResearchRun = { runId, taskId: opts.taskId ?? null, topic, status: 'completed', sourceCount: sources.length, mode, sourceMode, traceId: out.trace.traceId, createdAt: now };
+  const summary = searchError && opts.searchProvider ? `[web search unavailable: ${searchError} — falling back to LLM/curated knowledge] ${out.data.summary}` : out.data.summary;
   const report: ResearchReport = {
     reportId: genId('rrep'), runId, taskId: opts.taskId ?? null, topic,
-    summary: out.data.summary, findings: out.data.findings, recommendations: out.data.recommendations,
-    sourceIds: sources.map((s) => s.sourceId), evidenceId: null, mode, createdAt: now,
+    summary, findings: out.data.findings, recommendations: out.data.recommendations,
+    sourceIds: sources.map((s) => s.sourceId), evidenceId: null, mode, sourceMode, createdAt: now,
   };
   return { run, sources, report, trace: out.trace };
 }

@@ -24,7 +24,7 @@ this document is the human-readable operating map.
 | Memory Agent | `memory-agent` | agent | 4109 | `memory.simorx.com` | Memory summaries, reusable skills, decision/history compression |
 | Monitor Agent | `monitor-agent` | agent | 4113 | `monitor.simorx.com` | Health scans, incidents, repair tasks, activation checks |
 | Report Agent | `report-agent` | agent | 4114 | `reports.simorx.com` | Executive/system intelligence reports |
-| Internet Research Service | `internet-research-service` | integration | 4115 | `research.simorx.com` | Governed research; currently LLM/fallback, needs real search/fetch provider |
+| Internet Research Service | `internet-research-service` | integration | 4115 | `research.simorx.com` | Governed research; real web search (Tavily, when `TAVILY_API_KEY` set) grounds LLM synthesis, honest `sourceMode` when not configured — Phase AG |
 | Browser Testing Agent | `browser-testing-agent` | agent | 4116 | `browser-testing.simorx.com` | Playwright/HTTP UI validation, screenshots, evidence |
 | Voice Operator Agent | `voice-operator-agent` | agent | 4121 | `voice.simorx.com` | Realtime voice session orchestration; never mutates directly |
 | Code Operator Agent | `code-operator-agent` | agent | 4122 | `code.simorx.com` | Workspace-scoped repo search/edit/typecheck/build/git/PR operations |
