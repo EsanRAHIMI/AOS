@@ -2,6 +2,44 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.4c Scope-By-Construction: Personal-Facts Family
+
+### D-159 Second migration wave — personal_health_states/life_items/finance_items/learning_tracks
+Reconciled repo state against `master-direction.md` and the K1.4b commit before starting (no
+drift: ratchet held `SCOPED_MEMORIES` only, 105 raw `collection()` calls in `server.ts`, 197/197
+gateway tests green). Re-verified isolation of the 7 collections flagged in D-158 as next
+candidates; found one new fact worth recording: `connectorAccounts` documents are written WITHOUT
+a `scope` field at all (no `stampScope` call in the account-creation handler), so migrating it
+onto `scopedCollection(ctx)` as-is would silently change behavior (the wrapper's guard filters on
+`{scope:'user', userId}` and would match zero existing rows) — deferred to a pass that first fixes
+the write path, not folded into this one. Chose the "personal facts" family instead —
+`personal_health_states`, `personal_life_items`, `personal_finance_items`,
+`personal_learning_tracks` — because all four already write via `userStamp(actor)` (correctly
+scope-stamped) and read via one shared `uFilter` variable reused across `/v1/me/universe` and
+`/v1/me/universe/detail`, making the migration mechanically identical across all four (same risk
+profile as D-158, four times the collections). 12 call sites total (4 inserts in the
+`POST /v1/me/reality/ingest` kind-switch, 4 reads each in `/v1/me/universe` and
+`/v1/me/universe/detail`) now go through four new per-request accessors (`healthStatesFor`,
+`lifeItemsFor`, `financeItemsFor`, `learningTracksFor`, same shape as D-158's `memoriesFor`). Raw
+handles removed from `GatewayDeps`, `server.ts`'s declaration block, and the `deps` assembly
+object — not left as dead code; unused type imports (`PersonalHealthState`, `PersonalLifeItem`,
+`PersonalFinanceItem`, `PersonalLearningTrack`) removed from both `deps.ts` and `server.ts`.
+New tests in `characterization.personal-scope.test.ts` (3 added, 7 total in the file): seeded a
+foreign-user row per collection directly into the fake DB and proved `GET /v1/me/universe/detail`
+— the one route that echoes each collection's raw array back (`data.health.states`,
+`data.life.items`, `data.finance.items`, `data.growth.learningTracks`) — never returns any of
+them; proved all four `POST /v1/me/reality/ingest` kinds write correctly scope-stamped documents;
+proved the fail-closed 403 (missing `primaryUserId`) on `/v1/me/universe/detail` matches the
+D-158 precedent. `scripts/check-scope-boundary.mjs`'s `MIGRATED_COLLECTIONS` ratchet extended to
+5 entries (`SCOPED_MEMORIES` + the four new names) — a raw handle for any of them reappearing
+anywhere in `services/` is now a permanent CI failure. Verification: shared 107/107, gateway-api
+200/200 (197 pre-existing + 3 new in the extended isolation file), typecheck and build clean
+for both packages, scope-boundary script passes (legacy debt in `server.ts` down to 101, from 105).
+Remaining unsafe direct access, still deferred: `opportunityReports`, `connectorAccounts` (needs a
+write-path fix first), `connectorSyncRuns`, `accessDecisions` (non-uniform access pattern — owner
+sees all, others see only their own `actorId`, not a simple `scope:'user'` filter), the
+identity/tenant block, and the Jarvis/operator subsystem (D-157's standing boundary, untouched).
+
 ## 2026-07-10 — Phase K1.4b Scope-By-Construction: First Route Migration
 
 ### D-158 `scoped_memories` migrated onto `scopedCollection(ctx)`; static boundary gate added

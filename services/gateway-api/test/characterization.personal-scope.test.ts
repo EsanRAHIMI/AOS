@@ -72,3 +72,72 @@ describe('personal.ts / scoped_memories — construction-enforced user isolation
     await h.close();
   });
 });
+
+/**
+ * K1.4c — same proof extended to the "personal facts" family (D-159):
+ * personal_health_states, personal_life_items, personal_finance_items,
+ * personal_learning_tracks. All four migrated off raw GatewayDeps handles
+ * onto scopedCollection(ctx) in routes/personal.ts (healthStatesFor /
+ * lifeItemsFor / financeItemsFor / learningTracksFor). `/v1/me/universe/
+ * detail` is the one route that echoes each collection's raw array back in
+ * the response (`data.health.states`, `data.life.items`,
+ * `data.finance.items`, `data.growth.learningTracks`), so it is the cleanest
+ * HTTP-level surface to prove per-collection isolation without inspecting
+ * internal state.
+ */
+describe('personal.ts / personal-facts family — construction-enforced user isolation', () => {
+  it('GET /v1/me/universe/detail never returns a foreign user\'s row for any of the four collections', async () => {
+    const now = '2026-07-10T00:00:00.000Z';
+    const h = await buildTestGateway({}, (db) => {
+      db.col(COLLECTIONS.PERSONAL_HEALTH_STATES).docs.push(
+        { healthStateId: 'phlth_mine', scope: 'user', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, recordKind: 'fact', metric: 'sleep', level: 7, value: '7h', note: 'mine', concern: false, source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+        { healthStateId: 'phlth_foreign', scope: 'user', tenantId: 'tenant_other', userId: 'user_other', recordKind: 'fact', metric: 'sleep', level: 2, value: '2h', note: 'not mine', concern: true, source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+      );
+      db.col(COLLECTIONS.PERSONAL_LIFE_ITEMS).docs.push(
+        { lifeItemId: 'plife_mine', scope: 'user', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, recordKind: 'fact', title: 'mine', description: '', status: 'active', tags: [], domain: 'personal', itemType: 'responsibility', dueDate: null, importance: 'normal', source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+        { lifeItemId: 'plife_foreign', scope: 'user', tenantId: 'tenant_other', userId: 'user_other', recordKind: 'fact', title: 'not mine', description: '', status: 'active', tags: [], domain: 'personal', itemType: 'responsibility', dueDate: null, importance: 'normal', source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+      );
+      db.col(COLLECTIONS.PERSONAL_FINANCE_ITEMS).docs.push(
+        { financeItemId: 'pfin_mine', scope: 'user', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, recordKind: 'fact', title: 'mine', description: '', status: 'active', tags: [], itemType: 'expense', amount: 10, currency: 'USD', cadence: 'monthly', dueDate: null, source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+        { financeItemId: 'pfin_foreign', scope: 'user', tenantId: 'tenant_other', userId: 'user_other', recordKind: 'fact', title: 'not mine', description: '', status: 'active', tags: [], itemType: 'expense', amount: 9999, currency: 'USD', cadence: 'monthly', dueDate: null, source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+      );
+      db.col(COLLECTIONS.PERSONAL_LEARNING_TRACKS).docs.push(
+        { learningTrackId: 'plearn_mine', scope: 'user', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, recordKind: 'fact', title: 'mine', description: '', status: 'active', tags: [], targetSkill: 'x', linkedGoalIds: [], source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+        { learningTrackId: 'plearn_foreign', scope: 'user', tenantId: 'tenant_other', userId: 'user_other', recordKind: 'fact', title: 'not mine', description: '', status: 'active', tags: [], targetSkill: 'y', linkedGoalIds: [], source: 'user', confidence: 1, createdAt: now, updatedAt: now },
+      );
+    });
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/me/universe/detail', headers: asAdmin() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { ok: true; data: { health: { states: Array<{ healthStateId: string }> }; life: { items: Array<{ lifeItemId: string }> }; finance: { items: Array<{ financeItemId: string }> }; growth: { learningTracks: Array<{ learningTrackId: string }> } } };
+    expect(body.data.health.states.map((s) => s.healthStateId)).toEqual(['phlth_mine']);
+    expect(body.data.life.items.map((s) => s.lifeItemId)).toEqual(['plife_mine']);
+    expect(body.data.finance.items.map((s) => s.financeItemId)).toEqual(['pfin_mine']);
+    expect(body.data.growth.learningTracks.map((s) => s.learningTrackId)).toEqual(['plearn_mine']);
+    await h.close();
+  });
+
+  it('POST /v1/me/reality/ingest writes correctly scope-stamped documents for all four kinds', async () => {
+    const h = await buildTestGateway();
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['health_state', { metric: 'sleep', level: 6, value: '6h' }, COLLECTIONS.PERSONAL_HEALTH_STATES],
+      ['life_item', { title: 'renew passport' }, COLLECTIONS.PERSONAL_LIFE_ITEMS],
+      ['finance_item', { title: 'rent', amount: 1200 }, COLLECTIONS.PERSONAL_FINANCE_ITEMS],
+      ['learning_track', { title: 'learn Rust', targetSkill: 'rust' }, COLLECTIONS.PERSONAL_LEARNING_TRACKS],
+    ];
+    for (const [kind, data, collectionName] of cases) {
+      const res = await h.service.app.inject({ method: 'POST', url: '/v1/me/reality/ingest', headers: asAdmin(), payload: { kind, data } });
+      expect(res.statusCode).toBe(200);
+      const stored = h.db.col(collectionName).docs;
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toMatchObject({ scope: 'user', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID });
+    }
+    await h.close();
+  });
+
+  it('a request with no resolvable primary user is denied before the data layer is reached, for the universe/detail route', async () => {
+    const h = await buildTestGateway();
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/me/universe/detail', headers: asAdmin('agent') });
+    expect(res.statusCode).toBe(403);
+    await h.close();
+  });
+});

@@ -109,10 +109,6 @@ import {
   type StrategyReviewRun,
   buildUniverseZones,
   aggregateFinance,
-  type PersonalHealthState,
-  type PersonalLifeItem,
-  type PersonalFinanceItem,
-  type PersonalLearningTrack,
   type OperatorTool,
   type OperatorToolRun,
   type OperatorToolPermission,
@@ -582,10 +578,9 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       const personalCareerRecords = collection<PersonalCareerRecord>(COLLECTIONS.PERSONAL_CAREER_RECORDS);
       const resumeProfiles = collection<ResumeProfile>(COLLECTIONS.RESUME_PROFILES);
       const nextBestActions = collection<NextBestAction>(COLLECTIONS.NEXT_BEST_ACTIONS);
-      const personalHealthStates = collection<PersonalHealthState>(COLLECTIONS.PERSONAL_HEALTH_STATES);
-      const personalLifeItems = collection<PersonalLifeItem>(COLLECTIONS.PERSONAL_LIFE_ITEMS);
-      const personalFinanceItems = collection<PersonalFinanceItem>(COLLECTIONS.PERSONAL_FINANCE_ITEMS);
-      const personalLearningTracks = collection<PersonalLearningTrack>(COLLECTIONS.PERSONAL_LEARNING_TRACKS);
+      // personal_health_states/life_items/finance_items/learning_tracks
+      // deliberately have no raw handle here — K1.4c (D-159) moved them to
+      // scopedCollection(ctx), built per-request in routes/personal.ts.
       const personalBriefingRuns = collection<PersonalBriefingRun>(COLLECTIONS.PERSONAL_BRIEFING_RUNS);
       const strategyReviewRuns = collection<StrategyReviewRun>(COLLECTIONS.STRATEGY_REVIEW_RUNS);
 
@@ -1599,10 +1594,6 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         personalCareerRecords,
         resumeProfiles,
         nextBestActions,
-        personalHealthStates,
-        personalLifeItems,
-        personalFinanceItems,
-        personalLearningTracks,
         personalBriefingRuns,
         strategyReviewRuns,
         opTools,

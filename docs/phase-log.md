@@ -3110,3 +3110,40 @@ Scope: `services/gateway-api/{src/routes/personal.ts, src/routes/deps.ts, src/se
 test/characterization.personal-scope.test.ts(new)}`, `scripts/check-scope-boundary.mjs(new)`,
 `.github/workflows/ci.yml`, `package.json`,
 `docs/{decision-log.md, multi-tenant-governance.md, phase-log.md}`.
+
+## Phase K1.4c — Second Route Migration: Personal-Facts Family — COMPLETE (2026-07-10)
+
+**Goal (master-direction §C.5, continuing §F.3 item 3):** extend scope-by-construction to the
+next narrow, safe collection family — proving the D-158 pattern scales without a rewrite.
+
+**Pre-edit reconciliation:** confirmed no drift since K1.4b (clean tree, ratchet held
+`SCOPED_MEMORIES` only, 105 raw `collection()` calls in `server.ts`, 197/197 gateway tests
+green). Re-verified the 7 candidate collections flagged in D-158; found `connectorAccounts`
+writes with no `scope` field at all, so it's excluded from this pass (would require a write-path
+fix, not a mechanical swap) and deferred.
+
+**What was built:** `personal_health_states`, `personal_life_items`, `personal_finance_items`,
+`personal_learning_tracks` (12 call sites: 4 inserts in the `/v1/me/reality/ingest` kind-switch,
+4 reads each in `/v1/me/universe` and `/v1/me/universe/detail`) migrated onto
+`scopedCollection(ctx)` via four new per-request accessors matching D-158's `memoriesFor` shape.
+Raw handles removed from `GatewayDeps`/`server.ts` (declaration + assembly + unused type
+imports), not left as dead code. `scripts/check-scope-boundary.mjs`'s ratchet extended to 5
+collection names.
+
+**Verification:** new tests in `characterization.personal-scope.test.ts` (3 added, 7 total in
+the file) prove a foreign user's row per collection never surfaces through
+`/v1/me/universe/detail`'s raw-array fields, all four ingest kinds write correctly scope-stamped
+documents, and the fail-closed 403 holds. Full suite: shared 107/107, gateway-api 200/200
+(197 pre-existing + 3 new); typecheck and build clean; scope-boundary script passes (server.ts
+legacy debt 105 → 101).
+
+**Remaining unsafe direct access (sequenced for K1.4d+):** `opportunityReports`,
+`connectorSyncRuns` (both single-call-site, next-smallest); `connectorAccounts` (needs a
+write-path fix — no scope stamp today — before it can migrate safely); `accessDecisions` (a
+non-uniform owner-sees-all / user-sees-own pattern, not a simple `scope:'user'` filter, needs
+design thought); the identity/tenant block; the Jarvis/operator subsystem stays untouched per
+D-157's standing boundary.
+
+Scope: `services/gateway-api/{src/routes/personal.ts, src/routes/deps.ts, src/server.ts,
+test/characterization.personal-scope.test.ts}`, `scripts/check-scope-boundary.mjs`,
+`docs/{decision-log.md, phase-log.md}`.

@@ -5,7 +5,7 @@
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
 import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
-import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, UserGoal } from '@factory/shared';
+import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLearningTrack, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, UserGoal } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
 
@@ -58,10 +58,6 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
     personalCareerRecords,
     resumeProfiles,
     nextBestActions,
-    personalHealthStates,
-    personalLifeItems,
-    personalFinanceItems,
-    personalLearningTracks,
     personalBriefingRuns,
     strategyReviewRuns,
     opTools,
@@ -82,6 +78,16 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
       // missing actor.primaryUserId (unreachable today — enforceScoped denies
       // first — but now structurally guaranteed, not just conventionally true).
       const memoriesFor = (actor: AuthContext) => scopedCollection<ScopedMemory>(COLLECTIONS.SCOPED_MEMORIES, { actor, scope: 'user' });
+
+      // K1.4c — same pattern extended to the "personal facts" family (D-159):
+      // the four collections behind /v1/me/universe's health/life/finance/
+      // learning zones. All four already write via userStamp(actor) (scope:
+      // 'user' stamped) and read via the shared uFilter shape, so this is a
+      // mechanical swap of the collection reference, not a behavior change.
+      const healthStatesFor = (actor: AuthContext) => scopedCollection<PersonalHealthState>(COLLECTIONS.PERSONAL_HEALTH_STATES, { actor, scope: 'user' });
+      const lifeItemsFor = (actor: AuthContext) => scopedCollection<PersonalLifeItem>(COLLECTIONS.PERSONAL_LIFE_ITEMS, { actor, scope: 'user' });
+      const financeItemsFor = (actor: AuthContext) => scopedCollection<PersonalFinanceItem>(COLLECTIONS.PERSONAL_FINANCE_ITEMS, { actor, scope: 'user' });
+      const learningTracksFor = (actor: AuthContext) => scopedCollection<PersonalLearningTrack>(COLLECTIONS.PERSONAL_LEARNING_TRACKS, { actor, scope: 'user' });
 
       /** Enforce a scoped access request. Denials/approval-required are
        *  recorded (access_decisions + security event) and answered 403. */
@@ -293,16 +299,16 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
           else if (kind === 'goal') { const g = { ...userStamp(actor), goalId: genId('goal'), title: str('title', 160), description: str('description', 1000), horizon: 'week' as const, status: 'active' as const, priority: 'normal' as const, createdAt: now, updatedAt: now }; if (!g.title) throw new Error('title required'); await userGoals.insertOne(g); created++; }
           else if (kind === 'health_state') {
             const level = typeof (d as Record<string, unknown>).level === 'number' ? Math.max(0, Math.min(10, (d as { level: number }).level)) : null;
-            await personalHealthStates.insertOne({ ...meta, recordKind: 'fact', healthStateId: genId('phlth'), metric: (['wellbeing', 'energy', 'sleep', 'stress', 'weight', 'activity', 'nutrition', 'symptom', 'habit'].includes(str('metric')) ? str('metric') : 'wellbeing') as PersonalHealthState['metric'], level, value: str('value', 60), note: str('note', 400), concern: Boolean((d as Record<string, unknown>).concern) }); created++;
+            await healthStatesFor(actor).insertOne({ ...meta, recordKind: 'fact', healthStateId: genId('phlth'), metric: (['wellbeing', 'energy', 'sleep', 'stress', 'weight', 'activity', 'nutrition', 'symptom', 'habit'].includes(str('metric')) ? str('metric') : 'wellbeing') as PersonalHealthState['metric'], level, value: str('value', 60), note: str('note', 400), concern: Boolean((d as Record<string, unknown>).concern) }); created++;
           }
           else if (kind === 'life_item') {
-            await personalLifeItems.insertOne({ ...meta, recordKind: 'fact', lifeItemId: genId('plife'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), domain: (['family', 'home', 'relationship', 'household', 'personal'].includes(str('domain')) ? str('domain') : 'personal') as PersonalLifeItem['domain'], itemType: (['responsibility', 'concern', 'event', 'task', 'note'].includes(str('itemType')) ? str('itemType') : 'responsibility') as PersonalLifeItem['itemType'], dueDate: str('dueDate', 10) || null, importance: (['low', 'normal', 'high'].includes(str('importance')) ? str('importance') : 'normal') as PersonalLifeItem['importance'] }); created++;
+            await lifeItemsFor(actor).insertOne({ ...meta, recordKind: 'fact', lifeItemId: genId('plife'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), domain: (['family', 'home', 'relationship', 'household', 'personal'].includes(str('domain')) ? str('domain') : 'personal') as PersonalLifeItem['domain'], itemType: (['responsibility', 'concern', 'event', 'task', 'note'].includes(str('itemType')) ? str('itemType') : 'responsibility') as PersonalLifeItem['itemType'], dueDate: str('dueDate', 10) || null, importance: (['low', 'normal', 'high'].includes(str('importance')) ? str('importance') : 'normal') as PersonalLifeItem['importance'] }); created++;
           }
           else if (kind === 'finance_item') {
-            await personalFinanceItems.insertOne({ ...meta, recordKind: 'fact', financeItemId: genId('pfin'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), itemType: (['income', 'expense', 'bill', 'installment', 'obligation', 'investment', 'purchase', 'sale'].includes(str('itemType')) ? str('itemType') : 'expense') as PersonalFinanceItem['itemType'], amount: typeof (d as Record<string, unknown>).amount === 'number' ? (d as { amount: number }).amount : null, currency: str('currency', 8), cadence: (['once', 'weekly', 'monthly', 'quarterly', 'yearly'].includes(str('cadence')) ? str('cadence') : 'monthly') as PersonalFinanceItem['cadence'], dueDate: str('dueDate', 10) || null }); created++;
+            await financeItemsFor(actor).insertOne({ ...meta, recordKind: 'fact', financeItemId: genId('pfin'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), itemType: (['income', 'expense', 'bill', 'installment', 'obligation', 'investment', 'purchase', 'sale'].includes(str('itemType')) ? str('itemType') : 'expense') as PersonalFinanceItem['itemType'], amount: typeof (d as Record<string, unknown>).amount === 'number' ? (d as { amount: number }).amount : null, currency: str('currency', 8), cadence: (['once', 'weekly', 'monthly', 'quarterly', 'yearly'].includes(str('cadence')) ? str('cadence') : 'monthly') as PersonalFinanceItem['cadence'], dueDate: str('dueDate', 10) || null }); created++;
           }
           else if (kind === 'learning_track') {
-            await personalLearningTracks.insertOne({ ...meta, recordKind: 'fact', learningTrackId: genId('plearn'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), targetSkill: str('targetSkill', 120), linkedGoalIds: arr('linkedGoalIds') }); created++;
+            await learningTracksFor(actor).insertOne({ ...meta, recordKind: 'fact', learningTrackId: genId('plearn'), title: str('title', 160), description: str('description', 1000), status: 'active', tags: arr('tags'), targetSkill: str('targetSkill', 120), linkedGoalIds: arr('linkedGoalIds') }); created++;
           }
           else if (kind === 'career_record') { await personalCareerRecords.insertOne({ ...meta, recordKind: 'fact', careerRecordId: genId('pcar'), kind: (['experience', 'education', 'achievement', 'certification'].includes(str('recordType')) ? str('recordType') : 'experience') as PersonalCareerRecord['kind'], title: str('title', 160), organization: str('organization', 160), period: str('period', 60), details: str('details', 2000) }); created++; }
           else if (kind === 'resume') {
@@ -358,10 +364,10 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         const uFilter = { scope: 'user' as const, userId: uid };
         const [graph, health, life, finance, learning, nbas, briefing, connectors, svcCount, inc, op, activeSession, recentEvents, safe, memRecent] = await Promise.all([
           loadGraphInput(actor),
-          personalHealthStates.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
-          personalLifeItems.find(uFilter, { projection: { _id: 0 } }).limit(100).toArray(),
-          personalFinanceItems.find(uFilter, { projection: { _id: 0 } }).limit(200).toArray(),
-          personalLearningTracks.find(uFilter, { projection: { _id: 0 } }).limit(50).toArray(),
+          healthStatesFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
+          lifeItemsFor(actor).find({}, { projection: { _id: 0 } }).limit(100).toArray(),
+          financeItemsFor(actor).find({}, { projection: { _id: 0 } }).limit(200).toArray(),
+          learningTracksFor(actor).find({}, { projection: { _id: 0 } }).limit(50).toArray(),
           nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
           personalBriefingRuns.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),
           connectorAccounts.find({ userId: uid }, { projection: { _id: 0 } }).limit(50).toArray(),
@@ -433,10 +439,10 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         const uFilter = { scope: 'user' as const, userId: uid };
         const [graph, health, life, finance, learning, nbas, allNbas, briefing, connectors, svcCount, incRaw, op, activeSession, recentEvents, safe] = await Promise.all([
           loadGraphInput(actor),
-          personalHealthStates.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray(),
-          personalLifeItems.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray(),
-          personalFinanceItems.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(300).toArray(),
-          personalLearningTracks.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
+          healthStatesFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray(),
+          lifeItemsFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(200).toArray(),
+          financeItemsFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(300).toArray(),
+          learningTracksFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
           nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
           nextBestActions.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
           personalBriefingRuns.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),

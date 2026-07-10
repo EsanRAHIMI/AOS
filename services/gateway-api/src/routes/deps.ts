@@ -69,12 +69,8 @@ import type {
   PersonalAsset,
   PersonalBriefingRun,
   PersonalCareerRecord,
-  PersonalFinanceItem,
   PersonalGraphInput,
-  PersonalHealthState,
   PersonalIncomeStream,
-  PersonalLearningTrack,
-  PersonalLifeItem,
   PersonalOpportunity,
   PersonalProject,
   PersonalRealityProfile,
@@ -261,10 +257,10 @@ export interface GatewayDeps {
   personalCareerRecords: Collection<PersonalCareerRecord>;
   resumeProfiles: Collection<ResumeProfile>;
   nextBestActions: Collection<NextBestAction>;
-  personalHealthStates: Collection<PersonalHealthState>;
-  personalLifeItems: Collection<PersonalLifeItem>;
-  personalFinanceItems: Collection<PersonalFinanceItem>;
-  personalLearningTracks: Collection<PersonalLearningTrack>;
+  // personalHealthStates/LifeItems/FinanceItems/LearningTracks deliberately
+  // absent — K1.4c (D-159) migrated them off raw GatewayDeps handles onto
+  // scopedCollection(ctx), built per-request in routes/personal.ts. Do not
+  // re-add raw handles for them.
   personalBriefingRuns: Collection<PersonalBriefingRun>;
   strategyReviewRuns: Collection<StrategyReviewRun>;
   opTools: Collection<OperatorTool>;

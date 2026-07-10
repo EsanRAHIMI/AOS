@@ -35,7 +35,10 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** Collection constant names that MUST NOT be reached via raw collection()
  *  anywhere under services/ once migrated. Grows with each K1.4x pass. */
-const MIGRATED_COLLECTIONS = ['SCOPED_MEMORIES'];
+const MIGRATED_COLLECTIONS = [
+  'SCOPED_MEMORIES', // K1.4b, D-158
+  'PERSONAL_HEALTH_STATES', 'PERSONAL_LIFE_ITEMS', 'PERSONAL_FINANCE_ITEMS', 'PERSONAL_LEARNING_TRACKS', // K1.4c, D-159
+];
 
 const SHARED_DB_ALLOWED = new Set([
   'shared/src/db/index.ts', // the raw collection() definition itself
