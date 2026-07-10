@@ -82,7 +82,6 @@ import {
   type ConnectorSyncRun,
   type UserGoal,
   type DailyBriefing,
-  type OpportunityReport,
   type AccessDecision,
   buildPersonalGraph,
   scoreNextActions,
@@ -556,7 +555,8 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       // moved it to scopedCollection(ctx), built per-request in routes/personal.ts.
       const userGoals = collection<UserGoal>(COLLECTIONS.USER_GOALS);
       const dailyBriefings = collection<DailyBriefing>(COLLECTIONS.DAILY_BRIEFINGS);
-      const opportunityReports = collection<OpportunityReport>(COLLECTIONS.OPPORTUNITY_REPORTS);
+      // opportunity_reports deliberately has no raw handle here — K1.4d
+      // (D-160) moved it to scopedCollection(ctx) in routes/personal.ts.
       const accessDecisions = collection<AccessDecision>(COLLECTIONS.ACCESS_DECISIONS);
 
       // Idempotent bootstrap: Esan is the first owner and platform governor.
@@ -1582,7 +1582,6 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         connectorSyncRuns,
         userGoals,
         dailyBriefings,
-        opportunityReports,
         accessDecisions,
         realityProfiles,
         personalAssets,

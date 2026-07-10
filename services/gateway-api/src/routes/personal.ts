@@ -5,7 +5,7 @@
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
 import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
-import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLearningTrack, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, UserGoal } from '@factory/shared';
+import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, OpportunityReport, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLearningTrack, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, UserGoal } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
 
@@ -46,7 +46,6 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
     connectorSyncRuns,
     userGoals,
     dailyBriefings,
-    opportunityReports,
     accessDecisions,
     realityProfiles,
     personalAssets,
@@ -88,6 +87,17 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
       const lifeItemsFor = (actor: AuthContext) => scopedCollection<PersonalLifeItem>(COLLECTIONS.PERSONAL_LIFE_ITEMS, { actor, scope: 'user' });
       const financeItemsFor = (actor: AuthContext) => scopedCollection<PersonalFinanceItem>(COLLECTIONS.PERSONAL_FINANCE_ITEMS, { actor, scope: 'user' });
       const learningTracksFor = (actor: AuthContext) => scopedCollection<PersonalLearningTrack>(COLLECTIONS.PERSONAL_LEARNING_TRACKS, { actor, scope: 'user' });
+
+      // K1.4d (D-160) — opportunity_reports: the last fully-isolated,
+      // properly-scoped personal collection in this route module. Every
+      // other remaining raw handle here is either global (tenantsCol),
+      // missing a scope field on write (consentGrants/connectorAccounts/
+      // connectorSyncRuns/userProfiles/memberships — see D-161), has a
+      // non-uniform access pattern (accessDecisions), or is read/written by
+      // the Jarvis/operator executors subsystem in server.ts (realityProfiles
+      // and the rest of the personal-fact family) and therefore off-limits
+      // this session.
+      const opportunityReportsFor = (actor: AuthContext) => scopedCollection<OpportunityReport>(COLLECTIONS.OPPORTUNITY_REPORTS, { actor, scope: 'user' });
 
       /** Enforce a scoped access request. Denials/approval-required are
        *  recorded (access_decisions + security event) and answered 403. */
@@ -186,7 +196,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = await enforceScoped(req, reply, { action: 'list', resource: 'opportunity_reports', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
-        return success(await opportunityReports.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray());
+        return success(await opportunityReportsFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(20).toArray());
       });
       app.get('/v1/tenants/current', async (req, reply) => {
         if (!guard(req)) return deny(reply);

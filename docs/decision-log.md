@@ -2,6 +2,93 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.4d Scope-By-Construction: Last Isolated Collection + Blocked-Collection Proposal
+
+### D-160 `opportunity_reports` migrated onto `scopedCollection(ctx)` — last collection in this class
+Re-verified all remaining raw handles in `routes/personal.ts` against their actual Zod schemas
+(not the object literal at one call site) and their FULL usage in `server.ts` (not just the
+declaration line). Finding: `realityProfiles`, `personalProjects`, `personalAssets`,
+`personalSystems`, `personalRisks`, `personalOpportunities`, `personalIncomeStreams`,
+`personalCareerRecords`, `resumeProfiles`, `nextBestActions`, `personalBriefingRuns`,
+`strategyReviewRuns`, `dailyBriefings`, `userGoals` all correctly extend `RequiredScopeSchema`
+(properly scoped) but are EVERY ONE of them also read or written inside `server.ts`'s
+`executors` object (`generate_daily_briefing`, `build_reality_baseline`, resume analysis, weekly
+strategy, next-action scoring — lines ~1070-1270) — the Jarvis/operator tool-executor subsystem
+D-157 explicitly deferred. K1.4b/K1.4c already migrated everything that was both properly scoped
+AND fully isolated from that subsystem; `opportunity_reports` (1 call site, `GET
+/v1/me/opportunities`) was the one remaining collection satisfying both conditions. Migrated via
+`opportunityReportsFor(actor)`, same shape as `memoriesFor`/`healthStatesFor` etc. Raw handle
+removed from `GatewayDeps`/`server.ts` (declaration, assembly, unused type import). Ratchet in
+`scripts/check-scope-boundary.mjs` extended to 6 entries. New tests (2) in
+`characterization.personal-scope.test.ts`: foreign-user row never surfaces through `GET
+/v1/me/opportunities`; fail-closed 403 holds. Verification: shared 107/107, gateway-api 202/202
+(200 pre-existing + 2 new), typecheck/build clean, scope-boundary script passes (server.ts legacy
+debt 101 → 100).
+
+### D-161 PROPOSAL (not implemented): write-path fix for the identity/connector cluster
+`ConsentGrantSchema`, `ConnectorAccountSchema`, `ConnectorSyncRunSchema`, `UserProfileSchema`,
+`TenantMembershipSchema` (`shared/src/schemas/identity.ts`) carry **no `scope` field at all** —
+unlike every `RequiredScopeSchema`-derived collection in the personal-fact family, these were
+built before the Phase AA scope model and never retrofitted. `scopedCollection(ctx)`'s guard
+merges `{scope:'user', userId}` (or `{scope:'tenant', tenantId}`) into every query; against a
+collection whose documents never carry a `scope` field, that guard matches nothing — a mechanical
+migration would silently return empty results instead of the caller's actual data. This is a
+write-path/schema gap, not a route-migration task, and is being logged as a proposal rather than
+implemented in the same pass that does additive-only scope migrations, per this session's own
+rule that schema changes are a different risk class.
+
+**Proposed fix, sequenced as its own K1.4e (or later) pass:**
+1. Extend `ConsentGrantSchema`, `ConnectorAccountSchema`, `ConnectorSyncRunSchema` with
+   `scope: Scope` (literal `'user'` for these three — they are always per-user connector state).
+   Extend `TenantMembershipSchema` with `scope: Scope` (literal `'tenant'`). `UserProfileSchema`
+   is a genuine edge case (see below).
+2. Update the 3 write sites in `routes/personal.ts` (`POST /v1/consents`, `POST /v1/connectors`,
+   `POST /v1/connectors/:id/sync`) and the membership-seeding path (`buildEsanSeed` in
+   `shared/src/scope/index.ts`) to stamp `scope` on every new document — either via a literal
+   (`scope: 'user' as const`) alongside the existing `tenantId`/`userId` fields, or by adopting
+   `stampScope(actor, 'user', {...})` the way the personal-fact family already does, which is
+   preferred for consistency.
+3. No backfill migration is required before this fix ships: master-direction confirms AOS is
+   still pre-multi-user (one seeded owner, `user_esan`); there is no production data with these
+   collections populated under a second identity yet. If that changes before this pass lands, add
+   a one-time backfill script (pattern already exists: `scripts/migrate-scope-foundation.mjs`)
+   that stamps `scope` on legacy documents by inferring it from their existing `tenantId`/`userId`
+   fields before the route migration ships, so no window of silently-empty reads opens in
+   production.
+4. Once schemas + write paths carry `scope`, `consentGrants`/`connectorAccounts`/
+   `connectorSyncRuns`/`memberships` become drop-in candidates for the exact same
+   `scopedCollection(ctx)` accessor pattern as D-158/159/160; add them to the ratchet at that
+   time. Do NOT do this as part of the schema-fix pass — keep schema changes and access-pattern
+   migrations in separate, separately-verified commits, consistent with this session's own rule.
+
+**`UserProfileSchema` — recommend treating as a special case, not force-fitting the scope model:**
+a user profile is a 1-row-per-user identity record, not a collection of many user-owned facts.
+Its natural key (`userId`, already unique) already prevents one query from returning multiple
+users' profiles AS LONG AS every read filters by an exact `userId`. The realistic residual risk
+scope-by-construction defends against — a future handler doing `userProfiles.find({})` with no
+filter at all — is real but rare for a 1:1 identity collection. Recommend still adding a `scope:
+'user'` field for consistency and defense-in-depth (cheap, and it unifies the pattern), but flag
+it as lower urgency than the connector cluster, which handles OAuth-adjacent account state.
+
+**`accessDecisions` — recommend NOT forcing into `scopedCollection`, propose a dedicated pattern
+instead:** `AccessDecisionSchema` does carry a `scope` field, but it means something different
+here than everywhere else — it records the SCOPE OF THE RESOURCE the access decision was ABOUT
+(e.g. a decision about a user-scoped read carries `scope:'user'`), not a classification of the
+audit-log collection itself. The audit log is fundamentally a GLOBAL collection (every actor's
+decisions, across every scope, in one place) with an application-level read split (owner sees
+all; everyone else sees only `{actorId: actor.actorId}` — note: filtered by the ACTING actor, not
+`targetUserId`, so it isn't even a per-target-user view). Forcing this through
+`scopedCollection(ctx, {scope:'user'})` would filter on the wrong field and silently break the
+owner's full-visibility case; forcing it through `{scope:'global'}` would incorrectly require
+every access-decision document to literally carry `scope:'global'`, which is false for the
+majority of records. Recommendation: leave `accessDecisions` on its current raw `GatewayDeps`
+handle (already legitimate under the K1.3 flat-handle pattern — no script violation, this is a
+different category from the `shared/src`-only restriction D-158 introduced) rather than force a
+mismatched migration, and — if isolation for this collection becomes a real priority later —
+design a second accessor alongside `scopedCollection` (e.g. `actorScopedCollection`) purpose-built
+for "owner sees all, everyone else sees only their own actions" instead of stretching the existing
+four-scope model to fit it.
+
 ## 2026-07-10 — Phase K1.4c Scope-By-Construction: Personal-Facts Family
 
 ### D-159 Second migration wave — personal_health_states/life_items/finance_items/learning_tracks

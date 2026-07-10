@@ -63,7 +63,6 @@ import type {
   OperatorTool,
   OperatorToolPermission,
   OperatorToolRun,
-  OpportunityReport,
   OutcomeReview,
   Permission,
   PersonalAsset,
@@ -245,7 +244,8 @@ export interface GatewayDeps {
   // accessor per-request instead. Do not re-add a raw handle for it.
   userGoals: Collection<UserGoal>;
   dailyBriefings: Collection<DailyBriefing>;
-  opportunityReports: Collection<OpportunityReport>;
+  // opportunityReports deliberately absent — K1.4d (D-160) migrated it onto
+  // scopedCollection(ctx), built per-request in routes/personal.ts.
   accessDecisions: Collection<AccessDecision>;
   realityProfiles: Collection<PersonalRealityProfile>;
   personalAssets: Collection<PersonalAsset>;

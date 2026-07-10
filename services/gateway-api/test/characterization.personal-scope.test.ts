@@ -141,3 +141,32 @@ describe('personal.ts / personal-facts family — construction-enforced user iso
     await h.close();
   });
 });
+
+/**
+ * K1.4d — opportunity_reports (D-160): the last fully-isolated, properly-
+ * scoped collection in routes/personal.ts. Migrated via opportunityReportsFor,
+ * same shape as the D-158/D-159 accessors.
+ */
+describe('personal.ts / opportunity_reports — construction-enforced user isolation', () => {
+  it('GET /v1/me/opportunities never returns a foreign user\'s row', async () => {
+    const now = '2026-07-10T00:00:00.000Z';
+    const h = await buildTestGateway({}, (db) => {
+      db.col(COLLECTIONS.OPPORTUNITY_REPORTS).docs.push(
+        { opportunityReportId: 'oppr_mine', scope: 'user', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, title: 'mine', summary: 'mine', sourcesUsed: [], createdAt: now },
+        { opportunityReportId: 'oppr_foreign', scope: 'user', tenantId: 'tenant_other', userId: 'user_other', title: 'not mine', summary: 'not mine', sourcesUsed: [], createdAt: now },
+      );
+    });
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/me/opportunities', headers: asAdmin() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { ok: true; data: Array<{ opportunityReportId: string }> };
+    expect(body.data.map((r) => r.opportunityReportId)).toEqual(['oppr_mine']);
+    await h.close();
+  });
+
+  it('a request with no resolvable primary user is denied before the data layer is reached', async () => {
+    const h = await buildTestGateway();
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/me/opportunities', headers: asAdmin('agent') });
+    expect(res.statusCode).toBe(403);
+    await h.close();
+  });
+});

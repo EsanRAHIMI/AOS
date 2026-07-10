@@ -49,9 +49,7 @@ scope-boundary.mjs` locally) enforces three rules:
 
 The script also reports (non-blocking) the count of raw `collection()` calls
 still in `services/gateway-api/src/server.ts` — the K1.3 flat-handle zone
-(D-157) — as visible, tracked debt for the K1.4c+ passes that migrate the
-remaining ~90 collections (personal-fact family next, then identity/tenant,
-then the deferred Jarvis/operator subsystem last, per D-157's boundary).
+(D-157) — as visible, tracked debt.
 
 Isolation guarantees at the wrapper level are pinned by
 `shared/test/scoped-collection.contract.test.ts` (14 tests: fail-closed on
@@ -59,8 +57,40 @@ missing actor, filters can only narrow, inserts/updates can't touch scope
 identity). Route-level cross-user isolation is proven per migrated route
 group in that service's characterization suite — see
 `services/gateway-api/test/characterization.personal-scope.test.ts` for the
-`scoped_memories` proof (a foreign user's row seeded directly into the fake
-collection never surfaces through the route).
+proofs (a foreign user's row seeded directly into the fake collection never
+surfaces through the route).
+
+### Migration status (K1.4b–d)
+
+Six collections migrated onto `scopedCollection(ctx)` so far, all in
+`routes/personal.ts`: `scoped_memories` (K1.4b, D-158), `personal_health_
+states`/`personal_life_items`/`personal_finance_items`/`personal_learning_
+tracks` (K1.4c, D-159), `opportunity_reports` (K1.4d, D-160). Each is locked
+in `MIGRATED_COLLECTIONS` in `scripts/check-scope-boundary.mjs` — a raw
+handle for any of them can never reappear.
+
+**Not migrated, and why (this is the honest remainder, not an oversight):**
+
+- **The rest of the personal-fact family** (`realityProfiles`,
+  `personalProjects`, `personalAssets`, `personalSystems`, `personalRisks`,
+  `personalOpportunities`, `personalIncomeStreams`, `personalCareerRecords`,
+  `resumeProfiles`, `nextBestActions`, `personalBriefingRuns`,
+  `strategyReviewRuns`, `dailyBriefings`, `userGoals`): all properly
+  scoped (`RequiredScopeSchema`), but all also read/written inside
+  `server.ts`'s Jarvis/operator `executors` block (D-157's standing
+  boundary). Migrating them means touching that subsystem, which is out of
+  scope until a session explicitly targets it.
+- **`consentGrants`, `connectorAccounts`, `connectorSyncRuns`, `userProfiles`,
+  `memberships`**: schema gap, no `scope` field exists on these documents at
+  all. See D-161 for the proposed fix — logged, not yet implemented.
+- **`accessDecisions`**: has a `scope` field, but it classifies the
+  *resource the decision was about*, not the audit-log collection itself; the
+  real access pattern (owner sees all, others see only their own actions by
+  `actorId`) doesn't fit the four-scope model as-is. See D-161 for the
+  recommendation (keep global + explicit allowlist, design a dedicated
+  accessor later if isolation here becomes a priority).
+- **`tenantsCol`**: correctly global — the tenant registry itself, keyed by
+  `tenantId`, not per-record scoped human data.
 
 ## Scope Model
 

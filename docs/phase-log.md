@@ -3147,3 +3147,43 @@ D-157's standing boundary.
 Scope: `services/gateway-api/{src/routes/personal.ts, src/routes/deps.ts, src/server.ts,
 test/characterization.personal-scope.test.ts}`, `scripts/check-scope-boundary.mjs`,
 `docs/{decision-log.md, phase-log.md}`.
+
+## Phase K1.4d — Last Isolated Collection + Blocked-Collection Proposal — COMPLETE (2026-07-10)
+
+**Goal:** finish the mechanically-available scope-by-construction migration for
+`routes/personal.ts`, and produce the write-path-fix proposal the schema gaps found in K1.4c
+required before those collections can migrate.
+
+**Reality check (the actual finding of this pass):** re-verified every remaining raw handle in
+`personal.ts` against its real Zod schema and its FULL usage across `server.ts`, not just the
+declaration line. Result: every other properly-scoped personal-fact collection
+(`realityProfiles`, `personalProjects`, `personalAssets`, `personalSystems`, `personalRisks`,
+`personalOpportunities`, `personalIncomeStreams`, `personalCareerRecords`, `resumeProfiles`,
+`nextBestActions`, `personalBriefingRuns`, `strategyReviewRuns`, `dailyBriefings`, `userGoals`)
+is also touched by `server.ts`'s Jarvis/operator `executors` block — off-limits this session.
+`opportunity_reports` was the one remaining collection that was both properly scoped and fully
+isolated. K1.4b/K1.4c had already captured everything else available; there was no larger
+mechanical batch hiding in this surface.
+
+**What was built:** `opportunity_reports` (1 call site) migrated via `opportunityReportsFor`,
+same pattern as D-158/159. Raw handle removed from `GatewayDeps`/`server.ts`. Ratchet extended
+to 6 entries. Two new isolation tests. In place of a bigger mechanical batch that reality didn't
+support, produced D-161: a concrete, sequenced proposal to add `scope` fields to
+`ConsentGrantSchema`/`ConnectorAccountSchema`/`ConnectorSyncRunSchema`/`TenantMembershipSchema`
+(currently missing entirely — confirmed against the actual schemas, not inferred), a lower-
+urgency recommendation for `UserProfileSchema`, and a "do not force it" recommendation for
+`accessDecisions` (its `scope` field classifies the resource accessed, not the audit-log
+collection, so it doesn't fit the four-scope model without a dedicated accessor).
+
+**Verification:** shared 107/107, gateway-api 202/202 (200 pre-existing + 2 new); typecheck and
+build clean; scope-boundary script passes (server.ts legacy debt 101 → 100).
+
+**Next K1 step:** implement D-161's schema fix (its own pass — write-path/schema change is a
+different risk class than the additive migrations done so far) to unblock the identity/connector
+cluster; OR move to a different K1 workstream (Redis event fan-out, real auth) once master-
+direction sequencing calls for it — scope-by-construction on the personal surface is now as
+complete as it can be without either a schema fix or touching the deferred Jarvis subsystem.
+
+Scope: `services/gateway-api/{src/routes/personal.ts, src/routes/deps.ts, src/server.ts,
+test/characterization.personal-scope.test.ts}`, `scripts/check-scope-boundary.mjs`,
+`docs/{decision-log.md, multi-tenant-governance.md, phase-log.md}`.

@@ -58,10 +58,10 @@ including for agents.
 
 - The local dev mount blocks `pnpm install` writes (see README-SETUP); installs and full test
   runs during agent sessions happen in a sandbox-local copy — CI is the canonical verifier.
-- Gateway characterization tests (K1.3+): `services/gateway-api/test/` — 200 tests (193 from
-  the K1.3 split + 7 K1.4b/K1.4c isolation probes) build the REAL gateway in-process
+- Gateway characterization tests (K1.3+): `services/gateway-api/test/` — 202 tests (193 from
+  the K1.3 split + 9 K1.4b/c/d isolation probes) build the REAL gateway in-process
   (`buildGatewayService` + fastify inject + fake Db via `setTestDb`) and pin auth, envelopes,
-  RBAC/safe-mode/rate-limit semantics, the task/approval/infra flows, and (as of K1.4b/c)
+  RBAC/safe-mode/rate-limit semantics, the task/approval/infra flows, and (as of K1.4b-d)
   per-user data isolation for migrated routes. They are the safety net for any gateway
   refactor. Event-bus service tests remain open (land with the Redis fan-out work).
 - `shared/test/` is at 107 tests (93 from K1.1 + 14 K1.4a `scopedCollection` contract tests).
