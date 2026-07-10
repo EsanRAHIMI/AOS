@@ -2,6 +2,179 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-11 — K1 Consolidation Prep: Second-Stage Classification of 8 Remaining Thin-Shell Candidates (D-170)
+
+With the first cutover honestly marked `BLOCKED_ON_MANUAL_DEPLOYMENT` (D-169),
+the next required step was a full source-read classification of the 8
+remaining candidates named in master-direction's own audit table, not a
+group-them-and-guess pass. Read every one of the 8 services' full `src/`
+logic (not just `index.ts` where a service delegates to sibling files).
+
+### Classification (code-read, not assumed)
+
+**Safe to consolidate now** — pure Mongo CRUD and/or internal HTTP only; no
+filesystem writes, no external write-capable API, no spawned OS process, no
+live-secret minting:
+- **documentation-service** (175 LOC) — `findOne`/`updateOne`-with-upsert
+  Mongo pattern, plus custom routes (`POST /docs`, `GET /docs`,
+  `GET /docs/:slug`) beyond the standard factory surface. Consolidating it
+  requires each worker to register its own extra routes on its own port —
+  the same per-worker `createFactoryService()` pattern already proven safe
+  in D-168, just with a non-empty `routes:` option on this one worker.
+- **memory-agent** (137 LOC) — `insertOne`/conditional
+  `findOne`+`updateOne`-or-`insertOne`. No LLM call, no filesystem, no
+  external network. The simplest and lowest-risk of all 8.
+- **internet-research-service** (76 LOC + shared `runResearch`) — LLM
+  router call (same pattern already accepted for architect/qa/reviewer/
+  report in D-168) plus an optional real outbound web-search API call
+  (Tavily, when `TAVILY_API_KEY` is set). This is a *read-only* outbound
+  network call, the same risk class as the LLM API calls already accepted
+  in the first consolidated group — not a write-capable external action.
+  Flagged as the heaviest of the three (most collections written per task:
+  `research_runs`, `research_sources`, `research_reports`,
+  `evidence_records`, `llm_traces`, `llm_cost_records`), but not structurally
+  riskier.
+
+**Must remain separate / blocked by runtime-dependency isolation** — each
+carries a real external side effect or a distinct runtime footprint that
+master-direction's own security/approval rules (`docs/security-and-
+permissions.md`: "no uncontrolled secret exposure," "no irreversible
+external action without approval") treat as a different trust boundary than
+pure-reasoning/data-layer agents:
+- **builder-agent** (125 LOC) — `scaffoldService()` writes real files to
+  disk (`SERVICES_ROOT`/`REPO_SERVICES_ROOT`), and `validateService()`
+  optionally *executes a real build* when `ALLOW_BUILD_VALIDATION=true`.
+  Filesystem-write and build-execution capability should not share a
+  process with agents that have neither.
+- **devops-agent** (171 LOC) — `github_deliver` action calls
+  `gitHubDeliveryFromEnv().deliver()`: a real GitHub branch/commit/PR
+  creation, gated by its own `GITHUB_TOKEN`.
+- **monitor-agent** (523 LOC across `index.ts`/`activation.ts`/`repair.ts`
+  — index.ts alone looked thin, but the delegated logic is not; full-file
+  read caught this, a headline-file-only read would have missed it) — its
+  `executeRepair()` `code_patch` path calls the *same*
+  `gitHubDeliveryFromEnv().deliver()` real-GitHub-write function as
+  devops-agent, and `main()` also owns a standalone `setInterval` background
+  health-scan loop that runs continuously in-process (`MONITOR_INTERVAL_MS`,
+  default 60s) — a distinct always-on runtime shape none of the other 7
+  candidates have. Two independent reasons to keep it separate, either
+  sufficient alone.
+- **voice-operator-agent** (123 LOC) — `realtime_token` action mints a real,
+  short-lived OpenAI Realtime API ephemeral secret and returns it in the
+  task response body (`clientSecret: tok.clientSecret`). This is a distinct
+  credential-exposure trust boundary — not filesystem, not GitHub, but a
+  live-secret-minting surface that shouldn't share a process with agents
+  that never touch a real secret beyond their own static API keys.
+- **browser-testing-agent** (182 LOC) — `runPlaywright()` optionally spawns
+  a real Chromium browser process (`playwright-core`'s `chromium.launch()`),
+  a heavier and more failure-prone OS-level runtime dependency than any
+  reasoning agent; also does real outbound `fetch()` to (allowlist-gated)
+  arbitrary URLs.
+
+**Blocked by K2 redesign:** none. All 8 are classifiable and actionable
+today; none require the agent-loop/Jarvis rewrite to decide.
+
+### Recommended batching (plan only — not implemented this session)
+
+Batch 2A: `documentation-service`, `memory-agent`, `internet-research-
+service` — same low-risk shape as the D-168 group, ready to build the same
+way (baseline characterization tests → `registerSignalHandlers:false`
+pattern already proven → consolidated runtime → re-run tests).
+Recommendation: **do not start Batch 2A implementation until the D-169
+cutover is unblocked or explicitly accepted as open by the owner** — the
+Dokploy 1-container/N-ports shape is already non-standard for one runtime;
+stacking a second not-yet-deployed consolidation candidate before the first
+is live multiplies undeployed surface area rather than reducing it, which
+runs counter to the "operationally usable, not a partial migration" standard
+this workstream is held to.
+
+Batch 2B: `builder-agent`, `devops-agent`, `monitor-agent`, `voice-
+operator-agent`, `browser-testing-agent` — remain five separate deployables
+indefinitely under the current architecture. Not revisited unless a future,
+separately-designed sandboxed/isolated-runtime approach is proposed
+end-to-end (out of scope here; not started).
+
+### What did NOT happen
+
+No code was written for Batch 2A or 2B. No characterization tests were
+added for any of the 8. This is a classification and batching
+recommendation only, per the explicit instruction to produce a plan before
+implementing.
+
+Scope: `docs/decision-log.md` only.
+
+## 2026-07-10 — K1 Consolidation Prep: Cutover Blocked on Manual Deployment (D-169)
+
+Following D-168 (aos-agent-runtime built, characterization-tested, commit
+`906b86a`), the assigned goal was to complete the OPERATIONAL cutover —
+actually deploy it, verify it in production, repoint the 4 domains, and
+stop the 4 original services — not stop at a code-level candidate.
+
+### Why this is blocked, not skipped
+Two independent reasons, either alone sufficient:
+1. **No network path.** This sandbox has no route to the Dokploy API host —
+   confirmed directly, not assumed: `curl -sI https://app.dokploy.com`
+   times out (`http_status=000`) from this environment.
+2. **Approval gate, independent of reachability.** A `DOKPLOY_BASE_URL`/
+   `DOKPLOY_API_TOKEN` pair exists in a local `gateway-api/.env` file, but
+   using it to autonomously create a production app and then stop four
+   live production services is exactly the class of action
+   `docs/security-and-permissions.md` and master-direction's own approval
+   rules gate behind explicit human approval ("Creating new production
+   services," "Modifying production deployment settings," "Any irreversible
+   action") — a credential sitting in a local file is not the same thing as
+   in-the-moment authorization for this specific irreversible action. I did
+   not attempt to use it.
+
+### What was produced instead (per the user's own explicit fallback instruction)
+1. `deployment/dokploy/aos-agent-runtime.md` (new): exact Dokploy app spec —
+   build/start commands, the one non-standard requirement (4 exposed ports
+   from one container, not the usual one), full env var list (no new
+   secrets — same `FACTORY_INTERNAL_TOKEN`/`MONGODB_URI` the 4 originals
+   already use), and the full near-zero-downtime cutover sequence (deploy
+   as a 5th app → verify in isolation → repoint one domain at a time,
+   verifying after each → stop old apps only after all 4 verified →
+   observe before any deletion).
+2. `scripts/aos-agent-runtime-cutover-verify.mjs` (new): the owner-run
+   verification script — checks `/health`, `/.factory/manifest`,
+   `/.factory/status`, `/.factory/capabilities`, and a real
+   `POST /.factory/task` round trip (Mongo write + `accepted:true`,
+   `forceFallback` so no LLM keys are required) for all 4 workers, plus an
+   optional real orchestrator-dispatch check. **Proven to actually work**,
+   not just written: ran it against 4 real, actually-listening instances of
+   the exact worker code in this sandbox (built via the same
+   `buildArchitectWorker`/etc. functions `aos-agent-runtime` uses) — first
+   confirmed it correctly reports all-FAIL against unreachable dummy ports,
+   then confirmed 20/20 PASS and exit 0 against the real instances. This is
+   the strongest verification I can give without an actual deployed
+   environment: the script's logic is proven correct, only the target host
+   is missing.
+3. `scripts/aos-agent-runtime-rollback.md` (new): a short, incident-runbook-
+   style rollback checklist (trigger conditions → stop-the-bleeding domain
+   repoint table → confirm via the same verify script → record the
+   incident) — deliberately separate from the full deployment spec so it's
+   fast to follow under pressure.
+4. Status marked `BLOCKED_ON_MANUAL_DEPLOYMENT` in
+   `services/aos-agent-runtime/README.md` (with the exact ordered list of
+   what the owner needs to do) and this entry.
+
+### What did NOT happen
+No Dokploy app was created. No domain was repointed. No service was
+stopped. Nothing was deleted. `docs/service-map.md`'s 19-service table and
+`docs/deployment-plan.md`'s existing deployment order remain accurate and
+unedited — production topology is unchanged, and no document claims
+otherwise.
+
+**Next K1 step:** the owner performs the manual deployment per
+`deployment/dokploy/aos-agent-runtime.md`, or explicitly accepts this
+blocker and directs work toward the next consolidation batch in parallel
+(see the second-stage classification below) while this one remains open.
+
+Scope: `deployment/dokploy/aos-agent-runtime.md` (new),
+`scripts/{aos-agent-runtime-cutover-verify.mjs (new),
+aos-agent-runtime-rollback.md (new)}`,
+`services/aos-agent-runtime/README.md`, `docs/decision-log.md`.
+
 ## 2026-07-10 — K1 Consolidation Prep: aos-agent-runtime Candidate for 4 Thin Agent Shells (D-168)
 
 With K1 Redis Backbone accepted, the assigned goal was to begin the service

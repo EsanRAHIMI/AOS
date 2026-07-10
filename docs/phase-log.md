@@ -3512,3 +3512,74 @@ package.json, vitest.config.ts (new), README.md}`, `packages/service-kit/src/ind
 `packages/service-kit/{test/signal-handlers.test.ts (new), package.json, vitest.config.ts (new)}`,
 `services/aos-agent-runtime/**` (new service), `scripts/local-services.mjs`,
 `docs/{decision-log.md, phase-log.md, service-map.md, deployment-plan.md, dokploy-setup.md}`.
+
+## Phase K1 Consolidation Prep — aos-agent-runtime Cutover — BLOCKED_ON_MANUAL_DEPLOYMENT (2026-07-10)
+
+**Goal:** complete the operational cutover of the 4 workers built in the prior phase (commit
+`906b86a`) — actually deploy, verify in production, repoint domains, stop the 4 originals. Not
+another code-level pass.
+
+**Blocked, honestly, not skipped:** confirmed by direct check (not assumed) that this sandbox has no
+network path to the Dokploy API host (`curl` times out, `http_status=000`). Independent of
+reachability, a real `DOKPLOY_BASE_URL`/`DOKPLOY_API_TOKEN` pair exists in a local `.env` file but
+using it to autonomously create a production app and stop four live services is an irreversible,
+approval-gated action per this project's own security rules — a credential existing somewhere is not
+in-the-moment authorization. Did not attempt to use it.
+
+**Delivered instead, per explicit instruction for this exact situation:**
+1. `deployment/dokploy/aos-agent-runtime.md` (new): exact Dokploy app spec — the one non-standard
+   requirement (4 exposed ports from one container), full env list (no new secrets), and the full
+   near-zero-downtime cutover/verification/rollback sequence.
+2. `scripts/aos-agent-runtime-cutover-verify.mjs` (new): owner-run verification script covering all 5
+   required endpoints per worker. **Proven correct, not just written** — ran it against 4 real,
+   actually-listening instances of the exact worker code in this sandbox: confirmed it correctly
+   all-FAILs against unreachable dummy ports, then 20/20 PASS + exit 0 against the real instances.
+3. `scripts/aos-agent-runtime-rollback.md` (new): a short incident-runbook-style checklist, separate
+   from the full spec so it's fast to follow under pressure.
+4. Status marked `BLOCKED_ON_MANUAL_DEPLOYMENT` in `aos-agent-runtime/README.md` (with the exact
+   ordered owner action list), `deployment-plan.md`, and decision-log D-169.
+
+**What did NOT happen:** no Dokploy app created, no domain repointed, no service stopped, nothing
+deleted. `service-map.md`'s 19-service table and `deployment-plan.md`'s deployment order remain
+accurate and unedited.
+
+**Next K1 step:** the owner performs the manual deployment, or explicitly accepts this blocker while
+work proceeds on the second-stage consolidation classification (see below) in parallel.
+
+Scope: `deployment/dokploy/aos-agent-runtime.md` (new), `scripts/{aos-agent-runtime-cutover-verify.mjs
+(new), aos-agent-runtime-rollback.md (new)}`, `services/aos-agent-runtime/README.md`,
+`docs/{decision-log.md, phase-log.md, deployment-plan.md}`.
+
+## Phase K1 Consolidation Prep — Second-Stage Classification of 8 Remaining Thin Shells (2026-07-11)
+
+**Goal:** full-source-read classification of the 8 remaining consolidation candidates
+(`builder-agent`, `devops-agent`, `documentation-service`, `memory-agent`,
+`internet-research-service`, `voice-operator-agent`, `browser-testing-agent`, `monitor-agent`) into
+safe-to-consolidate-now / must-remain-separate / blocked-by-K2 / blocked-by-runtime-isolation, plus a
+recommended batch plan — not implementation.
+
+**Read every full service, not just `index.ts`:** this mattered — `monitor-agent`'s `index.ts` looks
+like a thin dispatcher, but its delegated `repair.ts` calls the same real
+`gitHubDeliveryFromEnv().deliver()` GitHub-write function as `devops-agent`, and `index.ts`'s `main()`
+separately owns a standalone background `setInterval` scan loop. A headline-file-only read would have
+missed both and misclassified it as safe.
+
+**Classification (see decision-log D-170 for full detail):**
+- **Safe to consolidate now:** `documentation-service`, `memory-agent`, `internet-research-service` —
+  pure Mongo CRUD and/or LLM-router/read-only-web-search calls, same risk shape as the 4 already
+  consolidated in D-168.
+- **Must remain separate / blocked by runtime-dependency isolation:** `builder-agent` (real filesystem
+  writes + optional real build execution), `devops-agent` (real GitHub branch/commit/PR creation),
+  `monitor-agent` (same GitHub-write path as devops-agent, plus its own always-on background loop),
+  `voice-operator-agent` (mints and returns live OpenAI Realtime ephemeral secrets), `browser-testing-
+  agent` (spawns a real Chromium process via Playwright).
+- **Blocked by K2 redesign:** none — all 8 are classifiable and actionable today.
+
+**Recommended batching (plan only, nothing implemented):** Batch 2A = the 3 safe candidates, built the
+same way as D-168 once implemented — but recommended to wait until the D-169 cutover is unblocked or
+explicitly accepted open, so a second undeployed candidate doesn't stack on top of the first. Batch 2B
+= the 5 risk-bearing services stay separate deployables indefinitely under the current architecture.
+
+**What did NOT happen:** no code, no characterization tests, no new service folders for either batch.
+
+Scope: `docs/decision-log.md` (D-170), `docs/phase-log.md`.

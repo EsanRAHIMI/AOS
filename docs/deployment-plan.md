@@ -59,7 +59,17 @@ load balancer, so event fan-out and mutation rate limits stay correct across ins
 - Verify with `REDIS_URL=<url> node scripts/redis-two-instance-check.mjs` before relying on it in
   production with multiple replicas — see the script's own header comment for details.
 
-## aos-agent-runtime cutover (transitional, D-168 — NOT yet performed)
+## aos-agent-runtime cutover (transitional, D-168/D-169)
+
+**Status: BLOCKED_ON_MANUAL_DEPLOYMENT.** This sandbox has no network path to
+Dokploy (confirmed by a direct reachability check, not assumed) and,
+independent of that, actually deploying and cutting production over is an
+irreversible action requiring explicit human execution regardless of
+credential availability. See decision-log D-169. The exact Dokploy app spec
+is `deployment/dokploy/aos-agent-runtime.md`; the owner-run verification
+script is `scripts/aos-agent-runtime-cutover-verify.mjs` (already proven
+correct against real running instances in this sandbox); the rollback
+runbook is `scripts/aos-agent-runtime-rollback.md`.
 
 **Current production topology is unchanged by this section existing.**
 `architect-agent`, `reviewer-agent`, `qa-agent`, and `report-agent` remain

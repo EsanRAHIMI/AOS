@@ -1,13 +1,35 @@
 # AOS Agent Runtime (`aos-agent-runtime`)
 
-## Status: transitional consolidation candidate — NOT yet in production
+## Status: BLOCKED_ON_MANUAL_DEPLOYMENT (D-169)
 
-This service does not replace anything until a human deliberately repoints
-Dokploy at it. Today (as of D-168), production still runs the four original
-services below as four separate Dokploy apps. This README describes what
-this service IS and WILL DO after cutover — read `docs/deployment-plan.md` →
-"aos-agent-runtime cutover (transitional)" for the actual current/target
-split and the manual steps required to move from one to the other.
+Code-complete and fully characterization-tested (see decision-log D-168).
+Cutover to production is **blocked on manual deployment** — this session's
+sandbox has no network path to Dokploy (confirmed: `curl` to the Dokploy API
+host times out from this environment) and, independent of that, actually
+creating a Dokploy app and stopping four live production services is an
+irreversible, production-affecting action that requires a human to execute
+and approve, not something an agent should do unattended even where
+credentials happen to be reachable. Today, production still runs the four
+original services below as four separate Dokploy apps, unchanged.
+
+**What the owner needs to do**, in order:
+1. Read `deployment/dokploy/aos-agent-runtime.md` — exact Dokploy app spec,
+   env vars, and the full cutover sequence.
+2. Create the Dokploy app and deploy it as a **fifth**, parallel app (do not
+   touch the 4 originals yet).
+3. Run `scripts/aos-agent-runtime-cutover-verify.mjs` against it directly,
+   before any domain repoint.
+4. Repoint one domain at a time, re-verifying after each, per the sequence
+   in the deployment doc.
+5. Only after all 4 are repointed and verified: stop (not delete) the 4
+   original apps.
+6. If anything fails at any point: `scripts/aos-agent-runtime-rollback.md`.
+7. After an observation period, decide separately whether to delete the old
+   app definitions and repo folders — not part of this cutover.
+
+This README describes what this service IS and WILL DO after cutover — read
+`docs/deployment-plan.md` → "aos-agent-runtime cutover (transitional)" for
+the actual current/target split.
 
 ## Purpose
 
@@ -75,16 +97,20 @@ in each `src/workers/*.ts` manifest, unchanged from the originals).
 
 ## Deployment
 
-Not yet deployed. See `docs/deployment-plan.md` → "aos-agent-runtime
-cutover (transitional)" for the exact, human-executed Dokploy steps required
-before this service carries any real traffic, and the rollback path if
-cutover needs to be reversed.
+Not yet deployed. **BLOCKED_ON_MANUAL_DEPLOYMENT (D-169)** — see
+`deployment/dokploy/aos-agent-runtime.md` for the exact Dokploy app spec and
+`docs/deployment-plan.md` → "aos-agent-runtime cutover (transitional)" for
+the full human-executed sequence, verification, and rollback path.
 
 ## Current status
 
-Code-level consolidation candidate. Characterization-tested equivalent to
-the 4 original services (35 tests, including real-port-binding and
-env-non-contamination proofs). Production topology has NOT changed.
+Code-level consolidation candidate, cutover blocked on manual deployment.
+Characterization-tested equivalent to the 4 original services (35 tests,
+including real-port-binding and env-non-contamination proofs) — that proof
+was also validated against real, actually-listening instances with
+`scripts/aos-agent-runtime-cutover-verify.mjs` (20/20 checks passed) as part
+of proving the verification script itself works, not just that the workers
+do. Production topology has NOT changed.
 
 ## Future improvements
 
