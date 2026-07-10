@@ -2,6 +2,134 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-11 — K1 Consolidation Prep Batch 2A: documentation-service, memory-agent, internet-research-service — Code-Level Candidate (D-172)
+
+With D-171 confirming Batch-1 cutover stays `BLOCKED_ON_MANUAL_DEPLOYMENT`
+and the owner explicitly directing K1 work to continue without waiting on
+that infrastructure action, the assigned goal was Batch 2A: fold
+`documentation-service`, `memory-agent`, and `internet-research-service`
+into `aos-agent-runtime` as a second code-level candidate — explicitly NOT
+touching Dokploy, NOT stopping any service, NOT claiming production
+topology changed.
+
+### Pre-implementation re-inspection (A-J, required before touching code)
+
+**A. Unique logic per service.** `documentation-service`: `upsertDoc`/
+`appendLog` (Mongo `findOne`+`updateOne` upsert with version bump), 3
+custom HTTP routes (`POST /docs`, `GET /docs`, `GET /docs/:slug`,
+internal-token guarded), default task handler auto-appends phase-log/
+decision-log/a per-task doc. `memory-agent`: task handler `insertOne`s a
+`Memory`, then conditionally (if `input.skill` set) either `findOne`+
+`updateOne`-with-`$inc`/`$addToSet` an existing `Skill` or `insertOne`s a
+new one. `internet-research-service`: task handler runs
+`llmRouterFromEnv()` + `runResearch()` (optionally grounded by a real,
+read-only Tavily call when `TAVILY_API_KEY` is set), persists
+`LlmTrace`/`LlmCostRecord`/`ResearchRun`/`ResearchSource[]`/
+`ResearchReport`/`EvidenceRecord`.
+
+**B. Runtime dependencies.** All three depend only on `@factory/shared` +
+`@factory/service-kit` (confirmed via `package.json` — no unique
+third-party deps) plus MongoDB Atlas. `internet-research-service`
+additionally uses the LLM router (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`,
+same pattern already proven safe in D-168) and optionally
+`TAVILY_API_KEY`.
+
+**C. Background jobs/timers.** None in any of the three — confirmed via a
+direct `grep -rn "setInterval|setTimeout|cron|worker_threads|child_process|
+spawn("` across all three `src/` trees; zero matches.
+
+**D. External network dependencies.** `documentation-service`: none.
+`memory-agent`: none. `internet-research-service`: LLM-router API calls
+(same as Batch 1) plus an optional read-only Tavily web-search call —
+non-mutating, gracefully degrades to fallback mode when the key is unset.
+
+**E. Isolation reasons that could justify separation.** None found for any
+of the three on re-inspection — matches the D-170 classification exactly;
+no new finding changes that conclusion.
+
+**F. Target worker structure.** Three new files under
+`services/aos-agent-runtime/src/workers/`: `documentation-service.ts`,
+`memory-agent.ts`, `internet-research-service.ts` — same pattern as the
+Batch-1 four (duplicated source, own manifest, own
+`SERVICE_PORTS[...]`-derived port, `registerSignalHandlers: false`, own
+`createFactoryService()` call; documentation-service's worker also passes
+its `routes` option through, byte-for-byte behaviorally unchanged).
+`src/index.ts` extended to build+listen on all 7, one shared shutdown
+handler (already generalized, just extended the `Promise.all` array).
+
+**G. Compatibility contracts.** Preserve `serviceId`, port (4109/4110/
+4115), manifest, `/health`, `/.factory/manifest`, `/.factory/status`,
+`/.factory/capabilities`, `/.factory/task`, and — for
+`documentation-service` specifically — the 3 custom `/docs*` routes with
+identical guard/behavior.
+
+**H. Tests required before migration.** Baseline characterization tests
+against the 3 CURRENT separate services (mirroring D-168's pattern):
+health/manifest/status/capabilities/task/error-envelopes/Mongo-writes/
+event-types for each, plus `documentation-service`'s 3 custom routes
+(unauthorized, missing fields, upsert-then-get round trip, list),
+`memory-agent`'s no-skill / new-skill / reinforce-existing-skill paths, and
+`internet-research-service`'s `forceFallback` path (no real API keys
+needed). Then the same assertions re-run against the consolidated runtime.
+
+**I. Deployment implications.** None yet — code-level only. A future
+cutover spec (mirroring `deployment/dokploy/aos-agent-runtime.md`) would be
+a separate, later step; explicitly not written this pass per instruction
+not to touch Dokploy.
+
+**J. Rollback plan.** Trivial: this is code-only, nothing is deployed —
+reverting the commit fully removes the candidate with zero blast radius,
+since all 7 original services (Batch 1 + Batch 2A) remain the live,
+untouched deployables.
+
+### What was built
+
+- `services/{documentation-service,memory-agent,internet-research-service}/
+  src/server.ts` (new) + `src/index.ts` (rewritten to thin bootstrap) —
+  same construction/bootstrap split as Batch 1's 4 services. No behavior
+  change from the original single-file versions — including
+  `internet-research-service`'s exact original quirk of reading
+  `TAVILY_API_KEY` from raw `process.env` rather than the typed
+  `ResearchEnvSchema` merge.
+- `services/{documentation-service,memory-agent,internet-research-service}/
+  test/characterization.baseline.test.ts` (new, 12 + 9 + 7 = 28 tests).
+- `services/{documentation-service,memory-agent,internet-research-service}/
+  {package.json (vitest added), vitest.config.ts (new)}`.
+- `services/aos-agent-runtime/src/workers/{documentation-service,
+  memory-agent,internet-research-service}.ts` (new) — duplicated, not
+  imported, same as Batch 1's workers.
+- `services/aos-agent-runtime/src/index.ts` — extended to build+listen on
+  7 workers total; `ResearchEnvSchema` merged into the loaded env so
+  `TAVILY_API_KEY` validates the same way.
+- `services/aos-agent-runtime/test/characterization.consolidated.batch2a.test.ts`
+  (new) — re-runs the 3 new services' baseline assertions against the
+  consolidated build, plus an env-non-contamination proof for the 3 new
+  workers and a combined proof that all 7 workers (Batch 1 + Batch 2A)
+  bind 7 distinct historical ports simultaneously in one process.
+- `services/aos-agent-runtime/{README.md, .env.example, package.json}` —
+  updated to describe all 7 workers, explicit
+  `CODE-LEVEL CANDIDATE ONLY — PRODUCTION TOPOLOGY UNCHANGED` status
+  banner, and the two-batches-at-two-stages distinction (Batch 1 blocked
+  on manual deployment with a full cutover spec; Batch 2A has no cutover
+  spec at all).
+
+### What did NOT happen
+
+No Dokploy app created, no domain repointed, no service stopped, nothing
+deleted. No deployment/dokploy spec written for Batch 2A. `docs/service-map.md`'s
+production-topology table and `docs/deployment-plan.md`'s deployment order
+remain accurate and describe today's still-19-service reality.
+
+**Operational status: `CODE-LEVEL CANDIDATE ONLY — PRODUCTION TOPOLOGY UNCHANGED`.**
+
+Scope: `services/{documentation-service,memory-agent,
+internet-research-service}/{src/server.ts (new), src/index.ts, test/
+characterization.baseline.test.ts (new), package.json, vitest.config.ts
+(new)}`, `services/aos-agent-runtime/{src/workers/*.ts (3 new), src/
+index.ts, test/characterization.consolidated.batch2a.test.ts (new),
+README.md, .env.example, package.json}`, `docs/{decision-log.md,
+phase-log.md, service-map.md, dokploy-setup.md}`.
+
 ## 2026-07-11 — K1 Consolidation Prep: Cutover Attempt Re-Blocked, Broader Cause Confirmed (D-171)
 
 The owner explicitly instructed executing the D-169 manual cutover directly

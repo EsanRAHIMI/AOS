@@ -52,24 +52,32 @@ Every backend service must expose:
 This surface is provided by `@factory/service-kit` and verified by workspace
 runtime probes before promotion.
 
-## Transitional: aos-agent-runtime consolidation candidate (D-168)
+## Transitional: aos-agent-runtime consolidation candidate (D-168/D-172)
 
 **This section describes a candidate, not current production reality.** The
 19-service table above is still accurate: production runs all 19 services
-listed, unchanged, today. `services/aos-agent-runtime` (new, K1
-Consolidation Prep) is a parallel, characterization-tested replacement
-candidate for 4 of the specialist agents above — Architect, Reviewer, QA,
-Report — hosting all 4 as one deployable process, each still bound to its
-own historical port/domain/serviceId from the table above. It has NOT been
-deployed and does not carry production traffic.
+listed, unchanged, today. `services/aos-agent-runtime` (K1 Consolidation
+Prep) is a parallel, characterization-tested replacement candidate for 7 of
+the services above, built in two batches:
 
-Cutting production over from the 4 separate services to this one
+- Batch 1 (D-168): Architect, Reviewer, QA, Report agents. Has a full
+  Dokploy cutover spec, verify script, and rollback runbook — cutover
+  itself is `BLOCKED_ON_MANUAL_DEPLOYMENT` (D-169, re-confirmed D-171).
+- Batch 2A (D-172): Memory Agent, Documentation Service, Internet Research
+  Service. **Code-level candidate only — no cutover spec written yet.**
+
+All 7 are hosted as one deployable process, each still bound to its own
+historical port/domain/serviceId from the table above. Neither batch has
+been deployed; neither carries production traffic.
+
+Cutting production over from any of these 7 separate services to this one
 deployable requires a human to manually repoint Dokploy — see
 `docs/deployment-plan.md` → "aos-agent-runtime cutover (transitional)" for
-the exact steps and the rollback path. Until that happens, this table's
-count of 19 production deployables remains correct; this section exists so
-future agents/readers know the candidate exists and where to find it,
-without mistaking its existence for a completed migration.
+Batch 1's exact steps and rollback path (Batch 2A has none yet). Until that
+happens, this table's count of 19 production deployables remains correct;
+this section exists so future agents/readers know the candidates exist and
+where to find them, without mistaking their existence for a completed
+migration.
 
 ## Growth Direction
 

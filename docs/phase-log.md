@@ -3609,3 +3609,31 @@ stopped, no real-target verification run. D-169's `BLOCKED_ON_MANUAL_DEPLOYMENT`
 marked complete.
 
 Scope: `docs/decision-log.md` (D-171), `docs/phase-log.md`. No code, no infra.
+
+## Phase K1 Consolidation Prep Batch 2A — documentation-service, memory-agent, internet-research-service — CODE-LEVEL CANDIDATE ONLY (2026-07-11)
+
+**Goal:** fold the 3 services classified "safe to consolidate now" in D-170 into `aos-agent-runtime`
+as a second code-level candidate, without touching Dokploy, without stopping any service, without
+claiming production topology changed. Owner explicitly directed this to proceed in parallel with
+Batch-1's cutover staying `BLOCKED_ON_MANUAL_DEPLOYMENT`.
+
+**Re-inspected all three in full before touching code** (A-J plan, see decision-log D-172 for full
+detail): confirmed no filesystem writes, no external write-capable API, no background timer/loop, no
+spawned OS process in any of the three — matches D-170's classification with no new finding.
+
+**Built, same pattern as Batch 1 (D-168):** `server.ts`/thin-`index.ts` split + baseline
+characterization tests for all 3 original services (28 tests total), 3 new workers in
+`services/aos-agent-runtime/src/workers/`, `index.ts` extended to 7 workers with one shared shutdown
+handler, and `test/characterization.consolidated.batch2a.test.ts` proving equivalence plus a combined
+7-worker real-port-binding proof (all 7 ports distinct, all bind simultaneously in one process).
+
+**What did NOT happen:** no Dokploy app created, no domain repointed, no service stopped, nothing
+deleted, no deployment/dokploy spec written for Batch 2A (Batch 1's spec/blocker status is unchanged
+and unaffected by this phase).
+
+**Operational status: `CODE-LEVEL CANDIDATE ONLY — PRODUCTION TOPOLOGY UNCHANGED`.** All 7 services
+(4 from Batch 1, 3 from Batch 2A) remain live, separate, untouched Dokploy apps today.
+
+Scope: `services/{documentation-service,memory-agent,internet-research-service}/*` (server.ts split +
+tests), `services/aos-agent-runtime/*` (3 new workers, index.ts, batch2a test, README, .env.example,
+package.json), `docs/{decision-log.md (D-172), phase-log.md, service-map.md, dokploy-setup.md}`.

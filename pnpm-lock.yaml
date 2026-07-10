@@ -210,6 +210,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
 
   services/event-bus-service:
     dependencies:
@@ -292,6 +295,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
 
   services/memory-agent:
     dependencies:
@@ -311,6 +317,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
 
   services/monitor-agent:
     dependencies:

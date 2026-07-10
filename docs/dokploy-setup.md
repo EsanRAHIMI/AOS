@@ -14,10 +14,13 @@ diagnostics, checklists, and approvals.
 - Redis is optional (K1 Redis Backbone, D-167) — only needed when running more than one replica of
   `gateway-api` or `event-bus-service`. See `docs/deployment-plan.md` → "Redis Backbone" for the
   full setup and rollback notes.
-- `services/aos-agent-runtime` is a transitional consolidation candidate (K1, D-168) — NOT yet
-  deployed. Production still runs `architect-agent`, `reviewer-agent`, `qa-agent`, and `report-agent`
-  as four separate apps today. See `docs/deployment-plan.md` → "aos-agent-runtime cutover
-  (transitional)" before creating anything for it in Dokploy.
+- `services/aos-agent-runtime` is a transitional consolidation candidate (K1, D-168/D-172) — NOT yet
+  deployed, now hosting 7 workers across two batches. Batch 1 (architect/reviewer/qa/report, D-168)
+  has a full cutover spec but is `BLOCKED_ON_MANUAL_DEPLOYMENT` (D-169/D-171). Batch 2A
+  (memory-agent/documentation-service/internet-research-service, D-172) is code-level only — no
+  cutover spec exists for it yet. Production still runs all 7 original services as separate apps
+  today. See `docs/deployment-plan.md` → "aos-agent-runtime cutover (transitional)" before creating
+  anything for it in Dokploy.
 
 ## Creating a Service
 
