@@ -5,9 +5,24 @@ The system's single public front door: authentication/RBAC, task intake and
 timelines, approvals, the operator/Jarvis runtime (command loop, live-state,
 approval decisions), voice session mediation, Dokploy operations, and every
 governance/learning/reality-execution route the dashboard and agents depend
-on. `services/gateway-api/src/index.ts` is the largest single file in the
-codebase (~60 route groups) — this README summarizes the surface; the
-authoritative route list is the source file itself and `docs/api-contracts.md`.
+on. This README summarizes the surface; the authoritative route list is
+`src/routes/*.ts` and `docs/api-contracts.md`.
+
+## Structure (K1.3 split)
+- `src/index.ts` — production bootstrap only (loadEnv → build → listen).
+- `src/server.ts` — `buildGatewayService(env, {connectDb})`: hooks, collection
+  handles, guards/security helpers, the cross-group runtime (operations
+  executor, voice kernel-task helper, personal graph loaders, operator/Jarvis
+  subsystem), and the flat `GatewayDeps` object handed to every route module.
+  Exported for tests — the characterization suite builds the real gateway
+  in-process with an injected fake Db (`test/helpers/`).
+- `src/routes/{tasks,capabilities,governance,security,operations,intelligence,
+  voice,personal,operator,system}.ts` — route registrations, bodies moved
+  verbatim from the pre-split monolith; each destructures what it uses from
+  `GatewayDeps` (`src/routes/deps.ts`).
+- `test/characterization.*.test.ts` — 193 tests pinning auth, envelopes,
+  RBAC/safe-mode/rate-limit behavior, and the task/approval/infra flows.
+  They must stay green through any refactor of this service.
 
 ## Public endpoints
 - `GET /health` — liveness (unauthenticated)

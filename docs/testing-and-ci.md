@@ -56,6 +56,8 @@ recursive tests. A red CI blocks merge; no exceptions, including for agents.
 
 - The local dev mount blocks `pnpm install` writes (see README-SETUP); installs and full test
   runs during agent sessions happen in a sandbox-local copy — CI is the canonical verifier.
-- Service-level tests (gateway routes, event bus) land with the K1 gateway split, where routes
-  become importable modules; testing a 3,698-line `index.ts` entrypoint is not practical, which
-  is itself part of the case for the split (master-direction §F).
+- Gateway characterization tests (K1.3): `services/gateway-api/test/` — 193 tests build the
+  REAL gateway in-process (`buildGatewayService` + fastify inject + fake Db via `setTestDb`)
+  and pin auth, envelopes, RBAC/safe-mode/rate-limit semantics and the task/approval/infra
+  flows. They are the safety net for any gateway refactor. Event-bus service tests remain
+  open (land with the Redis fan-out work).

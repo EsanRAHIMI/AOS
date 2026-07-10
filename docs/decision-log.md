@@ -2,6 +2,26 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.3 Gateway Split (characterize → then move)
+
+### D-157 Gateway split design: characterization-first, verbatim bodies, one flat GatewayDeps
+The 3,698-line gateway monolith was split ONLY after 193 characterization tests pinned its
+behavior (auth sweep over 85 read surfaces, task/approval/infra flows, RBAC/safe-mode/rate-limit
+semantics) via a new in-process harness (`buildGatewayService` seam + fastify inject + fake Db
+through the shared `setTestDb` seam). Design decisions: (1) route bodies moved VERBATIM into
+`src/routes/*.ts` — diff-proven, 7/10 modules byte-identical; (2) the shared runtime (collection
+handles, guards, security helpers, cross-group subsystems: operations executor, voice kernel-task,
+personal graph loaders, operator/Jarvis runtime) stays in `server.ts` behind ONE flat `GatewayDeps`
+object so moved bodies keep their exact identifiers; (3) exactly two mechanical deviations, both
+typecheck-verified and test-verified: `let lastDokploySyncAt` → shared `dokploySync.lastAt` state
+object (a destructured `let` cannot be assigned across module boundaries; 5 call sites), and six
+operator-collection consts relocated to server.ts (they sat inside a moved line range but belong
+to the shared runtime). Explicitly NOT done in this pass (separate later passes, not mixed): the
+operator/Jarvis helper subsystem decomposition, scopedCollection route migration, the
+`collection()` lint rule, and removal of the pre-existing duplicate errorHandler override
+(observed via FSTWRN004 — service-kit's is overridden by the gateway's identical copy; left
+as-is because behavior freeze beats cleanup during a split).
+
 ## 2026-07-10 — Phase K1.4a Scope-By-Construction Data Layer
 
 ### D-156 `scopedCollection(ctx)` — isolation moves from convention to construction

@@ -3016,3 +3016,43 @@ cross-tenant probes against a live kernel.
 
 Scope: `shared/{src/db/scoped.ts(new), src/db/index.ts, test/scoped-collection.contract.test.ts(new)}`,
 `docs/{multi-tenant-governance.md, decision-log.md, phase-log.md}`.
+
+## Phase K1.3 — Gateway Monolith Split (behavior-frozen) — COMPLETE (2026-07-10)
+
+**Goal (master-direction §J.2):** split the 3,698-line `gateway-api/src/index.ts` into route
+modules with ZERO behavior change, characterization tests first.
+
+**Process (in commit order):**
+1. **K1.3a seam** — `main()` body moved verbatim into exported `buildGatewayService(env,
+   {connectDb})`; `index.ts` → 21-line bootstrap. Diff-verified byte-identical body.
+2. **K1.3b characterization** — 193 tests pinning pre-split behavior through the real app
+   (in-process inject + fake Mongo via `setTestDb`; no network): 85-surface auth sweep
+   (exact 401 envelope / 200 admin / 200 internal / x-request-id), task pipeline (validation,
+   persistence, queued-on-unreachable-orchestrator, viewer 403 + audit), approvals
+   (approve→task completed, reject→cancelled, 400/404), infra confirm, events clamp,
+   services-proxy fallback, safe-mode seed/persist/toggle/audit + 403 blocking + off-switch
+   exemption, security check persistence, 61st-mutation 429 + security event, rbac shape,
+   system status.
+3. **K1.3c split** — routes moved VERBATIM into 10 modules
+   (`src/routes/{tasks,capabilities,governance,security,operations,intelligence,voice,
+   personal,operator,system}.ts`, 2,300 route lines); shared runtime + cross-group helpers
+   stay in `server.ts` (1,655 lines) behind one flat `GatewayDeps` (`src/routes/deps.ts`).
+   Deviations: exactly 2, documented in D-157 (dokploySync state object — 5 lines; 6 operator
+   collection consts relocated to server.ts). Verbatim proof: unified-diff of every moved
+   body vs the pre-split file — 7/10 modules byte-identical, 18 total changed lines, all
+   accounted for by the two deviations.
+
+**Verification:** gateway `tsc --noEmit` clean; gateway build clean; characterization suite
+**193/193 green against the split gateway**; shared suite 107/107 green; route inventory
+unchanged (same paths, same methods). Pre-existing duplicate errorHandler override observed
+(FSTWRN004) and deliberately left unchanged.
+
+**Left in place (too entangled to move safely this pass, per the split rules):** the
+operator/Jarvis helper subsystem (~850 lines: code-operator proxy, tool executors, Jarvis
+context/composition, runLoop) remains in `server.ts` — it is shared runtime used by BOTH the
+personal and operator route modules; decomposing it is a separate future pass with its own
+tests, not a route-move.
+
+Scope: `services/gateway-api/{src/index.ts, src/server.ts(new), src/routes/*(new, 11 files),
+test/*(new, 4 files), package.json, vitest.config.ts(new), README.md}`, `pnpm-lock.yaml`,
+`docs/{decision-log.md, testing-and-ci.md, phase-log.md}`.
