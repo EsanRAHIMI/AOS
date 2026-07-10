@@ -90,9 +90,18 @@ export function authenticate(email: string, password: string): { email: string; 
 
 const SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 hours
 
-export async function createSessionCookie(email: string, role: SessionRole): Promise<void> {
+/**
+ * `gatewaySessionToken` (K1 Real Auth bridge, D-165): the real gateway
+ * bearer session token, when the same credentials also matched a gateway
+ * `user_accounts` row. Stored inside this same signed, httpOnly cookie —
+ * not a new exposure surface, same protection tier as the rest of the
+ * payload. Optional and absent for dev-only demo logins.
+ */
+export async function createSessionCookie(email: string, role: SessionRole, gatewaySessionToken?: string): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  const token = await signSession({ email, role, iat: now, exp: now + SESSION_TTL_SECONDS }, sessionSecret());
+  const payload: SessionPayload = { email, role, iat: now, exp: now + SESSION_TTL_SECONDS };
+  if (gatewaySessionToken) payload.gatewaySessionToken = gatewaySessionToken;
+  const token = await signSession(payload, sessionSecret());
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,

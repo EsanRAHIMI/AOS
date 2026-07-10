@@ -2,6 +2,87 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1 Real Auth: Dashboard-Web Gateway Session Bridge (D-165)
+
+Completes the deprecation path D-164 explicitly left open: "the legacy fallback ... must not
+become an invisible permanent backdoor" and "the next auth-related K-phase should either (a)
+migrate dashboard-web onto real gateway sessions ... or (b) explicitly re-affirm keeping it." This
+pass takes (a), without a UI redesign and without removing the legacy path outright — dashboard-web
+now *attempts* real gateway sessions and only falls back to the legacy path when it genuinely can't
+get one (dev-only demo logins, an operator not yet provisioned in the gateway's `user_accounts`).
+
+### Design
+Dashboard-web's own login (`lib/auth.ts` — independent scrypt-hashed, env-configured credentials,
+signed HMAC session cookie) is left completely intact; it is still what actually gates access to
+the dashboard and needs no dependency on the gateway to keep working. What changes is what happens
+*after* local auth succeeds: `app/login/actions.ts`'s `loginAction` now also calls the gateway's
+real `POST /v1/auth/login` with the same email/password the user just typed. If the gateway has a
+matching, active `user_accounts` row, the returned bearer token is stored inside the *same* signed,
+httpOnly, secure, sameSite cookie the dashboard already uses (`SessionPayload.gatewaySessionToken`,
+`lib/session.ts`) — not a new cookie, not a new exposure surface, same protection tier as the rest
+of the payload the dashboard already trusts. If the gateway login fails (expected for
+`owner@local`/`operator@local`/`viewer@local` dev demos, and for any production operator not yet
+separately provisioned via `POST /v1/auth/users`), `gatewaySessionToken` is simply absent and the
+dashboard behaves exactly as it did before this change — zero regression, not a degraded mode.
+
+`lib/gateway-session.ts` (new) holds the bridge logic: `gatewayLogin`/`gatewayLogout` (plain fetch
+wrappers, never throw — a network failure or 401 resolves to `null`/silent success, respectively,
+so a gateway outage degrades to the legacy path rather than breaking dashboard login) and
+`buildAuthHeaders(adminToken, session)`, the pure function that decides what to send on every
+subsequent gateway call: the admin token unconditionally (service/dev reachability, unchanged from
+before), `x-factory-role` whenever a local session exists (legacy signal), and
+`x-factory-session-token` whenever a bridged token exists. Sending the role header even when a real
+session token is also present is deliberate, not sloppy: per D-164's design, the gateway's
+`declaredRole()` gives the session token strict priority the instant one is declared — an invalid or
+expired bridged token resolves to `'agent'` (fail closed), it never silently falls through to the
+role header. So the two headers are never in conflict; the role header is inert exactly when the
+session token is doing its job, and is the only thing doing its job when there is no session token.
+This module deliberately has no `server-only` import (unlike `lib/gateway.ts`) specifically so it
+stays unit-testable — the codebase's `lib/rbac.ts` established the same "duplicate small constants
+locally rather than add a dashboard→shared dependency" pattern this module follows for
+`SESSION_TOKEN_HEADER`.
+
+`logoutAction` now also revokes the real gateway session (`gatewayLogout`) before clearing the
+dashboard's own cookie — best-effort, never blocks sign-out, but keeps a signed-out dashboard user
+from leaving a live, un-revoked gateway session sitting around for the rest of its 8h TTL.
+
+### Production safety rail
+Added a one-time boot warning in `services/gateway-api/src/server.ts`: if `FACTORY_ENV=production`
+and `FACTORY_ALLOW_LEGACY_ROLE_AUTH` is still `true`, the gateway now logs a warning naming the risk
+and the two things to check (dashboard bridge working, `FACTORY_ALLOW_LEGACY_ROLE_AUTH=false`) —
+non-blocking, a visibility aid, not a new enforcement gate. The switch itself already existed
+(D-164); this makes leaving it on in production an active, visible choice instead of a silent
+default.
+
+### What is still required before the legacy path can actually be turned off
+Flipping `FACTORY_ALLOW_LEGACY_ROLE_AUTH` to `false` in production is **not yet safe** purely from
+this pass — it additionally requires every production dashboard operator (not just the owner) to
+have a matching `user_accounts` row provisioned via `POST /v1/auth/users`, since the bridge only
+activates when credentials match on both sides. That provisioning step is manual and out of scope
+here; it is the next concrete action before the switch can flip. CI/internal tooling still using the
+admin token directly (no login flow at all) is unaffected either way and is exactly the
+"CI/internal/dev" carve-out D-164 always intended to keep.
+
+### Tests
+`services/dashboard-web/test/gateway-session.test.ts` (new, 10 tests) — the first test suite in
+dashboard-web, added with a new scoped `vitest.config.ts` and `vitest` devDependency (dashboard-web
+had zero test infrastructure before this). Covers `buildAuthHeaders` in all three states (no
+session, legacy-only, bridged) plus `SESSION_TOKEN_HEADER` matching the gateway's constant, and
+`gatewayLogin`/`gatewayLogout` against a mocked `fetch`: correct request shape, correct success
+parsing, and — the important property — never throwing on a 401, a malformed envelope, or a network
+error. This is deliberately a network-free unit suite; end-to-end proof that a real session token
+resolves to a real gateway actor is already covered by the 24-test
+`characterization.auth-real.test.ts` from D-164 — this suite only needed to prove the dashboard
+constructs the right request, not re-prove the gateway's own contract. React component/page tests
+remain out of scope (no jsdom/testing-library setup) — not a gap in this pass, just outside its
+"minimal compatibility, no UI redesign" mandate.
+
+### Verification
+`gateway-api` typecheck clean after the `server.ts` boot-warning addition; `dashboard-web` typecheck
+clean; `dashboard-web` vitest 10/10 new tests passing; `shared` 128/128 and `gateway-api` 238/238
+unaffected (no shared or gateway route-level code changed beyond the additive boot warning);
+`check-scope-boundary.mjs` green (no collection-access changes in this pass).
+
 ## 2026-07-10 — Phase K1 Real Auth: Users, Sessions, Session-Backed Actor Context (D-164)
 
 Prior to this pass, gateway RBAC (K1.4a-f) was fully scope-by-construction, but it had never been

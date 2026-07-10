@@ -49,7 +49,8 @@ approval-gated, least privilege, no hidden production changes.
 ## Required Future Hardening
 
 - OIDC/OAuth2 login (current: first-party email+password only — no external IdP).
-- Migrate dashboard-web onto real gateway sessions, then default
+- Provision every production dashboard operator as a real gateway user (D-165 bridge is wired,
+  but activation still requires this manual step per operator), then default
   `FACTORY_ALLOW_LEGACY_ROLE_AUTH` to `false` (see "K1 Real Auth" deprecation path below).
 - Tenant model with role inheritance, delegation, and consent records.
 - Redis-backed rate limits, lockouts, sessions, and safe-mode propagation.
@@ -101,13 +102,27 @@ defaulting.
 
 **Legacy fallback — temporary, not a backdoor.** The pre-K1 `x-factory-admin-token` +
 self-declared `x-factory-role` header path still works, gated by `FACTORY_ALLOW_LEGACY_ROLE_AUTH`
-(default `true`). It exists only for K1 compatibility, CI/internal/dev use, and dashboard-web's
-current login (which authenticates independently, then declares its role this way — see
-phase-log and decision-log D-164). When the switch is set to `false`, the admin token alone still
-satisfies `guard()` (service/dev reachability), but the self-declared role is no longer trusted —
-it resolves to `viewer`, the least-privileged role, instead of whatever the header claims.
-**Deprecation path:** flip the default to `false` once dashboard-web (or any other legacy caller)
-has migrated onto real gateway sessions; this must be a recorded decision, not a silent drift.
+(default `true`). It exists only for K1 compatibility and CI/internal/dev use. When the switch is
+set to `false`, the admin token alone still satisfies `guard()` (service/dev reachability), but the
+self-declared role is no longer trusted — it resolves to `viewer`, the least-privileged role,
+instead of whatever the header claims. In production, the gateway now logs a boot-time warning if
+this switch is left `true` (D-165) — a visibility aid, not an enforcement gate.
+
+**Dashboard-web bridge (D-165).** Dashboard-web's own login (independent, scrypt-hashed,
+env-configured credentials, its own signed session cookie) now also attempts a real gateway login
+with the same credentials at sign-in. If the gateway has a matching, active `user_accounts` row,
+the real bearer token is stored inside the dashboard's existing httpOnly/secure/sameSite cookie and
+forwarded as `x-factory-session-token` on every subsequent gateway call — the dashboard then acts
+under a real, revocable, per-user session instead of the legacy role header. If there's no matching
+gateway account (dev-only demo logins, or a production operator not yet provisioned), the bridge
+silently no-ops and the dashboard continues on the legacy path exactly as before — zero regression,
+not a degraded mode. **To make a production dashboard operator use a real session, provision them
+as a real gateway user with the same email/password**: `node scripts/hash-password.mjs
+'<password>'` → `POST /v1/auth/users` (owner-only) with that hash and the matching email. **Full
+deprecation path:** once every production dashboard operator (not just the owner) is provisioned
+this way, and CI/internal tooling's direct admin-token usage is the only remaining legacy caller,
+set `FACTORY_ALLOW_LEGACY_ROLE_AUTH=false`. This is not yet safe to do by default — it requires that
+manual provisioning step first.
 
 ## Phase AA — scope & identity enforcement
 Authorization is centralized in the shared `canAccess` engine, enforced at the

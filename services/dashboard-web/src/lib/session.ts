@@ -11,6 +11,17 @@ export interface SessionPayload {
   role: SessionRole;
   iat: number;
   exp: number;
+  /**
+   * K1 Real Auth bridge (D-165): the real gateway bearer session token
+   * (`x-factory-session-token`), obtained via `POST /v1/auth/login` with the
+   * same credentials at sign-in time. Present only when the dashboard's
+   * email+password also matched a real gateway `user_accounts` row — absent
+   * for dev-only demo logins and any operator not yet provisioned in the
+   * gateway. Safe to hold here: this payload only ever lives inside the
+   * existing httpOnly/secure/sameSite cookie, never reaches the browser's JS.
+   * Never falls back to guessing or re-deriving this value client-side.
+   */
+  gatewaySessionToken?: string;
 }
 
 const encoder = new TextEncoder();

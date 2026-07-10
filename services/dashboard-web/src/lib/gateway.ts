@@ -6,6 +6,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { SESSION_COOKIE, verifySession, sessionSecret } from './session';
+import { buildAuthHeaders } from './gateway-session';
 
 const API = process.env.FACTORY_API_URL ?? 'http://localhost:4101';
 const ADMIN = process.env.FACTORY_ADMIN_TOKEN ?? '';
@@ -17,17 +18,20 @@ export interface ApiEnvelope<T> {
 }
 
 /**
- * Declare the logged-in user's role to the gateway. Only meaningful alongside
- * the admin token (server-side), so the gateway records the true actor and
- * enforces RBAC. Derived from the signed session — never from client input.
+ * K1 Real Auth bridge (D-165): forwards the real gateway session token
+ * (`x-factory-session-token`) when the signed-in user's session carries one
+ * (bridged at login, see app/login/actions.ts), alongside the legacy
+ * admin-token + role-header pair — see buildAuthHeaders in gateway-session.ts
+ * for why sending both is safe rather than a fallback. Derived entirely from
+ * the signed session cookie — never from client input.
  */
-async function roleHeader(): Promise<Record<string, string>> {
+async function authHeaders(): Promise<Record<string, string>> {
   try {
     const token = (await cookies()).get(SESSION_COOKIE)?.value;
     const session = token ? await verifySession(token, sessionSecret()) : null;
-    return session ? { 'x-factory-role': session.role } : {};
+    return buildAuthHeaders(ADMIN, session ? { role: session.role, gatewaySessionToken: session.gatewaySessionToken } : null);
   } catch {
-    return {};
+    return buildAuthHeaders(ADMIN, null);
   }
 }
 
@@ -37,8 +41,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
       ...init,
       headers: {
         'content-type': 'application/json',
-        'x-factory-admin-token': ADMIN,
-        ...(await roleHeader()),
+        ...(await authHeaders()),
         ...(init?.headers ?? {}),
       },
       cache: 'no-store',

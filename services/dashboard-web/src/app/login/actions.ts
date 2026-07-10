@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { authenticate, createSessionCookie, clearSessionCookie, getSession } from '@/lib/auth';
 import { gateway } from '@/lib/gateway';
+import { gatewayLogin, gatewayLogout } from '@/lib/gateway-session';
 
 export interface LoginState {
   error?: string;
@@ -44,14 +45,22 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
     await gateway.reportSecurityEvent({ eventType: 'login.failed', actorId: email || 'unknown', result: 'failure', target: 'dashboard', riskLevel: 'medium', detail: 'invalid credentials' });
     return { error: 'Invalid email or password.' };
   }
-  await createSessionCookie(user.email, user.role);
-  await gateway.reportSecurityEvent({ eventType: 'login.succeeded', actorId: user.email, role: user.role, result: 'success', target: 'dashboard', riskLevel: 'low', detail: `signed in as ${user.role}` });
+
+  // K1 Real Auth bridge (D-165): attempt a real gateway login with the same
+  // credentials just verified locally. Best-effort — gatewayLogin never
+  // throws and returns null for dev-only demo users or any operator not yet
+  // provisioned as a gateway user_accounts row, in which case the dashboard
+  // falls through to the legacy admin-token + role-header path unchanged.
+  const bridged = await gatewayLogin(email, password);
+  await createSessionCookie(user.email, user.role, bridged?.token);
+  await gateway.reportSecurityEvent({ eventType: 'login.succeeded', actorId: user.email, role: user.role, result: 'success', target: 'dashboard', riskLevel: 'low', detail: `signed in as ${user.role}${bridged ? ' (real gateway session)' : ' (legacy role auth)'}` });
   redirect(next);
 }
 
 export async function logoutAction(): Promise<void> {
   const session = await getSession();
   if (session) {
+    if (session.gatewaySessionToken) await gatewayLogout(session.gatewaySessionToken);
     await gateway.reportSecurityEvent({ eventType: 'logout', actorId: session.email, role: session.role, result: 'info', target: 'dashboard', riskLevel: 'low', detail: 'signed out' });
   }
   await clearSessionCookie();

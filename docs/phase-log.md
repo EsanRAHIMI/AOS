@@ -3308,3 +3308,53 @@ scope-engine.contract.test.ts}`, `services/gateway-api/src/{routes/auth.ts (new)
 routes/personal.ts, server.ts}`, `services/gateway-api/test/characterization.auth-real.test.ts`
 (new), `scripts/migrate-scope-foundation.mjs`, `docs/{decision-log.md, multi-tenant-governance.md,
 phase-log.md, security-and-permissions.md}`.
+
+## Phase K1 Real Auth — Dashboard-Web Gateway Session Bridge — COMPLETE (2026-07-10)
+
+**Goal:** close the gap D-164 explicitly left open — dashboard-web still sent every gateway request
+over the legacy `x-factory-admin-token` + `x-factory-role` path unconditionally, which is exactly
+the "invisible permanent backdoor" shape D-164 was written to prevent. No UI redesign, no Redis, no
+Jarvis/operator executor changes — strictly the auth bridge.
+
+**Delivered:**
+1. `services/dashboard-web/src/lib/gateway-session.ts` (new): `gatewayLogin`/`gatewayLogout` (plain
+   fetch wrappers, never throw) and `buildAuthHeaders(adminToken, session)` — the pure function
+   that forwards `x-factory-session-token` when a real bridged gateway session exists, and falls
+   back to the legacy admin-token + role-header pair when it doesn't.
+2. `lib/session.ts`: `SessionPayload` gains an optional `gatewaySessionToken` field, stored inside
+   the dashboard's existing signed, httpOnly cookie — no new cookie, no new exposure surface.
+3. `lib/auth.ts`: `createSessionCookie` accepts and persists the bridged token.
+4. `app/login/actions.ts`: after the dashboard's own local `authenticate()` succeeds, `loginAction`
+   also attempts a real gateway login with the same credentials (best-effort — a 401 or gateway
+   outage silently preserves pre-change behavior); `logoutAction` revokes the real gateway session
+   before clearing the dashboard cookie.
+5. `lib/gateway.ts`: its header builder now delegates to `buildAuthHeaders`, forwarding the session
+   token whenever the signed-in user has one.
+6. `services/gateway-api/src/server.ts`: a one-time boot warning when `FACTORY_ENV=production` and
+   `FACTORY_ALLOW_LEGACY_ROLE_AUTH` is still `true` — makes the existing D-164 kill switch an active
+   choice in production rather than a silent default.
+7. `services/dashboard-web/test/gateway-session.test.ts` (new, 10 tests) + `vitest.config.ts` +
+   `vitest` devDependency — dashboard-web's first test suite. Covers `buildAuthHeaders` in all three
+   states and `gatewayLogin`/`gatewayLogout` against a mocked `fetch`, including never-throws
+   behavior on 401/malformed-envelope/network-error.
+
+**Verification:** `dashboard-web` typecheck clean, `dashboard-web` vitest 10/10, `gateway-api`
+typecheck clean, `shared` 128/128 and `gateway-api` 238/238 unaffected (no shared or route-level
+logic changed, only the additive boot warning).
+
+**What is NOT yet true:** `FACTORY_ALLOW_LEGACY_ROLE_AUTH` cannot be safely flipped to `false` in
+production from this pass alone — every production dashboard operator (not just the owner) still
+needs a matching `user_accounts` row provisioned via `POST /v1/auth/users` for the bridge to
+activate for their login. That provisioning is manual and is the concrete next action, not
+automated here.
+
+**Next K1 step:** either (a) provision production dashboard operators as real gateway users and
+flip the legacy default off, closing D-164's deprecation path for real, or (b) take on the
+Jarvis/operator executors subsystem (D-157) so real per-user actor context reaches voice/operator
+commands, not just REST routes and the dashboard. Same choice as recommended at the end of D-164 —
+still unresolved, now with one fewer excuse to defer (a).
+
+Scope: `services/dashboard-web/src/{lib/gateway-session.ts (new), lib/session.ts, lib/auth.ts,
+lib/gateway.ts, app/login/actions.ts}`, `services/dashboard-web/{vitest.config.ts (new),
+test/gateway-session.test.ts (new), package.json}`, `services/gateway-api/src/server.ts`,
+`docs/{decision-log.md, phase-log.md, security-and-permissions.md}`.

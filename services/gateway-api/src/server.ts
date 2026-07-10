@@ -380,6 +380,21 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         reply.code(statusCode).send(failure(code, message, { requestId }));
       });
 
+      // K1 Real Auth production safety rail (D-164/D-165): make the legacy
+      // fallback's risk visible at boot instead of silent. Non-blocking —
+      // this is a visibility aid, not an enforcement gate; enforcement is
+      // FACTORY_ALLOW_LEGACY_ROLE_AUTH itself.
+      if (env.FACTORY_ENV === 'production' && env.FACTORY_ALLOW_LEGACY_ROLE_AUTH) {
+        ctx.log.warn(
+          '[K1 Real Auth] FACTORY_ALLOW_LEGACY_ROLE_AUTH is enabled in production. The ' +
+            'x-factory-admin-token + x-factory-role fallback is temporary K1 compatibility ' +
+            'scaffolding (decision-log D-164) — a shared secret can currently claim any role ' +
+            'for any caller with no real session. Once every legacy caller (dashboard-web\'s ' +
+            'bridge: decision-log D-165, CI, internal tooling) is confirmed using real gateway ' +
+            'sessions, set FACTORY_ALLOW_LEGACY_ROLE_AUTH=false.',
+        );
+      }
+
       // --- Phase 12 security helpers --------------------------------------
       // K1 Real Auth (D-164): sessionActor moved into the Req type itself
       // (routes/deps.ts) so guard()/declaredRole() below can read it —
