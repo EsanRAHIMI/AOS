@@ -1,6 +1,24 @@
 /**
  * Single source of truth for local dev: ports, order, and per-service env extras.
  * Used by sync-local-env.mjs and dev-all.mjs — keep in sync with README-SETUP.md.
+ *
+ * K1 Consolidation Prep (D-168): services/aos-agent-runtime is a
+ * transitional CANDIDATE that hosts architect-agent/qa-agent/reviewer-
+ * agent/report-agent's logic on the exact same historical ports (4103,
+ * 4107, 4106, 4114). It is deliberately NOT added to LOCAL_SERVICES below —
+ * doing so would make it start automatically, which would misrepresent
+ * cutover as already decided when it is not (production still runs the 4
+ * original services; see docs/deployment-plan.md). It also CANNOT run
+ * alongside `architect-agent` (entry #5 below) in local dev: both bind port
+ * 4103, so the second one to start fails with EADDRINUSE.
+ *
+ * To try aos-agent-runtime locally instead of the standalone agents: stop
+ * `architect-agent` (and, if you also run them, qa-agent/reviewer-agent/
+ * report-agent — none of the three are in LOCAL_SERVICES today, they
+ * predate this file's automation), then run
+ * `cd services/aos-agent-runtime && pnpm dev` on its own. It reads the same
+ * env keys (FACTORY_INTERNAL_TOKEN, MONGODB_URI, etc.) as any other service
+ * via `pnpm sync:env`.
  */
 
 export const PEER_BLOCK = `# --- Local peer URLs (orchestrator) ---

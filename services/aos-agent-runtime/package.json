@@ -1,7 +1,7 @@
 {
-  "name": "@factory/report-agent",
+  "name": "@factory/aos-agent-runtime",
   "version": "0.1.0",
-  "description": "Generates executive/system intelligence reports from kernel state and task results.",
+  "description": "K1 Consolidation Prep (D-168): hosts the architect-agent, qa-agent, reviewer-agent, and report-agent workers as one deployable, each still bound to its historical port/domain/serviceId. Transitional/candidate — see docs/deployment-plan.md for cutover status; production topology is unchanged until Dokploy is manually repointed.",
   "type": "module",
   "private": true,
   "main": "dist/index.js",

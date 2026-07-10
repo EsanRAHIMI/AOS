@@ -3458,3 +3458,57 @@ Scope: `shared/src/{redis/index.ts (new), env/index.ts, security/index.ts, index
 `services/event-bus-service/src/index.ts`, `scripts/redis-two-instance-check.mjs` (new),
 `docs/{decision-log.md, phase-log.md, service-communication-protocol.md, deployment-plan.md,
 dokploy-setup.md, environment-variables.md}`, `README-SETUP.md`.
+
+## Phase K1 Consolidation Prep — aos-agent-runtime Candidate for 4 Thin Agent Shells — COMPLETE (2026-07-10)
+
+**Goal:** begin the service consolidation master-direction §C.1 requires (19 deployables → 6) as one
+small, low-risk, reversible first step — not the full consolidation, not K2's agent-loop rewrite, and
+explicitly not a production cutover without human approval.
+
+**Inventory (code-read, not assumed):** confirmed `architect-agent`, `qa-agent`, `reviewer-agent`,
+`report-agent` (70–101 LOC each) are genuinely thin — each is `loadEnv` + one `TaskHandler` calling a
+single already-shared reasoning function + `createFactoryService`, zero unique logic per folder.
+`monitor-agent` and the other sub-200-LOC services were deliberately left out — grouping them all
+together would have been the "risky all-at-once" migration the user ruled out.
+
+**Delivered:**
+1. `services/{architect,qa,reviewer,report}-agent`: split `index.ts` into `server.ts` (construction,
+   testable) + thin `index.ts` (bootstrap), matching gateway-api's existing pattern. Added
+   `test/characterization.baseline.test.ts` to each (33 tests total) — the equivalence oracle,
+   proving current behavior before touching anything.
+2. `packages/service-kit`: found and fixed a real bug before it shipped — `createFactoryService()`
+   unconditionally called `process.exit(0)` after its own shutdown, which would kill a
+   multi-instance-per-process deployable before sibling instances finished closing. Added an
+   additive, default-`true` `registerSignalHandlers` option (zero behavior change for the other 15
+   deployables), tested (3 tests).
+3. `services/aos-agent-runtime` (new): hosts all 4 workers as one process, each still bound to its
+   own historical port/domain/serviceId (4103/4106/4107/4114) — a compatibility-shim consolidation,
+   zero contract change for orchestrator-agent's `PeerClient`, the dashboard catalog, or Dokploy
+   routing. Worker files are deliberately duplicated (not imported) from the originals, per this
+   repo's independently-deployable-service rule. 35 characterization tests, including proofs that
+   poisoning `process.env.SERVICE_ID`/`SERVICE_PORT` never contaminates a worker's identity, and an
+   integration test that binds all 4 real historical ports simultaneously and fetches each over real
+   HTTP.
+4. Docs updated with a hard current-vs-candidate split per explicit correction: `service-map.md`'s
+   19-service table and `deployment-plan.md`'s existing deployment order were left unedited; each
+   got a new, separately-labeled transitional section instead. The 4 original services' READMEs gained
+   a "Consolidation candidate — not deprecated" note, not a deprecation notice.
+
+**Verification:** `shared` unaffected (145/145), `service-kit` 3/3 new + typecheck clean, all 4
+original services' baseline suites 33/33 + typecheck clean, `aos-agent-runtime` 35/35 + typecheck +
+build clean, `check-scope-boundary.mjs` green.
+
+**Production topology: unchanged.** This is a code-level candidate. All 19 services, including the 4
+originals targeted here, remain the live production deployables. Cutover requires a documented,
+human-executed, reversible Dokploy step (`docs/deployment-plan.md` → "aos-agent-runtime cutover").
+
+**Next K1 step:** either (a) review and approve an actual Dokploy cutover for these 4 workers, or (b)
+continue consolidation prep with the next coherent low-risk group (monitor-agent alone, or the
+sub-200-LOC infra-adjacent group), each with its own read-first classification pass.
+
+Scope: `services/{architect,qa,reviewer,report}-agent/src/{server.ts (new), index.ts}`,
+`services/{architect,qa,reviewer,report}-agent/{test/characterization.baseline.test.ts (new),
+package.json, vitest.config.ts (new), README.md}`, `packages/service-kit/src/index.ts`,
+`packages/service-kit/{test/signal-handlers.test.ts (new), package.json, vitest.config.ts (new)}`,
+`services/aos-agent-runtime/**` (new service), `scripts/local-services.mjs`,
+`docs/{decision-log.md, phase-log.md, service-map.md, deployment-plan.md, dokploy-setup.md}`.

@@ -52,6 +52,25 @@ Every backend service must expose:
 This surface is provided by `@factory/service-kit` and verified by workspace
 runtime probes before promotion.
 
+## Transitional: aos-agent-runtime consolidation candidate (D-168)
+
+**This section describes a candidate, not current production reality.** The
+19-service table above is still accurate: production runs all 19 services
+listed, unchanged, today. `services/aos-agent-runtime` (new, K1
+Consolidation Prep) is a parallel, characterization-tested replacement
+candidate for 4 of the specialist agents above — Architect, Reviewer, QA,
+Report — hosting all 4 as one deployable process, each still bound to its
+own historical port/domain/serviceId from the table above. It has NOT been
+deployed and does not carry production traffic.
+
+Cutting production over from the 4 separate services to this one
+deployable requires a human to manually repoint Dokploy — see
+`docs/deployment-plan.md` → "aos-agent-runtime cutover (transitional)" for
+the exact steps and the rollback path. Until that happens, this table's
+count of 19 production deployables remains correct; this section exists so
+future agents/readers know the candidate exists and where to find it,
+without mistaking its existence for a completed migration.
+
 ## Growth Direction
 
 The next services should extend AOS from a self-development kernel into a

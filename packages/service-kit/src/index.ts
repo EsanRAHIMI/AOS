@@ -53,6 +53,22 @@ export interface CreateServiceOptions {
   taskHandler?: TaskHandler;
   /** Register additional service-specific routes. */
   routes?: (app: FastifyInstance, ctx: ServiceContext) => void | Promise<void>;
+  /**
+   * K1 Consolidation Prep (D-168). Default true (unchanged behavior for
+   * every existing single-service-per-process deployable): this instance
+   * registers its own `process.once('SIGINT'/'SIGTERM', ...)` handler that
+   * closes itself and calls `process.exit(0)`.
+   *
+   * Set false when MULTIPLE createFactoryService() instances share one
+   * process (e.g. services/aos-agent-runtime hosting several logical
+   * workers) — without this, each instance's handler still fires on the
+   * same signal, but the FIRST one to finish its own close() calls
+   * `process.exit(0)` immediately, killing the process before the other
+   * instances finish closing cleanly. When false, no signal handler is
+   * registered here at all; the composing entrypoint must register exactly
+   * one shared handler that awaits every instance's close() before exiting.
+   */
+  registerSignalHandlers?: boolean;
 }
 
 export interface FactoryService {
@@ -209,12 +225,15 @@ export async function createFactoryService(opts: CreateServiceOptions): Promise<
     await app.close();
   };
 
-  // Graceful shutdown on termination signals.
-  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(sig, () => {
-      log.info({ sig }, 'shutting down');
-      void close().finally(() => process.exit(0));
-    });
+  // Graceful shutdown on termination signals — opt-out for multi-instance-
+  // per-process deployables (see registerSignalHandlers doc comment above).
+  if (opts.registerSignalHandlers ?? true) {
+    for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+      process.once(sig, () => {
+        log.info({ sig }, 'shutting down');
+        void close().finally(() => process.exit(0));
+      });
+    }
   }
 
   return { app, ctx, listen, close };

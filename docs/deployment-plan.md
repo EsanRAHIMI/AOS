@@ -59,6 +59,55 @@ load balancer, so event fan-out and mutation rate limits stay correct across ins
 - Verify with `REDIS_URL=<url> node scripts/redis-two-instance-check.mjs` before relying on it in
   production with multiple replicas — see the script's own header comment for details.
 
+## aos-agent-runtime cutover (transitional, D-168 — NOT yet performed)
+
+**Current production topology is unchanged by this section existing.**
+`architect-agent`, `reviewer-agent`, `qa-agent`, and `report-agent` remain
+four separate, live Dokploy apps today, deployed exactly per the sections
+above. `services/aos-agent-runtime` is a parallel, characterization-tested
+replacement candidate — code-complete, not deployed, carrying zero
+production traffic. This section documents the cutover steps for when a
+human decides to perform it; it is not a record of something already done.
+
+**Before cutover:** confirm `pnpm --filter @factory/aos-agent-runtime test`
+and `pnpm --filter @factory/aos-agent-runtime typecheck` are green (they
+were at commit time — see decision-log D-168), and that
+`scripts/redis-two-instance-check.mjs`-style manual verification isn't
+needed here (this consolidation has no Redis dependency).
+
+**Cutover steps (manual, human-executed, one Dokploy app at a time):**
+1. Create one new Dokploy app: root directory `services/aos-agent-runtime`,
+   build command `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/aos-agent-runtime... run build`,
+   start command `pnpm --filter @factory/aos-agent-runtime run start`.
+2. Give it the union of env vars the 4 original services' `.env.example`
+   files declare (they're identical in shape — `MONGODB_URI`,
+   `FACTORY_INTERNAL_TOKEN`, `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`, etc.) —
+   see `services/aos-agent-runtime/.env.example` and its README.
+3. Expose all 4 ports (4103, 4106, 4107, 4114) from this one container/app
+   in Dokploy, each still routed to its historical domain
+   (`architect.simorx.com`, `reviewer.simorx.com`, `qa.simorx.com`,
+   `reports.simorx.com`) — no DNS changes.
+4. Deploy. Verify all 4 ports' `/health`, `/.factory/manifest` respond
+   correctly (each with its OWN serviceId — see
+   `services/aos-agent-runtime/test/characterization.consolidated.test.ts`
+   for the exact proof this must match).
+5. Once verified reachable and healthy, stop and delete the 4 original
+   Dokploy apps (`architect-agent`, `reviewer-agent`, `qa-agent`,
+   `report-agent`). Do this only after step 4 is confirmed — do not delete
+   the old apps preemptively.
+6. Update `docs/service-map.md`'s "Current truth" count and table, and this
+   file's "Deployment Order" section, to reflect the new reality — those
+   edits belong in the cutover PR, not before.
+
+**Rollback:** redeploy the 4 original Dokploy apps from their last-known
+commit (their code is untouched by this consolidation — the folders still
+exist, still build, still pass their own baseline characterization tests)
+and delete/stop the `aos-agent-runtime` app. No data migration is involved
+either direction — all 4 workers write to the same Mongo collections
+(`llm_traces`, `evidence_records`, `qa_reports`, `review_reports`,
+`intelligence_reports`, `agent_runs`) regardless of which deployable
+produced them.
+
 ## Production Hardening Path
 
 - OIDC/OAuth2 login and per-user RBAC.

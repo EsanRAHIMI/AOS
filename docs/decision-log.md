@@ -2,6 +2,150 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — K1 Consolidation Prep: aos-agent-runtime Candidate for 4 Thin Agent Shells (D-168)
+
+With K1 Redis Backbone accepted, the assigned goal was to begin the service
+consolidation `docs/master-direction.md` §C.1 requires (19 deployables → 6)
+as a small, low-risk, reversible first step — explicitly NOT the full
+consolidation, NOT the K2 agent-loop rewrite, and NOT a production cutover
+without human approval. The user imposed 8 mandatory corrections on the
+initial plan before implementation, all reflected below.
+
+### Inventory and classification (code-read, not assumed)
+Read every one of the 19 services' `src/index.ts`. Confirmed
+`architect-agent` (101 LOC), `qa-agent` (71), `reviewer-agent` (70), and
+`report-agent` (70) are genuinely thin: each is `loadEnv` + one `TaskHandler`
+that calls a single already-shared reasoning function (`runArchitecturePlan`
+/ `runQa` / `runReview` / `runReport`, all living in `@factory/shared`) +
+`createFactoryService`. Zero unique logic lives in any of the four service
+folders. This matches master-direction's own audit table ("Architect/QA/
+Reviewer/Report — Fake/demo, ~70-LOC stubs"). `monitor-agent` (523 LOC) and
+the other sub-200-LOC services (builder, devops, documentation-service,
+memory, internet-research, voice-operator, browser-testing) were
+deliberately left out of this pass — each needs its own read-first
+classification, and grouping them all together would have been exactly the
+"risky all-at-once 13-service migration" ruled out up front. `service-
+registry` and `file-asset-service` belong to a different consolidation
+track (folding into the kernel per master-direction step 4, not the "agent
+shells" track), not touched here. `orchestrator-agent`, `gateway-api`,
+`dashboard-web`, `event-bus-service`, `code-operator-agent` were excluded
+per explicit instruction.
+
+### Design: compatibility shim, not a contract change
+`services/aos-agent-runtime` (new) hosts all 4 workers as one process, but
+each worker is still built via its own `createFactoryService()` call with
+its own historical manifest and its own `SERVICE_PORTS[...]`-derived port
+(4103/4106/4107/4114) — orchestrator-agent's `PeerClient`, the dashboard's
+static service catalog, and Dokploy's existing domain routing all resolve
+peers identically, unchanged. The 4 worker files
+(`src/workers/{architect,qa,reviewer,report}-agent.ts`) are deliberately
+**duplicated**, not imported, from the original 4 services' `server.ts`
+files — this repo's own rule is that every service is independently
+deployable/buildable and none imports another service's source. The two
+copies are kept in sync by characterization tests (below), with an explicit
+"if you change one, change both" note in both READMEs.
+
+### Verified BEFORE building the consolidated runtime (correction #3)
+Read `@factory/service-kit`'s `createFactoryService()` in full and confirmed
+by construction, then proved by test:
+- **serviceId**: each worker's `manifest.serviceId` is a hardcoded literal
+  in its own file — never derived from any env var.
+- **port**: each worker's port comes from `SERVICE_PORTS['<its-id>']`, a
+  shared constant — never from the hosting process's own `SERVICE_PORT`.
+- **manifest**: each worker constructs and serves its own `ServiceManifest`
+  object independently.
+- **logs/events**: `createLogger({serviceId})` and
+  `EventPublisher({source: serviceId})` are both constructed per-instance
+  inside `createFactoryService()`, keyed off the manifest passed in — no
+  shared/global logger or publisher exists to leak identity across workers.
+- **no SERVICE_ID contamination**: proved directly —
+  `characterization.consolidated.test.ts` poisons
+  `process.env.SERVICE_ID='aos-agent-runtime'` and
+  `process.env.SERVICE_PORT='9999'` before building all 4 workers and
+  asserts every worker's `/health` still reports its own correct serviceId.
+- **A real bug found and fixed before it shipped**: `createFactoryService()`
+  unconditionally registered `process.once('SIGINT'/'SIGTERM', ...)` and
+  called `process.exit(0)` after its OWN `close()` — with 4 instances in one
+  process, the first to finish shutting down would kill the process before
+  the other 3 finished closing cleanly. Fixed with a new, additive,
+  default-`true` (zero behavior change for the other 15 deployables)
+  `registerSignalHandlers?: boolean` option; `aos-agent-runtime`'s
+  entrypoint sets it `false` on all 4 workers and owns one shared handler
+  that awaits every worker's `close()` before exiting once. Tested in
+  `packages/service-kit/test/signal-handlers.test.ts`.
+
+### Testing strategy
+`test/characterization.baseline.test.ts` (new, one per original service —
+architect-agent 9 tests, qa/reviewer/report-agent 8 tests each, 33 total)
+locks in each service's CURRENT behavior first: `/health`,
+`/.factory/manifest`, `/.factory/status`, `/.factory/capabilities`,
+`POST /.factory/task` (success + missing-token 401 + invalid-token 401 +
+missing-goal 400), Mongo writes (via a ~20-line minimal fake — insertOne/
+updateOne only, the sole two operations these handlers use), and published
+event types (via `vi.spyOn(EventPublisher.prototype, 'publish')`, since an
+empty `EVENT_BUS_URL` makes the real publish path a silent no-op).
+`forceFallback:true` on every LLM-touching request path exercises the
+existing deterministic fallback — no API keys, no network calls, fully
+reproducible. Required a structural refactor of all 4 services
+(`index.ts` → `server.ts` + thin `index.ts`, exactly mirroring gateway-api's
+existing `server.ts`/`index.ts` split) so `handleTask`/`manifest` are
+importable without triggering the auto-running `main()` at module load.
+
+`services/aos-agent-runtime/test/characterization.consolidated.test.ts` (new,
+35 tests) re-runs the identical assertions against the consolidated build,
+plus the multi-instance-specific proofs in the section above, plus an
+integration-style test that actually binds all 4 real historical ports
+simultaneously in one process and fetches each over real HTTP — the
+strongest available proof that "each logical service gets the correct
+port" literally holds, not just structurally.
+
+### What did NOT happen (per explicit correction)
+- The 4 original service folders were **not deleted, not removed from the
+  build, not marked "deprecated" as a completed fact** — each README now
+  says "Consolidation candidate... not deprecated... remains the live
+  production deployable until a human deliberately repoints Dokploy",
+  worded to avoid implying cutover already happened.
+- `docs/service-map.md`'s "Current truth: 19 services" table and
+  `docs/deployment-plan.md`'s existing "Deployment Order" section were
+  **left unedited** — both got a new, clearly-labeled, separate
+  "transitional/candidate" section instead, so the documents distinguish
+  current production topology from the candidate rather than overwriting
+  one with the other.
+- Dokploy was not touched. No production traffic was moved. Local dev's
+  `scripts/local-services.mjs` `LOCAL_SERVICES` array was left unchanged
+  (a documentation comment was added explaining the port conflict and how
+  to manually try `aos-agent-runtime` instead) — adding it as a default
+  local-dev entry would have implied cutover was already decided.
+
+### Honest answer to "did production topology change"
+**No.** This is a code-level consolidation candidate. Production still runs
+19 separate deployables, including the 4 originals this candidate targets.
+Cutover is a separate, human-executed, documented, reversible step (see
+`docs/deployment-plan.md` → "aos-agent-runtime cutover (transitional)").
+
+**Verification:** `shared` unaffected (145/145), `service-kit` new tests
+3/3 + typecheck clean, all 4 original services' baseline suites 33/33 +
+typecheck clean, `aos-agent-runtime` 35/35 + typecheck + build clean,
+`check-scope-boundary.mjs` green (not touched by this change, re-run for
+safety).
+
+**Next K1 step:** either (a) the user reviews and approves an actual
+Dokploy cutover for these 4 workers, or (b) continue the consolidation prep
+with the next coherent low-risk group (monitor-agent alone, or the
+sub-200-LOC infra-adjacent group), each with its own read-first pass and
+its own operational plan — per master-direction, one coherent group at a
+time, never all-at-once.
+
+Scope: `services/{architect,qa,reviewer,report}-agent/src/{server.ts (new),
+index.ts}`, `services/{architect,qa,reviewer,report}-agent/{test/
+characterization.baseline.test.ts (new), package.json, vitest.config.ts
+(new)}`, `services/{architect,qa,reviewer,report}-agent/README.md`,
+`packages/service-kit/src/index.ts`, `packages/service-kit/{test/
+signal-handlers.test.ts (new), package.json, vitest.config.ts (new)}`,
+`services/aos-agent-runtime/**` (new service), `scripts/local-services.mjs`,
+`docs/{decision-log.md, phase-log.md, service-map.md, deployment-plan.md,
+dokploy-setup.md}`.
+
 ## 2026-07-10 — K1 Redis Backbone: Event Fan-Out + Rate Limits, Local-Fallback by Default (D-167)
 
 With K1 auth work declared complete, the assigned goal was to move runtime backbone state off
