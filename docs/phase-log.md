@@ -3583,3 +3583,29 @@ explicitly accepted open, so a second undeployed candidate doesn't stack on top 
 **What did NOT happen:** no code, no characterization tests, no new service folders for either batch.
 
 Scope: `docs/decision-log.md` (D-170), `docs/phase-log.md`.
+
+## Phase K1 Consolidation Prep — Cutover Execution Attempt Re-Blocked (2026-07-11)
+
+**Goal:** owner explicitly instructed executing the D-169 manual cutover directly (deploy the app,
+configure 4 ports, verify, repoint domains one at a time, stop old apps, 24h observation). Re-checked
+reachability fresh rather than reusing the D-169 finding, since an explicit instruction to act deserved
+a fresh check, not a stale one.
+
+**Broader finding than D-169:** the sandbox's egress proxy rejects `CONNECT` for *any* external host,
+confirmed with a neutral control target (`api.github.com`, unrelated to this project) alongside the
+Dokploy host and all 4 production service domains — all four returned the identical `403 from proxy
+after CONNECT`. This is a blanket sandbox network-isolation property, not a Dokploy-specific gap, and it
+also means the verify script could not have been run against real domains from here even if the Dokploy
+deploy step had already happened.
+
+**Second, independent reason (unchanged from D-169):** this project's own `devops-agent`, as designed,
+never calls the real Dokploy API itself — it persists an `InfrastructureRequest` and waits for manual
+creation (master-direction §13). Using the found `DOKPLOY_BASE_URL`/`DOKPLOY_API_TOKEN` directly, even
+under explicit chat instruction, would bypass that designed approval/audit path for an irreversible
+action (stopping 4 live services).
+
+**What did NOT happen:** no Dokploy app created, no port configured, no domain repointed, no service
+stopped, no real-target verification run. D-169's `BLOCKED_ON_MANUAL_DEPLOYMENT` is unchanged, not
+marked complete.
+
+Scope: `docs/decision-log.md` (D-171), `docs/phase-log.md`. No code, no infra.
