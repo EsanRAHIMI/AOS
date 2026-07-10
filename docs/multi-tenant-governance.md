@@ -26,9 +26,41 @@ to touch scoped (tenant/user/project/case) data is
 
 `canAccess` (route-level authorization) remains required — `scopedCollection`
 enforces isolation, not permission. Raw `collection()` stays legitimate ONLY
-for global kernel collections; a lint rule enforcing that boundary lands with
-the K1 gateway split, and kernel routes migrate onto the wrapper during it.
-Guarantees are pinned by `shared/test/scoped-collection.contract.test.ts`.
+for global kernel collections.
+
+### Enforcement mechanics (K1.4b, D-158)
+
+Isolation is now checked by a static gate as well as the wrapper itself.
+`scripts/check-scope-boundary.mjs` (wired into CI, `node scripts/check-
+scope-boundary.mjs` locally) enforces three rules:
+
+1. Only `shared/src/db/index.ts` (the raw `collection()` definition) and
+   `shared/src/db/scoped.ts` (the wrapper) may call raw `collection()`
+   anywhere in `shared/`. One documented escape hatch exists today —
+   `shared/src/agentrun/index.ts` — for `agent_runs`, which is global
+   kernel self-development state with no scope fields, not human data.
+2. No `services/*/src/routes/**` module may call `collection()` directly —
+   route handlers only ever reach data through `GatewayDeps` or a
+   per-request `scopedCollection(ctx)`.
+3. A migration ratchet: once a collection is migrated, its name is added to
+   `MIGRATED_COLLECTIONS` in the script, and a raw `collection(COLLECTIONS.X)`
+   call anywhere in `services/` referencing it becomes a hard CI failure,
+   permanently. `scoped_memories` is the first entry (K1.4b).
+
+The script also reports (non-blocking) the count of raw `collection()` calls
+still in `services/gateway-api/src/server.ts` — the K1.3 flat-handle zone
+(D-157) — as visible, tracked debt for the K1.4c+ passes that migrate the
+remaining ~90 collections (personal-fact family next, then identity/tenant,
+then the deferred Jarvis/operator subsystem last, per D-157's boundary).
+
+Isolation guarantees at the wrapper level are pinned by
+`shared/test/scoped-collection.contract.test.ts` (14 tests: fail-closed on
+missing actor, filters can only narrow, inserts/updates can't touch scope
+identity). Route-level cross-user isolation is proven per migrated route
+group in that service's characterization suite — see
+`services/gateway-api/test/characterization.personal-scope.test.ts` for the
+`scoped_memories` proof (a foreign user's row seeded directly into the fake
+collection never surfaces through the route).
 
 ## Scope Model
 

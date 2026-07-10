@@ -100,7 +100,6 @@ import type {
   Role,
   RoleName,
   RuntimeValidation,
-  ScopedMemory,
   ScoringChangeProposal,
   ScoringProfile,
   SecurityCheck,
@@ -245,7 +244,9 @@ export interface GatewayDeps {
   consentGrants: Collection<ConsentGrant>;
   connectorAccounts: Collection<ConnectorAccount>;
   connectorSyncRuns: Collection<ConnectorSyncRun>;
-  scopedMemories: Collection<ScopedMemory>;
+  // scopedMemories deliberately absent — K1.4b (D-158) migrated it off the
+  // raw GatewayDeps handle; routes.personal.ts builds a scopedCollection(ctx)
+  // accessor per-request instead. Do not re-add a raw handle for it.
   userGoals: Collection<UserGoal>;
   dailyBriefings: Collection<DailyBriefing>;
   opportunityReports: Collection<OpportunityReport>;

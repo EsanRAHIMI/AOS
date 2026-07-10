@@ -15,6 +15,7 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
+    "check:scope-boundary": "node scripts/check-scope-boundary.mjs",
     "dev": "echo 'Run a specific service: pnpm --filter <service> run dev'",
     "dev:all": "pnpm sync:env && pnpm run build:deps && node scripts/dev-all.mjs",
     "sync:env": "node scripts/sync-local-env.mjs",

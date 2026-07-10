@@ -3056,3 +3056,57 @@ tests, not a route-move.
 Scope: `services/gateway-api/{src/index.ts, src/server.ts(new), src/routes/*(new, 11 files),
 test/*(new, 4 files), package.json, vitest.config.ts(new), README.md}`, `pnpm-lock.yaml`,
 `docs/{decision-log.md, testing-and-ci.md, phase-log.md}`.
+
+## Phase K1.4b — First Route Migration onto scopedCollection(ctx) + Static Boundary Gate — COMPLETE (2026-07-10)
+
+**Goal (master-direction §C.5/§F.3, second half):** move a real gateway route off convention-
+based scope filtering onto the K1.4a wrapper, and ship the lint rule K1.4a deferred.
+
+**Inventory + classification (done before touching code):** all ~99 Mongo collection handles
+the gateway touches are declared once in `server.ts` and threaded through one flat
+`GatewayDeps` (K1.3); route modules already had zero direct `collection()` calls. Classified
+every handle: global kernel state (self-development, governance, RBAC, ~60 collections),
+intelligence/ops (global, no per-tenant metering yet), voice/Jarvis (user-scoped in
+principle, but inside the D-157-deferred operator/Jarvis subsystem — untouched this pass),
+identity/tenant block (mixed — tenant registry is global, memberships/consent/connectors/
+userGoals/etc. are user- or tenant-scoped), and the "personal operating layer" (16
+collections, all user-scoped, currently filtered only by hand-rebuilt
+`{scope:'user', userId}` in every handler — the highest-value target). Zero legacy/unknown
+collections found.
+
+**What was built:** `routes/personal.ts`'s `scoped_memories` access (5 call sites — the
+private per-user memory store, fully isolated: zero references anywhere else in the
+codebase) migrated to a per-request `scopedCollection<ScopedMemory>(COLLECTIONS.
+SCOPED_MEMORIES, {actor, scope:'user'})`; the raw handle removed from `GatewayDeps`,
+`server.ts`'s declaration block, and its `deps` assembly entry — not left as dead code.
+`scripts/check-scope-boundary.mjs` (wired into CI as a new step, plus `pnpm run
+check:scope-boundary`): raw `collection()` confined to `shared/src/db/{index,scoped}.ts`
+(one documented pre-existing exception, `shared/src/agentrun/index.ts` — global
+self-development state, no scope fields); no `services/*/src/routes/**` module may call
+`collection()` directly; a ratchet list that hard-fails CI if a *migrated* collection's raw
+handle ever reappears anywhere in `services/` (seeded with `scoped_memories`). Non-blocking
+signal: remaining raw-`collection()` count in `server.ts` (105) reported every run as tracked
+debt for K1.4c+, not hidden.
+
+**Verification:** new `characterization.personal-scope.test.ts` (4 tests) proves a foreign
+user's `scoped_memories` row seeded directly into the fake collection never surfaces through
+`GET /v1/me/memories` or `/v1/me/universe`, a request with no resolvable `primaryUserId` is
+denied at `enforceScoped` (403) before the data layer is ever reached, and a write is
+correctly scope-stamped. Documented honest limitation: real per-user auth doesn't exist yet,
+so a second *real* HTTP identity can't be driven through the harness — isolation is proven by
+seeding a foreign-scoped row directly (exactly the failure mode construction-based
+enforcement defends against), with the wrapper's own fail-closed/no-widening guarantees
+independently unit-proven in `shared/test/scoped-collection.contract.test.ts` (K1.4a). Full
+suite: shared 107/107, gateway-api 197/197 (193 pre-existing + 4 new); typecheck and build
+clean for both packages; scope-boundary script passes.
+
+**Remaining unsafe direct access (by design, sequenced for K1.4c+):** the other 7
+fully-isolated personal-fact collections (`personalHealthStates`/`LifeItems`/`FinanceItems`/
+`LearningTracks`, `opportunityReports`, `connectorAccounts`, `connectorSyncRuns`,
+`accessDecisions`), then the identity/tenant block, then (last, and only once it stops
+conflicting with "do not rewrite Jarvis") the operator/Jarvis subsystem per D-157's boundary.
+
+Scope: `services/gateway-api/{src/routes/personal.ts, src/routes/deps.ts, src/server.ts,
+test/characterization.personal-scope.test.ts(new)}`, `scripts/check-scope-boundary.mjs(new)`,
+`.github/workflows/ci.yml`, `package.json`,
+`docs/{decision-log.md, multi-tenant-governance.md, phase-log.md}`.

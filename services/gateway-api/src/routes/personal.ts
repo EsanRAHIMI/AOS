@@ -4,7 +4,7 @@
  * Bodies are moved VERBATIM from the pre-split server.ts; behavior is pinned
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
-import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scoreNextActions, stampScope, success } from '@factory/shared';
+import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
 import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, UserGoal } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
@@ -44,7 +44,6 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
     consentGrants,
     connectorAccounts,
     connectorSyncRuns,
-    scopedMemories,
     userGoals,
     dailyBriefings,
     opportunityReports,
@@ -74,6 +73,15 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
   } = deps;
 
       const resolveAuth = (req: Req): AuthContext => legacyRoleToAuthContext(declaredRole(req));
+
+      // K1.4b — scope-by-construction pilot (D-158). scoped_memories is the
+      // first collection migrated off the raw GatewayDeps handle: every read/
+      // write below is $and-merged with scopeFilter(actor,'user') by
+      // scopedCollection itself, so a future edit to these handlers cannot
+      // widen the query across users even by accident. Fail-closed on a
+      // missing actor.primaryUserId (unreachable today — enforceScoped denies
+      // first — but now structurally guaranteed, not just conventionally true).
+      const memoriesFor = (actor: AuthContext) => scopedCollection<ScopedMemory>(COLLECTIONS.SCOPED_MEMORIES, { actor, scope: 'user' });
 
       /** Enforce a scoped access request. Denials/approval-required are
        *  recorded (access_decisions + security event) and answered 403. */
@@ -148,7 +156,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = await enforceScoped(req, reply, { action: 'list', resource: 'scoped_memories', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
-        return success(await scopedMemories.find({ scope: 'user', userId: actor.primaryUserId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+        return success(await memoriesFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
       });
       app.post<{ Body: { kind?: string; content?: string } }>('/v1/me/memories', async (req, reply) => {
         if (!guard(req)) return deny(reply);
@@ -158,7 +166,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!content) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'content is required'));
         const stamp = stampScope(actor, 'user');
         const mem: ScopedMemory = { ...stamp, memoryId: genId('smem'), kind: (['preference', 'fact', 'decision', 'workflow', 'mistake_avoidance', 'inference'].includes(String(req.body?.kind)) ? req.body?.kind : 'fact') as ScopedMemory['kind'], content: content.slice(0, 2000), source: 'user', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() };
-        await scopedMemories.insertOne(mem);
+        await memoriesFor(actor).insertOne(mem);
         await ctx.publisher.publish({ type: EVENT_TYPES.SCOPED_MEMORY_WRITTEN, taskId: null, payload: { scope: 'user', message: 'Private user memory written (content not included in event)' } });
         return success(mem);
       });
@@ -363,7 +371,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
           opSessions.find({ status: { $in: ['planning', 'running', 'waiting_approval', 'verifying'] } }, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(1).toArray(),
           events.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(5).toArray(),
           isSafeMode(),
-          scopedMemories.find({ scope: 'user', userId: uid }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(3).toArray(),
+          memoriesFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(3).toArray(),
         ]);
         const activeOp = op[0] && !['completed', 'failed', 'rolled_back', 'cancelled'].includes(op[0].status) ? op[0] : null;
         const openIncidentsList = inc.filter((i) => i.status !== 'resolved' && i.status !== 'dismissed');
@@ -583,7 +591,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         await nextBestActions.updateOne({ actionId: nba.actionId }, { $set: { status, updatedAt: nowIso() } });
         // Learn from the decision — scoped to the user, kind by outcome.
         const stamp = userStamp(actor);
-        await scopedMemories.insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${nba.title}” (${nba.category}, score ${nba.priorityScore}). ${act === 'reject' ? 'Deprioritize similar suggestions.' : 'Similar suggestions are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
+        await memoriesFor(actor).insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${nba.title}” (${nba.category}, score ${nba.priorityScore}). ${act === 'reject' ? 'Deprioritize similar suggestions.' : 'Similar suggestions are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
         // Phase AF.4 — real mutation event (previously this endpoint published nothing).
         await ctx.publisher.publish({ type: EVENT_TYPES.NEXT_ACTION_DECIDED, taskId: null, payload: { actionId: nba.actionId, status, userId: actor.primaryUserId, message: `Next action ${status}: ${nba.title.slice(0, 80)}` } });
         return success({ status });
@@ -606,7 +614,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         const status = act === 'accept' ? 'accepted' : act === 'reject' ? 'rejected' : 'in_progress';
         await personalOpportunities.updateOne({ opportunityId: opp.opportunityId }, { $set: { status, updatedAt: nowIso() } });
         const stamp = userStamp(actor);
-        await scopedMemories.insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${opp.title}” (${opp.category}, impact ${opp.impactScore}). ${act === 'reject' ? 'Deprioritize similar opportunities.' : 'Similar opportunities are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
+        await memoriesFor(actor).insertOne({ ...stamp, memoryId: genId('smem'), kind: act === 'reject' ? 'mistake_avoidance' : 'decision', content: `${status.toUpperCase()}: “${opp.title}” (${opp.category}, impact ${opp.impactScore}). ${act === 'reject' ? 'Deprioritize similar opportunities.' : 'Similar opportunities are valuable.'}`, source: 'user_decision', confidence: 1, consentGrantId: null, createdAt: nowIso(), updatedAt: nowIso() });
         // Phase AF.4 — real mutation event (previously this endpoint published nothing).
         await ctx.publisher.publish({ type: EVENT_TYPES.OPPORTUNITY_DECIDED, taskId: null, payload: { opportunityId: opp.opportunityId, status, userId: actor.primaryUserId, message: `Opportunity ${status}: ${opp.title.slice(0, 80)}` } });
         return success({ status });

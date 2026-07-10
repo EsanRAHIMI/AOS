@@ -2,6 +2,53 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.4b Scope-By-Construction: First Route Migration
+
+### D-158 `scoped_memories` migrated onto `scopedCollection(ctx)`; static boundary gate added
+First real migration of a gateway route onto the K1.4a wrapper (D-156), plus the lint/static
+rule that D-156 deferred. Inventory: all ~99 Mongo collection handles the gateway touches are
+declared once in `server.ts` and threaded through one flat `GatewayDeps` object (D-157) — gateway
+route modules already contained zero direct `collection()` calls, so migration means replacing a
+raw `deps.X` handle at each call site with `scopedCollection(name, ctx)`. Classified the full
+inventory by scope (global kernel / tenant / user / project·case / legacy-unknown — zero legacy-
+unknown found); the user-scoped "personal operating layer" in `routes/personal.ts` (health,
+finance, career, memories) is the highest-value target since it is currently filtered only by
+hand-rebuilt `{scope:'user', userId}` filters in every handler. Chose `scoped_memories` as the
+first, smallest slice: fully isolated (zero references anywhere outside `personal.ts`, confirmed
+by grep — not touched by the deferred Jarvis/operator subsystem, D-157), 5 call sites, one
+existing filter pattern. All 5 call sites now build a per-request `scopedCollection<ScopedMemory>
+(COLLECTIONS.SCOPED_MEMORIES, {actor, scope:'user'})` instead of using the raw handle; the raw
+handle was removed from `GatewayDeps`, `server.ts`'s declaration block, and its `deps` assembly
+entry (not left as dead code). New test `characterization.personal-scope.test.ts` proves the
+guarantee: a foreign user's `scoped_memories` document seeded directly into the fake collection
+never surfaces through `GET /v1/me/memories` or `/v1/me/universe`, a request with no resolvable
+`primaryUserId` is denied at `enforceScoped` before the data layer is reached (403, not a 500 from
+`scopedCollection`'s internal throw), and a write is provably scope-stamped. Honest limitation
+documented in that file: real per-user auth doesn't exist yet (`legacyRoleToAuthContext` always
+resolves to `user_esan`), so a *second real* HTTP identity can't be driven through this harness —
+the isolation proof works by seeding a foreign-scoped row directly, which is exactly the failure
+mode (a stray unfiltered document) construction-based enforcement defends against; the wrapper's
+own fail-closed/no-widening guarantees are unit-proven independently in
+`shared/test/scoped-collection.contract.test.ts` (14 tests, K1.4a). Added
+`scripts/check-scope-boundary.mjs`, wired into CI: (1) raw `collection()` confined to
+`shared/src/db/{index,scoped}.ts`, with one documented escape hatch (`shared/src/agentrun/
+index.ts` — `agent_runs` is global self-development state, no scope fields, pre-existing and
+unrelated to this migration, allowlisted rather than silently ignored); (2) no
+`services/*/src/routes/**` module may call `collection()` directly; (3) a ratchet list
+(`MIGRATED_COLLECTIONS`) that hard-fails CI if a migrated collection's raw handle ever
+reappears anywhere in `services/` — seeded with `SCOPED_MEMORIES`, grows with each future pass.
+The script also non-blockingly reports the remaining raw-`collection()` count in
+`server.ts` (105 after this change) as tracked debt, rather than pretending the whole
+surface is migrated. Full verification: shared 107/107, gateway-api 197/197 (193 pre-existing +
+4 new), typecheck and build clean for both packages. Remaining unsafe direct access (by design,
+deferred): the other 7 fully-isolated personal-fact collections
+(`personalHealthStates`/`LifeItems`/`FinanceItems`/`LearningTracks`, `opportunityReports`,
+`connectorAccounts`, `connectorSyncRuns`, `accessDecisions`) are next (K1.4c); the
+identity/tenant block (`tenantsCol`/`userProfiles`/`memberships`/`consentGrants`) after that
+(K1.4d); the Jarvis/operator subsystem (voice, jarvis*, opTools/opSessions/opMemories) stays
+untouched per D-157's explicit boundary — migrating it is a real decomposition, not a mechanical
+swap, and conflicts with the standing "do not rewrite Jarvis" rule for this phase.
+
 ## 2026-07-10 — Phase K1.3 Gateway Split (characterize → then move)
 
 ### D-157 Gateway split design: characterization-first, verbatim bodies, one flat GatewayDeps

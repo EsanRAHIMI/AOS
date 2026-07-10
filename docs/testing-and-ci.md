@@ -10,7 +10,8 @@ Rule zero: **no feature or refactor merges without tests that pin its contract.*
 | Contract tests | `<package>/test/*.contract.test.ts` | Public behavior other code relies on: auth guards, scope/isolation engine, LLM validation invariant, envelopes, event schema, Jarvis grounding | Every CI run, <1s |
 | Unit tests | `<package>/test/*.test.ts` | Internal logic of one module | Every CI run |
 | Scenario tests | (K2+) staging scripts | End-to-end flows with real services/models | Pre-release |
-| Isolation probes | (K1.4+) | Automated cross-tenant read/write attempts that MUST fail | Every CI run + scheduled in prod |
+| Isolation probes | `services/gateway-api/test/characterization.personal-scope.test.ts` (K1.4b+) | A foreign-scoped row seeded directly into the fake collection must never surface through a migrated route; missing actor identity must deny (403) before the data layer, not throw (500) | Every CI run |
+| Static boundary gate | `scripts/check-scope-boundary.mjs` (K1.4b+) | Raw `collection()` confined to `shared/src/db/{index,scoped}.ts` + one documented exception; no route module may call it directly; migrated collections can never regain a raw handle (ratchet list) | Every CI run |
 
 Naming: `*.contract.test.ts` means "breaking this test = breaking a consumer or a security
 guarantee"; changing one requires a decision-log entry, not just a code change.
@@ -49,15 +50,18 @@ script in the same PR. Do not add new smoke scripts.
 ## CI
 
 GitHub Actions workflow: `.github/workflows/ci.yml` (added in K1.2). Gates on every push/PR
-to `main`: install (frozen lockfile) → build shared + service-kit → recursive typecheck →
-recursive tests. A red CI blocks merge; no exceptions, including for agents.
+to `main`: install (frozen lockfile) → build shared + service-kit → scope boundary check
+(K1.4b) → recursive typecheck → recursive tests. A red CI blocks merge; no exceptions,
+including for agents.
 
 ## Known constraints
 
 - The local dev mount blocks `pnpm install` writes (see README-SETUP); installs and full test
   runs during agent sessions happen in a sandbox-local copy — CI is the canonical verifier.
-- Gateway characterization tests (K1.3): `services/gateway-api/test/` — 193 tests build the
-  REAL gateway in-process (`buildGatewayService` + fastify inject + fake Db via `setTestDb`)
-  and pin auth, envelopes, RBAC/safe-mode/rate-limit semantics and the task/approval/infra
-  flows. They are the safety net for any gateway refactor. Event-bus service tests remain
-  open (land with the Redis fan-out work).
+- Gateway characterization tests (K1.3+): `services/gateway-api/test/` — 197 tests (193 from
+  the K1.3 split + 4 K1.4b isolation probes) build the REAL gateway in-process
+  (`buildGatewayService` + fastify inject + fake Db via `setTestDb`) and pin auth, envelopes,
+  RBAC/safe-mode/rate-limit semantics, the task/approval/infra flows, and (as of K1.4b)
+  per-user data isolation for migrated routes. They are the safety net for any gateway
+  refactor. Event-bus service tests remain open (land with the Redis fan-out work).
+- `shared/test/` is at 107 tests (93 from K1.1 + 14 K1.4a `scopedCollection` contract tests).

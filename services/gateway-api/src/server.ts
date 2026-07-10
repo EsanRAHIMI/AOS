@@ -80,7 +80,6 @@ import {
   type ConsentGrant,
   type ConnectorAccount,
   type ConnectorSyncRun,
-  type ScopedMemory,
   type UserGoal,
   type DailyBriefing,
   type OpportunityReport,
@@ -557,7 +556,8 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       const consentGrants = collection<ConsentGrant>(COLLECTIONS.CONSENT_GRANTS);
       const connectorAccounts = collection<ConnectorAccount>(COLLECTIONS.CONNECTOR_ACCOUNTS);
       const connectorSyncRuns = collection<ConnectorSyncRun>(COLLECTIONS.CONNECTOR_SYNC_RUNS);
-      const scopedMemories = collection<ScopedMemory>(COLLECTIONS.SCOPED_MEMORIES);
+      // scoped_memories deliberately has no raw handle here — K1.4b (D-158)
+      // moved it to scopedCollection(ctx), built per-request in routes/personal.ts.
       const userGoals = collection<UserGoal>(COLLECTIONS.USER_GOALS);
       const dailyBriefings = collection<DailyBriefing>(COLLECTIONS.DAILY_BRIEFINGS);
       const opportunityReports = collection<OpportunityReport>(COLLECTIONS.OPPORTUNITY_REPORTS);
@@ -1585,7 +1585,6 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         consentGrants,
         connectorAccounts,
         connectorSyncRuns,
-        scopedMemories,
         userGoals,
         dailyBriefings,
         opportunityReports,

@@ -40,6 +40,9 @@ jobs:
       - name: Build shared + service-kit
         run: pnpm run build:deps
 
+      - name: Scope boundary check (K1.4b, D-158)
+        run: node scripts/check-scope-boundary.mjs
+
       - name: Typecheck (all packages)
         run: pnpm -r run typecheck
 
