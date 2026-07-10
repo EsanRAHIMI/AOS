@@ -5,7 +5,7 @@
  * breaks, data isolation broke.
  */
 import { describe, it, expect } from 'vitest';
-import { canAccess, classifyGoalScope, legacyRoleToAuthContext, accessDecisionFilter, ESAN_TENANT_ID, ESAN_USER_ID, type AccessRequest } from '../src/scope/index.js';
+import { canAccess, classifyGoalScope, legacyRoleToAuthContext, accessDecisionFilter, authContextToRoleName, ESAN_TENANT_ID, ESAN_USER_ID, type AccessRequest } from '../src/scope/index.js';
 import type { AuthContext } from '../src/schemas/scope.js';
 
 /* ------------------------------ fixtures ------------------------------- */
@@ -271,5 +271,42 @@ describe('accessDecisionFilter', () => {
 
   it('the agent role (no ownership, no platform_admin) is filtered to its own actorId', () => {
     expect(accessDecisionFilter(agent)).toEqual({ actorId: 'service_agent' });
+  });
+});
+
+/* -------------------- authContextToRoleName (K1 Real Auth, D-164) ------- */
+//
+// A real session's AuthContext carries a TenantMembership-shaped `roles`
+// array (e.g. ['owner','tenant_admin']); the flat gateway RBAC system
+// (routes/{governance,operations,voice,operator,security}.ts) still expects
+// a single RoleName. This is the one place that maps between the two.
+
+describe('authContextToRoleName', () => {
+  it('an owner-membership actor maps to RoleName owner', () => {
+    expect(authContextToRoleName(owner)).toBe('owner');
+  });
+
+  it('a tenant_operator-membership actor maps to RoleName operator', () => {
+    const op = member(['tenant_operator']);
+    expect(authContextToRoleName(op)).toBe('operator');
+  });
+
+  it('a platform_operator-membership actor maps to RoleName operator', () => {
+    const op = member(['platform_operator']);
+    expect(authContextToRoleName(op)).toBe('operator');
+  });
+
+  it('a plain member with no operator/owner role maps to RoleName viewer (least privilege)', () => {
+    const v = member(['viewer']);
+    expect(authContextToRoleName(v)).toBe('viewer');
+  });
+
+  it('an actor with no primaryUserId (no resolvable identity) maps to RoleName agent — fail closed', () => {
+    expect(authContextToRoleName(agent)).toBe('agent');
+  });
+
+  it('isOwner:true always wins even if roles omits the literal "owner" string', () => {
+    const weirdOwner = member([], { isOwner: true });
+    expect(authContextToRoleName(weirdOwner)).toBe('owner');
   });
 });

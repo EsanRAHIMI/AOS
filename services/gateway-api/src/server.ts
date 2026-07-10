@@ -69,15 +69,23 @@ import {
   stampScope,
   buildEsanSeed,
   legacyRoleToAuthContext,
+  authContextToRoleName,
   classifyGoalScope,
   ESAN_TENANT_ID,
   ESAN_USER_ID,
+  hashPassword,
+  verifyPasswordHash,
+  generateSessionToken,
+  hashSessionToken,
+  SESSION_TOKEN_HEADER,
   type AuthContext,
   type AccessRequest,
   type Tenant,
   type UserProfile,
   type TenantMembership,
   type ConsentGrant,
+  type UserAccount,
+  type Session,
   type UserGoal,
   type DailyBriefing,
   type AccessDecision,
@@ -220,6 +228,7 @@ import {
   answerIgnoresStatedPriority,
 } from '@factory/shared';
 import { createFactoryService, type FactoryService } from '@factory/service-kit';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerTasksRoutes } from './routes/tasks.js';
 import { registerCapabilitiesRoutes } from './routes/capabilities.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
@@ -371,8 +380,28 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         reply.code(statusCode).send(failure(code, message, { requestId }));
       });
 
-      // Dashboard/human (admin token) OR another service (internal token).
-      const guard = (req: { headers: Record<string, string | string[] | undefined> }) =>
+      // --- Phase 12 security helpers --------------------------------------
+      // K1 Real Auth (D-164): sessionActor moved into the Req type itself
+      // (routes/deps.ts) so guard()/declaredRole() below can read it —
+      // populated once per request by the onRequest hook registered further
+      // down, right after the session/user-account collections exist.
+      type Req = { headers: Record<string, string | string[] | undefined>; ip?: string; sessionActor?: AuthContext | null };
+      type FastifyReplyLike = { code: (n: number) => { send: (b: unknown) => unknown }; header: (k: string, v: unknown) => unknown };
+      const headerStr = (req: Req, name: string): string => {
+        const v = req.headers[name];
+        return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
+      };
+      const clientIp = (req: Req): string => headerStr(req, 'x-forwarded-for').split(',')[0]?.trim() || req.ip || '';
+      const userAgent = (req: Req): string => headerStr(req, 'user-agent');
+
+      // Dashboard/human (real session, OR legacy admin token) OR another
+      // service (internal token). K1 Real Auth (D-164): a real, valid session
+      // (req.sessionActor, resolved by the onRequest hook below) is now a
+      // first-class way to pass guard() — it does not require the admin
+      // token at all, which is the whole point (per-caller, revocable
+      // identity instead of one shared secret).
+      const guard = (req: Req) =>
+        Boolean(req.sessionActor?.primaryUserId) ||
         hasValidAdminToken({
           headers: req.headers,
           expectedInternalToken: env.FACTORY_INTERNAL_TOKEN,
@@ -383,21 +412,44 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       const deny = (reply: { code: (n: number) => { send: (b: unknown) => unknown } }) =>
         reply.code(401).send(failure(ERROR_CODES.UNAUTHORIZED, 'admin or internal token required'));
 
-      // --- Phase 12 security helpers --------------------------------------
-      type Req = { headers: Record<string, string | string[] | undefined>; ip?: string };
-      type FastifyReplyLike = { code: (n: number) => { send: (b: unknown) => unknown }; header: (k: string, v: unknown) => unknown };
-      const headerStr = (req: Req, name: string): string => {
-        const v = req.headers[name];
-        return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
-      };
-      const clientIp = (req: Req): string => headerStr(req, 'x-forwarded-for').split(',')[0]?.trim() || req.ip || '';
-      const userAgent = (req: Req): string => headerStr(req, 'user-agent');
-      /** The role the request acts as. The dashboard's declared role is only trusted with a valid admin token. */
+      /**
+       * The role the request acts as. K1 Real Auth (D-164), in priority order:
+       *  1. A session token was declared (x-factory-session-token present).
+       *     This is now the ONLY signal trusted for that request: a valid
+       *     session maps to its real RoleName; an invalid/expired/revoked one
+       *     resolves to 'agent' (fail closed) — it never falls through to the
+       *     legacy header below, which would silently mask an expired session
+       *     as if it were a fresh legacy request.
+       *  2. No session token declared: the LEGACY path — self-declared
+       *     x-factory-role, trusted only alongside a valid admin token. This
+       *     is explicitly temporary K1 compatibility scaffolding (CI,
+       *     existing internal tooling, the dashboard's own transition
+       *     period) — see FACTORY_ALLOW_LEGACY_ROLE_AUTH and decision-log
+       *     D-164 for the deprecation path. When disabled, an admin-token
+       *     request with no real session resolves to the LEAST-privileged
+       *     role ('viewer'), never the self-declared one — the whole point
+       *     of the kill-switch is that a shared secret can no longer be used
+       *     to claim an arbitrary identity.
+       */
       const declaredRole = (req: Req): RoleName => {
+        if (req.sessionActor !== undefined) return req.sessionActor ? authContextToRoleName(req.sessionActor) : 'agent';
         const isAdmin = hasValidAdminToken({ headers: req.headers, expectedInternalToken: env.FACTORY_INTERNAL_TOKEN, expectedAdminToken: env.FACTORY_ADMIN_TOKEN });
         if (!isAdmin) return 'agent';
+        if (!env.FACTORY_ALLOW_LEGACY_ROLE_AUTH) return 'viewer';
         const r = headerStr(req, ROLE_HEADER);
         return (['owner', 'operator', 'viewer', 'agent'] as const).includes(r as RoleName) ? (r as RoleName) : 'owner';
+      };
+      /** K1 Real Auth (D-164): the ONE centralized place that resolves "who is
+       *  making this request" into a full AuthContext — a real session if one
+       *  was declared (valid or not — see declaredRole's doc), else the
+       *  unchanged legacy legacyRoleToAuthContext(declaredRole(req)) mapping.
+       *  routes/personal.ts and routes/auth.ts both use this via GatewayDeps
+       *  instead of reconstructing the fallback logic themselves. */
+      const resolveAuth = (req: Req): AuthContext => {
+        if (req.sessionActor !== undefined) {
+          return req.sessionActor ?? { actorId: 'invalid_session', actorType: 'service_agent', roles: [], permissions: [], scopes: [], isOwner: false };
+        }
+        return legacyRoleToAuthContext(declaredRole(req));
       };
       const writeAudit = async (a: Parameters<typeof buildAuditLog>[0]): Promise<AuditLog> => {
         const logRec = buildAuditLog(a);
@@ -564,12 +616,100 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       // (D-160) moved it to scopedCollection(ctx) in routes/personal.ts.
       const accessDecisions = collection<AccessDecision>(COLLECTIONS.ACCESS_DECISIONS);
 
+      // K1 Real Auth (D-164): credentials + sessions. user_accounts stores
+      // ONLY credentials (userId/email/passwordHash) — never conflated with
+      // user_profiles (personal profile data) or the decorative `users`/
+      // RbacUser collection (governance.ts, unrelated demo/display data).
+      const userAccounts = collection<UserAccount>(COLLECTIONS.USER_ACCOUNTS);
+      const sessionsCol = collection<Session>(COLLECTIONS.SESSIONS);
+
+      /** Resolve a bearer session token to a real AuthContext. Fails closed
+       *  (returns null) on any invalid/expired/revoked/orphaned session —
+       *  never throws, never silently substitutes another identity. */
+      const resolveSessionActor = async (token: string): Promise<AuthContext | null> => {
+        const tokenHash = hashSessionToken(token);
+        const session = await sessionsCol.findOne({ tokenHash });
+        if (!session || session.revokedAt) return null;
+        if (new Date(session.expiresAt).getTime() <= Date.now()) return null;
+        const membership = await memberships.findOne({ userId: session.userId, tenantId: session.tenantId });
+        if (!membership) return null; // fail closed: no membership, no context
+        void sessionsCol.updateOne({ sessionId: session.sessionId }, { $set: { lastSeenAt: nowIso() } }).catch(() => undefined);
+        return {
+          actorId: session.userId,
+          actorType: 'human_user',
+          primaryUserId: session.userId,
+          activeTenantId: session.tenantId,
+          roles: membership.roles,
+          permissions: [],
+          scopes: ['global', 'tenant', 'user'],
+          isOwner: membership.roles.includes('owner'),
+          sessionId: session.sessionId,
+        };
+      };
+
+      // A session token, if declared, is the ONLY identity signal trusted for
+      // that request (see declaredRole/resolveAuth above) — resolved once per
+      // request, BEFORE any route handler runs, so guard()/declaredRole()
+      // (called from every one of the 10+ route modules) stay synchronous.
+      app.addHook('onRequest', async (req) => {
+        const raw = req.headers[SESSION_TOKEN_HEADER];
+        const token = Array.isArray(raw) ? raw[0] : raw;
+        if (!token) return;
+        const actor = await resolveSessionActor(token);
+        (req as { sessionActor?: AuthContext | null }).sessionActor = actor;
+      });
+
+      /** Owner-only privileged provisioning (gated in routes/auth.ts). A
+       *  deliberate CROSS-USER write — scopedCollection(ctx) cannot do this
+       *  by design (it only ever writes the CALLER's own identity) — so this
+       *  is a purpose-built raw-handle function, same category as
+       *  buildEsanSeed()'s bootstrap below. Never accepts a plaintext
+       *  password itself: routes/auth.ts hashes it (or the caller already
+       *  supplied a hash) before calling this. */
+      const provisionUser = async (input: { email: string; passwordHash: string; tenantId?: string; tenantName?: string; roles?: string[]; displayName?: string }): Promise<UserAccount> => {
+        const now = nowIso();
+        const userId = genId('user');
+        let tenantId = input.tenantId;
+        if (!tenantId) {
+          tenantId = genId('tenant');
+          await tenantsCol.insertOne({ tenantId, name: input.tenantName || `${input.email} — Personal`, kind: 'personal', status: 'active', settings: {}, createdBy: userId, createdAt: now, updatedAt: now });
+        }
+        const roles = input.roles && input.roles.length > 0 ? input.roles : (input.tenantId ? ['viewer'] : ['owner', 'tenant_admin']);
+        const email = input.email.trim().toLowerCase();
+        const account: UserAccount = { userId, email, passwordHash: input.passwordHash, primaryTenantId: tenantId, status: 'active', createdAt: now, updatedAt: now };
+        await userAccounts.insertOne(account);
+        await memberships.insertOne({ scope: 'tenant', membershipId: genId('membership'), tenantId, userId, roles, status: 'active', createdAt: now, updatedAt: now });
+        await userProfiles.insertOne({ scope: 'user', userId, displayName: input.displayName || email.split('@')[0] || email, email, actorType: 'human_user', defaultTenantId: tenantId, locale: 'en', timezone: 'UTC', preferences: {}, status: 'active', createdAt: now, updatedAt: now });
+        return account;
+      };
+
       // Idempotent bootstrap: Esan is the first owner and platform governor.
       void (async () => {
         const seed = buildEsanSeed();
         const seeded = await tenantsCol.updateOne({ tenantId: seed.tenant.tenantId }, { $setOnInsert: seed.tenant }, { upsert: true });
         await userProfiles.updateOne({ userId: seed.user.userId }, { $setOnInsert: seed.user }, { upsert: true });
         await memberships.updateOne({ membershipId: seed.membership.membershipId }, { $setOnInsert: seed.membership }, { upsert: true });
+        // K1 Real Auth (D-164) — mandatory correction: NEVER generate or print
+        // a plaintext password here. If no password hash is configured, log a
+        // clear one-time warning with exact setup instructions and leave
+        // user_accounts unseeded — login simply stays unavailable (fails
+        // closed) until the operator configures a real credential.
+        if (!(await userAccounts.findOne({ userId: seed.user.userId }))) {
+          const configuredHash = env.FACTORY_OWNER_PASSWORD_HASH.trim();
+          if (/^scrypt\$[0-9a-f]+\$[0-9a-f]+$/i.test(configuredHash)) {
+            await userAccounts.insertOne({ userId: seed.user.userId, email: env.FACTORY_OWNER_EMAIL.trim().toLowerCase(), passwordHash: configuredHash, primaryTenantId: seed.tenant.tenantId, status: 'active', createdAt: nowIso(), updatedAt: nowIso() });
+          } else {
+            ctx.log.warn(
+              '[K1 Real Auth] FACTORY_OWNER_PASSWORD_HASH is not configured — the owner user_account was NOT seeded, ' +
+              'so POST /v1/auth/login has no credential to authenticate against yet. This is intentional: the system ' +
+              'never generates or prints a plaintext password. To enable real session login, run ' +
+              "`node scripts/hash-password.mjs '<your-password>'`, set FACTORY_OWNER_PASSWORD_HASH to its output " +
+              '(and, optionally, FACTORY_OWNER_EMAIL) in the gateway-api environment, then restart. Until then, the ' +
+              'legacy x-factory-admin-token + x-factory-role path remains available for human access — see ' +
+              'FACTORY_ALLOW_LEGACY_ROLE_AUTH in docs/security-and-permissions.md.'
+            );
+          }
+        }
         if (seeded.upsertedCount > 0) await ctx.publisher.publish({ type: EVENT_TYPES.IDENTITY_SEEDED, taskId: null, payload: { tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, message: 'Esan seeded as owner and platform governor' } });
       })().catch(() => undefined);
 
@@ -1481,6 +1621,10 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         clientIp,
         userAgent,
         declaredRole,
+        resolveAuth,
+        userAccounts,
+        sessionsCol,
+        provisionUser,
         writeAudit,
         writeSecEvent,
         rateLimited,
@@ -1605,6 +1749,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         opMemories,
       };
 
+      registerAuthRoutes(app, deps);
       registerTasksRoutes(app, deps);
       registerCapabilitiesRoutes(app, deps);
       registerGovernanceRoutes(app, deps);

@@ -82,6 +82,32 @@ for (const [name, scopeValue] of SCOPE_FIELD_ADD) {
   } catch (e) { console.log(`- ${name}: skipped (${e.message})`); }
 }
 
+// 4 — K1 Real Auth (D-164): the owner's login credential. Mirrors the same
+// idempotent, no-plaintext logic server.ts's own boot-time bootstrap runs —
+// duplicated here (not merely relied upon) so this script remains the single
+// authoritative seed entry point per master-direction §D.4. NEVER generates
+// or prints a plaintext password: if FACTORY_OWNER_PASSWORD_HASH isn't set,
+// this step is skipped with a clear message, not a silently-invented secret.
+try {
+  const userAccounts = collection(COLLECTIONS.USER_ACCOUNTS);
+  const existing = await userAccounts.findOne({ userId: ESAN_USER_ID });
+  if (existing) {
+    console.log(`- ${COLLECTIONS.USER_ACCOUNTS}: owner already has a credential — untouched`);
+  } else {
+    const configuredHash = (process.env.FACTORY_OWNER_PASSWORD_HASH ?? '').trim();
+    if (/^scrypt\$[0-9a-f]+\$[0-9a-f]+$/i.test(configuredHash)) {
+      const now = nowIso();
+      await userAccounts.insertOne({ userId: ESAN_USER_ID, email: (process.env.FACTORY_OWNER_EMAIL ?? 'owner@local').trim().toLowerCase(), passwordHash: configuredHash, primaryTenantId: ESAN_TENANT_ID, status: 'active', createdAt: now, updatedAt: now });
+      console.log(`✓ ${COLLECTIONS.USER_ACCOUNTS}: owner credential seeded from FACTORY_OWNER_PASSWORD_HASH`);
+    } else {
+      console.log(
+        `- ${COLLECTIONS.USER_ACCOUNTS}: FACTORY_OWNER_PASSWORD_HASH not set — owner credential NOT seeded (never generating ` +
+        "one). Run node scripts/hash-password.mjs '<your-password>' and set FACTORY_OWNER_PASSWORD_HASH, then re-run.",
+      );
+    }
+  }
+} catch (e) { console.log(`- ${COLLECTIONS.USER_ACCOUNTS}: skipped (${e.message})`); }
+
 await collection(COLLECTIONS.EVENTS).insertOne({ eventId: `evt_migration_${Date.now()}`, type: 'identity.seeded', source: 'migrate-scope-foundation', taskId: null, payload: { message: 'Phase AA scope foundation migration completed', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID }, createdAt: nowIso(), scope: 'global' });
 console.log('\nDone. Re-running is safe: only unscoped records are ever touched.');
 process.exit(0);

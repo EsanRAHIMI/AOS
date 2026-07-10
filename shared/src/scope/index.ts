@@ -22,6 +22,7 @@ import {
   type AuthContext, type Scope, type ActorType,
 } from '../schemas/scope.js';
 import type { Tenant, UserProfile, TenantMembership, AccessDecision, ConsentGrant } from '../schemas/identity.js';
+import type { RoleName } from '../schemas/governance.js';
 
 export type ScopedAction = 'read' | 'list' | 'create' | 'update' | 'delete' | 'approve' | 'execute' | 'analyze_cross_tenant';
 
@@ -265,6 +266,24 @@ export function legacyRoleToAuthContext(role: string, sessionId?: string): AuthC
     isOwner: role === 'owner',
     sessionId,
   };
+}
+
+/**
+ * K1 Real Auth (D-164): the flat gateway RBAC system (`RoleName`:
+ * owner/operator/viewer/agent — used by `canRolePerformAction`/`hasPermission`
+ * for the non-scope-engine RBAC checks in routes/{governance,operations,voice,
+ * operator,security}.ts) is a DIFFERENT, coarser vocabulary than AuthContext's
+ * `roles: string[]` (used by the scope engine above). A real session's
+ * AuthContext is built from a TenantMembership's `roles` array (e.g.
+ * ['owner','tenant_admin']); this pure function is the one place that maps it
+ * down to the flat RoleName every pre-K1-auth RBAC check still expects, so
+ * that upgrading identity RESOLUTION (this pass) never has to touch the RBAC
+ * ENFORCEMENT call sites themselves. */
+export function authContextToRoleName(ctx: AuthContext): RoleName {
+  if (!ctx.primaryUserId) return 'agent';
+  if (ctx.isOwner || ctx.roles.includes('owner')) return 'owner';
+  if (ctx.roles.some((r) => r === 'tenant_operator' || r === 'platform_operator')) return 'operator';
+  return 'viewer';
 }
 
 /* --------------------- operator goal scope classification ---------------- */

@@ -229,6 +229,13 @@ export const COLLECTIONS = {
   TENANTS: 'tenants',
   USER_PROFILES: 'user_profiles',
   TENANT_MEMBERSHIPS: 'tenant_memberships',
+  // K1 Real Auth (D-164): CREDENTIAL storage — distinct from both `users`
+  // (decorative RBAC display data, governance.ts, never used for real login)
+  // and `user_profiles` (personal profile data, scope-stamped, read/written
+  // through scopedCollection(ctx)). `user_accounts` is the only collection
+  // that ever sees a password hash. `sessions` was reserved since Phase 1 and
+  // had zero usage until now — no naming collision.
+  USER_ACCOUNTS: 'user_accounts',
   USER_ROLES: 'user_roles',
   SCOPE_POLICIES: 'scope_policies',
   CONSENT_GRANTS: 'consent_grants',
@@ -490,6 +497,14 @@ export const ADMIN_TOKEN_HEADER = 'x-factory-admin-token';
  * an untrusted client cannot self-elevate.
  */
 export const ROLE_HEADER = 'x-factory-role';
+/**
+ * K1 Real Auth (D-164): header carrying an opaque, real, per-user session
+ * bearer token (see shared/src/auth generateSessionToken/hashSessionToken).
+ * When present, the gateway resolves identity through `sessions` +
+ * `user_accounts` instead of the legacy ROLE_HEADER path — see
+ * docs/security-and-permissions.md and decision-log D-164.
+ */
+export const SESSION_TOKEN_HEADER = 'x-factory-session-token';
 /** Request id echoed in responses and error envelopes for traceability. */
 export const REQUEST_ID_HEADER = 'x-request-id';
 

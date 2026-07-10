@@ -102,8 +102,10 @@ import type {
   StrategyReviewRun,
   SystemEvent,
   SystemRecommendation,
+  Session,
   Task,
   Tenant,
+  UserAccount,
   UserGoal,
   VerificationResult,
   VoiceMemory,
@@ -116,13 +118,23 @@ import type { GatewayEnv } from '../server.js';
 
 /** Request/reply structural types used by the shared guards (mirrors the
  *  pre-split closure-local aliases). */
-export type Req = { headers: Record<string, string | string[] | undefined>; ip?: string };
+export type Req = {
+  headers: Record<string, string | string[] | undefined>;
+  ip?: string;
+  /** K1 Real Auth (D-164): set once per request by the onRequest hook in
+   *  server.ts, BEFORE any route handler runs — never assign this directly.
+   *  undefined = no x-factory-session-token header was sent (legacy path
+   *  applies). null = a token WAS sent but is invalid/expired/revoked (fails
+   *  closed, never falls back to legacy). A real AuthContext = a valid
+   *  session. See resolveAuth/guard/declaredRole in server.ts. */
+  sessionActor?: AuthContext | null;
+};
 export type FastifyReplyLike = { code: (n: number) => { send: (b: unknown) => unknown }; header: (k: string, v: unknown) => unknown };
 
 export interface GatewayDeps {
   env: GatewayEnv;
   ctx: ServiceContext;
-  guard: (req: { headers: Record<string, string | string[] | undefined> }) => boolean;
+  guard: (req: Req) => boolean;
   deny: (reply: { code: (n: number) => { send: (b: unknown) => unknown } }) => unknown;
   headerStr: (req: Req, name: string) => string;
   clientIp: (req: Req) => string;
@@ -229,6 +241,21 @@ export interface GatewayDeps {
   jarvisAnswerScores: Collection<JarvisAnswerScore>;
   jarvisBriefings: Collection<{ briefingId: string; actorId: string; scope: 'global' | 'user'; headline: string; narrative: string; topPriorities: string[]; decisions: string[]; blockers: string[]; suggestedFollowUps: string[]; language: string; createdAt: string }>;
   tenantsCol: Collection<Tenant>;
+  // K1 Real Auth (D-164): resolveAuth is the ONE centralized place that
+  // decides "who is making this request" — a real session (req.sessionActor)
+  // if one was declared, else the legacy legacyRoleToAuthContext(declaredRole)
+  // mapping unchanged. routes/personal.ts and routes/auth.ts both use this
+  // instead of reconstructing the fallback logic themselves.
+  resolveAuth: (req: Req) => AuthContext;
+  /** Credentials only — see shared/src/schemas/auth.ts UserAccountSchema. */
+  userAccounts: Collection<UserAccount>;
+  /** Real, DB-backed, revocable sessions — see SessionSchema. */
+  sessionsCol: Collection<Session>;
+  /** Owner-only privileged provisioning (routes/auth.ts POST /v1/auth/users).
+   *  A deliberate cross-user write — scopedCollection(ctx) cannot do this by
+   *  design (it only ever writes the CALLER's own identity) — so this stays a
+   *  purpose-built raw-handle function, same category as buildEsanSeed(). */
+  provisionUser: (input: { email: string; passwordHash: string; tenantId?: string; tenantName?: string; roles?: string[]; displayName?: string }) => Promise<UserAccount>;
   // userProfiles/memberships/consentGrants/connectorAccounts/connectorSyncRuns
   // deliberately absent — K1.4f (D-163) migrated all five off the raw
   // GatewayDeps handle; routes/personal.ts builds scopedCollection(ctx)

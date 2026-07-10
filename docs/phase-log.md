@@ -3246,3 +3246,65 @@ check-scope-boundary.mjs}`, `services/gateway-api/src/{routes/personal.ts, route
 server.ts}`, `shared/test/scope-engine.contract.test.ts`,
 `services/gateway-api/test/characterization.personal-scope.test.ts`,
 `docs/{decision-log.md, multi-tenant-governance.md, phase-log.md, testing-and-ci.md}`.
+
+## Phase K1 Real Auth — Users, Sessions, Session-Backed Actor Context — COMPLETE (2026-07-10)
+
+**Goal (user-scoped):** replace reliance on a single synthetic identity for auth testing with real,
+DB-backed credentialed users and revocable sessions, so K1's scope-by-construction guarantees
+(K1.4a-f) could be proven end-to-end against more than one real user — "operationally safe: real
+users, real sessions, real actor context, and scope enforcement that can be proven end-to-end,"
+not a full SaaS auth product. Two mandatory security corrections (no plaintext password
+generation ever; legacy admin-token+role-header fallback must be explicit, temporary, and
+kill-switchable) governed every design choice — see decision-log D-164 for the full record.
+
+**Delivered:**
+1. `shared/src/schemas/auth.ts` (new): `UserAccountSchema` (`user_accounts`), `SessionSchema`
+   (`sessions`) — deliberately separate from the pre-existing `users`/RBAC-display collection and
+   `user_profiles`.
+2. `shared/src/auth/index.ts`: `hashPassword`/`verifyPasswordHash` (scrypt, same format as
+   `scripts/hash-password.mjs` and dashboard-web's existing scheme), `generateSessionToken`/
+   `hashSessionToken` (opaque bearer token, only its sha256 ever persisted), `SESSION_TOKEN_HEADER`.
+3. `shared/src/scope/index.ts`: `authContextToRoleName(ctx)` bridging the scope-engine's
+   `AuthContext.roles` to the gateway's flat `RoleName` enum.
+4. `shared/src/env/index.ts`: `FACTORY_ALLOW_LEGACY_ROLE_AUTH` (default `true`, the kill switch),
+   `FACTORY_OWNER_PASSWORD_HASH`/`FACTORY_OWNER_EMAIL` (no default hash — validated strictly,
+   never invented).
+5. `services/gateway-api/src/routes/auth.ts` (new): `POST /v1/auth/login`, `POST /v1/auth/logout`,
+   `GET /v1/auth/session`, `POST /v1/auth/users` (owner-only).
+6. `services/gateway-api/src/server.ts`: a Fastify `onRequest` hook resolves the session token
+   into `req.sessionActor` once per request (three-state: undeclared / invalid-fail-closed /
+   valid), keeping every other route file's synchronous `guard`/`declaredRole` untouched;
+   `provisionUser(...)` for owner-gated cross-user account creation; the boot-time owner bootstrap
+   extended to seed a credential only from a validly-formatted `FACTORY_OWNER_PASSWORD_HASH`.
+7. `scripts/migrate-scope-foundation.mjs`: matching idempotent, no-plaintext owner-credential seed
+   step, duplicated deliberately so the migration script stays the single authoritative entry point.
+8. `services/gateway-api/test/characterization.auth-real.test.ts` (new, 24 tests): login
+   success/wrong-password/unknown-email/suspended (identical 401 body — no enumeration), session
+   introspection, logout+reuse rejection, expired/revoked rejection, owner-only provisioning
+   (success/403/401/409), two real users in two separate tenants proving cross-user AND
+   cross-tenant isolation through real session tokens on `/v1/me/memories` and
+   `/v1/tenants/current`, and the `FACTORY_ALLOW_LEGACY_ROLE_AUTH` kill-switch (on by default,
+   neutered when off, real sessions unaffected either way).
+9. Dashboard-web: no changes made, by judgment not oversight — its existing operator login already
+   authenticates independently and declares role via the legacy path, which is precisely the
+   "existing service/dashboard transition" the fallback is designed to cover during K1. See
+   decision-log D-164 for the reasoning and the explicit next-step recommendation.
+
+**Verification:** `shared` 128/128 tests (111 pre-existing + 11 new password/session-token helper
+tests + 6 new `authContextToRoleName` tests), `gateway-api` 238/238 tests (214 pre-existing + 24
+new), both packages typecheck clean, zero regressions in either suite.
+
+**Next K1 step:** either (a) migrate dashboard-web onto real gateway sessions and flip
+`FACTORY_ALLOW_LEGACY_ROLE_AUTH` toward `false` by default, closing the legacy path per its
+documented deprecation intent, or (b) take on the Jarvis/operator executors subsystem (D-157) so
+real per-user actor context reaches the voice/operator command layer, not just the REST routes
+migrated in K1.4b-f. Recommend the user chooses explicitly rather than defaulting to (a) — (b) is
+the larger remaining gap in "real actor context" reaching every subsystem, while (a) is lower risk
+but lower value until the dashboard needs to represent more than one real tenant identity.
+
+Scope: `shared/src/{schemas/auth.ts, schemas/index.ts, constants/index.ts, auth/index.ts,
+scope/index.ts, env/index.ts}`, `shared/test/{auth.contract.test.ts,
+scope-engine.contract.test.ts}`, `services/gateway-api/src/{routes/auth.ts (new), routes/deps.ts,
+routes/personal.ts, server.ts}`, `services/gateway-api/test/characterization.auth-real.test.ts`
+(new), `scripts/migrate-scope-foundation.mjs`, `docs/{decision-log.md, multi-tenant-governance.md,
+phase-log.md, security-and-permissions.md}`.

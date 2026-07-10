@@ -116,6 +116,35 @@ executors subsystem (the one remaining, precisely-documented blocker) or
 starting a different K1 workstream. There is no more mechanically-available
 scope migration left on this surface.
 
+### Identity layer feeding `AuthContext` (K1 Real Auth, D-164)
+
+K1.4a-f proved isolation is enforced by construction once an `AuthContext` exists — but until this
+pass, every `AuthContext` in the system came from either a single seeded owner identity or the
+legacy self-declared `x-factory-role` header. K1 Real Auth adds the missing piece underneath: real,
+credentialed `user_accounts` and revocable `sessions`, so a real login produces a real
+`AuthContext` with a real `primaryUserId`/`activeTenantId`, not a synthetic one.
+
+`resolveSessionActor(token)` (`services/gateway-api/src/server.ts`) is now the canonical path from
+a bearer session token to an `AuthContext`: it validates the session (not expired, not revoked),
+loads the caller's `TenantMembership` for that session's `tenantId` (fails closed if none exists —
+an orphaned session can never resolve), and builds `roles`/`isOwner` from that membership, exactly
+as the pre-existing scope engine already expected. This is what let the K1 Real Auth test suite
+(`characterization.auth-real.test.ts`) finally prove the claim this whole document makes — two real
+users, two real tenants, two real sessions, zero cross-visibility — with real credentials end to
+end rather than a foreign row seeded directly into a fake collection.
+
+The legacy `x-factory-role` header path still produces an `AuthContext` too
+(`legacyRoleToAuthContext`), gated by `FACTORY_ALLOW_LEGACY_ROLE_AUTH` — see
+`docs/security-and-permissions.md`'s "K1 Real Auth" section for the kill-switch and deprecation
+path. `authContextToRoleName` (`shared/src/scope/index.ts`) is the reverse bridge, mapping either
+kind of `AuthContext` back down to the flat `RoleName` enum the pre-K1 RBAC checks
+(`canRolePerformAction`/`hasPermission`) still use.
+
+**Still out of reach of a real session:** the Jarvis/operator executors subsystem (D-157) builds
+its own operator-context independent of `req.sessionActor` and still resolves every actor to Esan.
+Real per-user identity has reached every K1.4b-f-migrated REST route; it has not yet reached the
+voice/operator command layer.
+
 ## Scope Model
 
 Every record must be one of:

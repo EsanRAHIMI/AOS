@@ -15,6 +15,37 @@ export const BaseEnvSchema = z.object({
   FACTORY_ADMIN_TOKEN: z.string().optional().default(''),
 
   /**
+   * K1 Real Auth (D-164) kill-switch. When true (the K1 default), the gateway
+   * still honors the legacy `x-factory-admin-token` + `x-factory-role`
+   * self-declared-role path for human requests that carry no real session
+   * token — this is what keeps CI, existing internal tooling, and the
+   * dashboard's transition period working. Set to false to require every
+   * human request to carry a real, valid session token (x-factory-session-
+   * token); admin-token-only human requests then resolve to the
+   * least-privileged RoleName ('viewer') instead of the self-declared role.
+   * This does not affect FACTORY_INTERNAL_TOKEN service-to-service auth.
+   * See docs/security-and-permissions.md and decision-log D-164.
+   */
+  FACTORY_ALLOW_LEGACY_ROLE_AUTH: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .default(true)
+    .transform((v) => v === true || v === 'true' || v === '1'),
+
+  /**
+   * K1 Real Auth (D-164): the platform owner's login credential, in the same
+   * `scrypt$<saltHex>$<hashHex>` format `scripts/hash-password.mjs` already
+   * produces (reuse the same value dashboard-web's DASHBOARD_ADMIN_PASSWORD_
+   * HASH already uses, or generate a fresh one). Deliberately has NO default
+   * value and the system NEVER generates or logs a plaintext password: if
+   * this is unset, the owner user_account simply is not seeded and
+   * POST /v1/auth/login has nothing to authenticate the owner against yet —
+   * a clear startup warning explains exactly what to configure.
+   */
+  FACTORY_OWNER_PASSWORD_HASH: z.string().optional().default(''),
+  FACTORY_OWNER_EMAIL: z.string().optional().default('owner@local'),
+
+  /**
    * Emergency kill-switch. When true, services refuse mutation/deploy/repair/
    * governance execution and operate read/monitor/report-only. The live value
    * is mirrored in `system_settings` so the owner can toggle it at runtime;

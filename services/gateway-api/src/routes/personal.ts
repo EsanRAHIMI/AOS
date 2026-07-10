@@ -4,7 +4,7 @@
  * Bodies are moved VERBATIM from the pre-split server.ts; behavior is pinned
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
-import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, accessDecisionFilter, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
+import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, accessDecisionFilter, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
 import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, OpportunityReport, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLearningTrack, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, TenantMembership, UserGoal, UserProfile } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
@@ -18,6 +18,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
     clientIp,
     userAgent,
     declaredRole,
+    resolveAuth,
     writeAudit,
     writeSecEvent,
     isSafeMode,
@@ -70,7 +71,10 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
     opMemories,
   } = deps;
 
-      const resolveAuth = (req: Req): AuthContext => legacyRoleToAuthContext(declaredRole(req));
+      // K1 Real Auth (D-164): resolveAuth now comes from GatewayDeps (centralized
+      // in server.ts) — a real session if one was declared, else the unchanged
+      // legacy legacyRoleToAuthContext(declaredRole(req)) mapping. No local
+      // redefinition here anymore; routes/auth.ts uses the exact same one.
 
       // K1.4b — scope-by-construction pilot (D-158). scoped_memories is the
       // first collection migrated off the raw GatewayDeps handle: every read/

@@ -15,7 +15,11 @@ approval-gated, least privilege, no hidden production changes.
 ## Current Controls
 
 - `FACTORY_INTERNAL_TOKEN` for service-to-service calls.
-- Dashboard/gateway privileged auth with signed server-side sessions.
+- Real, DB-backed gateway auth (K1, D-164): credentialed `user_accounts` + revocable `sessions`,
+  bearer session tokens (`x-factory-session-token`), scrypt password hashing. See "K1 Real Auth"
+  below for the full model.
+- Dashboard-web privileged auth with signed server-side sessions (its own, independent login —
+  see "K1 Real Auth" for how it relates to the gateway's session model).
 - RBAC roles: owner, admin, operator, reviewer, viewer, agent; future tenant roles may include government_official, department_operator, citizen, auditor.
 - Approval center for sensitive actions.
 - Safe mode blocks mutation/deploy/repair/governance.
@@ -44,14 +48,16 @@ approval-gated, least privilege, no hidden production changes.
 
 ## Required Future Hardening
 
-- OIDC/OAuth2 login and JWT/session revocation.
-- Persistent per-user RBAC instead of env-only credentials.
+- OIDC/OAuth2 login (current: first-party email+password only — no external IdP).
+- Migrate dashboard-web onto real gateway sessions, then default
+  `FACTORY_ALLOW_LEGACY_ROLE_AUTH` to `false` (see "K1 Real Auth" deprecation path below).
 - Tenant model with role inheritance, delegation, and consent records.
 - Redis-backed rate limits, lockouts, sessions, and safe-mode propagation.
 - Short-lived service identity tokens for internal calls.
 - OpenTelemetry with trace ids attached to events/evidence.
 - Secret scanning in CI and deployment env audits.
 - Connector permission scopes: read-only first, write later with approval previews.
+- Password reset / rotation flow, session-per-device management UI, email verification.
 
 ## Owner Interaction Rule
 
@@ -65,6 +71,43 @@ When AOS needs approval, it must explain:
 
 For multi-user or public-service contexts, it must also state whose data,
 tenant, department, or citizen case is affected.
+
+## K1 Real Auth — users, sessions, legacy fallback (D-164)
+
+**Credentials.** `user_accounts` (collection) stores `email` + `passwordHash`
+(`scrypt$<saltHex>$<hashHex>`, never plaintext) + `primaryTenantId` + `status`. Distinct from
+`users` (decorative RBAC display data, no credentials) and `user_profiles` (personal profile data).
+
+**Sessions.** `POST /v1/auth/login` issues an opaque 32-byte bearer token; only its sha256 hash is
+ever persisted, in `sessions`. Present it via `x-factory-session-token`. `GET /v1/auth/session`
+introspects it; `POST /v1/auth/logout` revokes it immediately (revoked/expired tokens fail closed,
+never fall back to another auth path). Sessions carry a fixed `tenantId`, so a session token can
+never be reused to act as a different tenant.
+
+**No account enumeration.** Wrong password, unknown email, and a suspended account all return the
+identical 401 body. An unknown-email login still performs a dummy password verification so response
+timing doesn't leak account existence either.
+
+**User provisioning.** `POST /v1/auth/users` is owner-only, audited, and requires either a
+plaintext `password` (hashed server-side immediately, never stored/logged/returned) or a pre-hashed
+`passwordHash`. There is no self-serve signup.
+
+**No invented secrets, ever.** Neither the gateway's boot-time bootstrap nor
+`scripts/migrate-scope-foundation.mjs` will generate or print a plaintext password. The owner's
+credential is seeded only if `FACTORY_OWNER_PASSWORD_HASH` is set to a validly-formatted
+`scrypt$<hex>$<hex>` value; otherwise setup instructions are logged (`node scripts/hash-password.mjs
+'<password>'` → set the env var → re-run) and login stays unavailable rather than silently
+defaulting.
+
+**Legacy fallback — temporary, not a backdoor.** The pre-K1 `x-factory-admin-token` +
+self-declared `x-factory-role` header path still works, gated by `FACTORY_ALLOW_LEGACY_ROLE_AUTH`
+(default `true`). It exists only for K1 compatibility, CI/internal/dev use, and dashboard-web's
+current login (which authenticates independently, then declares its role this way — see
+phase-log and decision-log D-164). When the switch is set to `false`, the admin token alone still
+satisfies `guard()` (service/dev reachability), but the self-declared role is no longer trusted —
+it resolves to `viewer`, the least-privileged role, instead of whatever the header claims.
+**Deprecation path:** flip the default to `false` once dashboard-web (or any other legacy caller)
+has migrated onto real gateway sessions; this must be a recorded decision, not a silent drift.
 
 ## Phase AA — scope & identity enforcement
 Authorization is centralized in the shared `canAccess` engine, enforced at the

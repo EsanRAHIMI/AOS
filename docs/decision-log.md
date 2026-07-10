@@ -2,6 +2,126 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1 Real Auth: Users, Sessions, Session-Backed Actor Context (D-164)
+
+Prior to this pass, gateway RBAC (K1.4a-f) was fully scope-by-construction, but it had never been
+proven against more than one real identity — every `AuthContext` in every test came from either the
+legacy `x-factory-admin-token` + self-declared `x-factory-role` header, or a synthetic foreign row
+seeded directly into a fake collection. The user's framing: "the goal is not to build a full SaaS
+auth product yet. The goal is to make K1 operationally safe: real users, real sessions, real actor
+context, and scope enforcement that can be proven end-to-end." Two mandatory security corrections
+governed the implementation and are treated as permanent constraints, not one-time review notes:
+
+1. **No plaintext password generation, ever, in seed/migration.** If owner credential material is
+   missing, fail loud with exact setup instructions — never invent and print a secret.
+2. **The legacy admin-token + role-header fallback is explicitly temporary**, constrained to K1
+   compatibility / CI / internal / dev / dashboard transition, must have a documented deprecation
+   path, and must not become an invisible permanent backdoor.
+
+### Data model
+Two new collections, deliberately separate from two pre-existing, differently-purposed ones:
+- **`user_accounts`** (`UserAccountSchema`, `shared/src/schemas/auth.ts`) — real credentials:
+  `userId`, `email`, `passwordHash` (nullable — no account is force-issued a password), `primaryTenantId`,
+  `status: 'active'|'suspended'`. NOT the same thing as `users`/`RbacUserSchema` (decorative RBAC
+  display data seeded by `orchestrator-agent`, no credentials, shown at `GET /v1/rbac` — deliberately
+  left untouched to avoid blast radius into an unverified, out-of-scope service) and NOT the same
+  thing as `user_profiles`/`UserProfileSchema` (personal profile data, already scope-hardened in
+  K1.4e/f).
+- **`sessions`** (`SessionSchema`) — revocable, DB-backed sessions: `sessionId`, `userId`, `tenantId`,
+  `tokenHash` (only the sha256 of the bearer token is ever persisted — the token itself is never
+  stored), `expiresAt`, `lastSeenAt`, `revokedAt`. Reuses a `COLLECTIONS.SESSIONS` constant that
+  already existed but had zero prior usage — no naming collision.
+
+### Password/token primitives (`shared/src/auth/index.ts`)
+`hashPassword`/`verifyPasswordHash` use `scrypt$<saltHex>$<hashHex>`, byte-identical to
+`scripts/hash-password.mjs` and dashboard-web's pre-existing `lib/auth.ts` scheme — deliberate reuse,
+not a new format. `generateSessionToken` issues an opaque 32-byte random hex bearer token;
+`hashSessionToken` (sha256) is the only form ever written to Mongo. New header:
+`x-factory-session-token` (`SESSION_TOKEN_HEADER`).
+
+### Gateway wiring (`services/gateway-api/src/server.ts`, `routes/auth.ts`)
+- `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/auth/session`, `POST /v1/auth/users`
+  (owner-only, audited, publishes `IDENTITY_SEEDED`).
+- Session resolution happens **once per request**, in a Fastify `onRequest` hook, into
+  `req.sessionActor: AuthContext | null | undefined` (three states: `undefined` = no session token
+  presented → fall through to legacy path; `null` = token presented but invalid/expired/revoked/
+  orphaned → fail closed, never fall back; `AuthContext` = valid). This was the key design choice
+  that avoided touching the ~80+ synchronous `guard(req)`/`declaredRole(req)` call sites across all
+  10 other route files — session lookup is an async Mongo read, but by resolving it once up front,
+  `guard`/`declaredRole` stay fully synchronous and only `server.ts` and `routes/personal.ts`
+  (which already owned `resolveAuth`) needed to change.
+- `authContextToRoleName(ctx): RoleName` (`shared/src/scope/index.ts`) bridges the scope-engine's
+  rich `AuthContext.roles: string[]` down to the flat gateway RBAC enum
+  (`'owner'|'operator'|'viewer'|'agent'`) that `canRolePerformAction`/`hasPermission` still expect —
+  the one place two previously-separate role vocabularies meet.
+- Login defends against account enumeration: an unknown email still runs `verifyPasswordHash`
+  against a fixed dummy hash, and unknown-email / wrong-password / suspended-account all return the
+  byte-identical 401 body.
+- `provisionUser(...)` is a deliberate, owner-gated, cross-user privileged write — kept as a
+  purpose-built raw-handle function in `server.ts` (same category as the existing `buildEsanSeed()`
+  bootstrap), because `scopedCollection(ctx)` can only ever write the CALLER's own identity by
+  design and structurally cannot create a different user's account.
+
+### Legacy fallback — kept, but no longer unconditional (mandatory correction #2)
+`FACTORY_ALLOW_LEGACY_ROLE_AUTH` (default `true`) is the kill switch. With it left at default, an
+admin-token request with no session token continues to work exactly as before (dashboard-web's
+existing role-header path — see "Dashboard" below). Set to `false`, the self-declared
+`x-factory-role` header is no longer trusted: an admin-token-only request resolves to the
+least-privileged `RoleName` (`'viewer'`) instead of whatever role it claims. `guard()` still passes
+on the admin token alone either way (service/dev reachability is preserved) — only the self-declared
+*role* is neutered. `FACTORY_INTERNAL_TOKEN` service-to-service auth is completely untouched by any
+of this. **Deprecation path:** the fallback is scoped to K1; the next auth-related K-phase should
+either (a) migrate dashboard-web onto real gateway sessions (see below) and then flip the switch to
+`false` by default, or (b) explicitly re-affirm keeping it for a stated reason. It must not silently
+persist past K1 without a decision recorded here.
+
+### Owner seed/provisioning — no plaintext, ever (mandatory correction #1)
+Both the `server.ts` boot-time bootstrap and `scripts/migrate-scope-foundation.mjs` (step 4) run the
+same idempotent logic: if the owner's `user_accounts` row doesn't exist yet, seed it **only** if
+`FACTORY_OWNER_PASSWORD_HASH` is set and matches the strict `scrypt$<hex>$<hex>` format (validated
+by regex, not merely "non-empty"). If it isn't configured, both paths log a clear warning with exact
+setup instructions (`node scripts/hash-password.mjs '<password>'` → set the env var → re-run) and
+leave login unavailable — never inventing a default password or logging one in plaintext. Duplicated
+deliberately (not merely relied upon via import) so the migration script remains the single
+authoritative seed entry point per master-direction §D.4.
+
+### Dashboard — no changes required (task item 5, judged not needed)
+dashboard-web already has its own, separate, already-secure operator login (`lib/auth.ts` — same
+`scrypt$` format, env-configured `DASHBOARD_*_EMAIL`/`DASHBOARD_*_PASSWORD_HASH` credentials, its own
+signed HMAC session cookie) that authenticates a human operator and then declares their role to the
+gateway via the legacy `x-factory-admin-token` + `x-factory-role` path — precisely the "existing
+service/dashboard transition" mandatory correction #2 explicitly anticipates keeping. That path is
+functionally unchanged by this pass (verified by the kill-switch tests below: with
+`FACTORY_ALLOW_LEGACY_ROLE_AUTH` left at its default `true`, dashboard-web's requests resolve
+exactly as before). Wiring the dashboard onto real gateway sessions would require a second,
+parallel login flow without removing the first — a real product change, not "minimal compatibility"
+— and isn't needed to prove real auth end-to-end, which the new gateway test suite already does
+directly over HTTP. Left as the explicit next recommended step once/if the dashboard needs to
+represent more than one real tenant-scoped identity (see phase-log).
+
+### Tests — `services/gateway-api/test/characterization.auth-real.test.ts` (new file, 24 tests)
+Kept separate from the existing 171-test `characterization.auth.test.ts`, which pins the legacy
+token contract and stays untouched. Covers: login success/wrong-password/unknown-email/suspended
+(all four negative cases return the byte-identical body — the no-enumeration proof), session
+introspection, logout-then-reuse rejection, expired-session rejection, revoked-session rejection,
+owner-only provisioning (success/403-non-owner/401-unauthenticated/409-duplicate), and — the
+centerpiece — **two real users in two separate tenants**, each with their own real login-issued
+session token, proven to never cross on `GET/POST /v1/me/memories` or `GET /v1/tenants/current`; plus
+four kill-switch tests proving the legacy path works by default and is neutered when disabled, while
+a real session is provably unaffected by the switch either way. All 128 shared tests and all 238
+gateway-api tests (214 pre-existing + 24 new) pass with zero regressions; `shared` and `gateway-api`
+typecheck clean.
+
+### Remaining limitations (accepted, tracked, not silently forgotten)
+- The Jarvis/operator executors subsystem (D-157) still resolves every actor to Esan regardless of
+  which real user's session initiated the request — untouched by standing instruction, same
+  precedent as D-163's `userProfiles`/`consentGrants` blocker. Unblocks only when that subsystem
+  itself becomes the active workstream.
+- No self-serve signup, no password reset flow, no email verification, no session-per-device
+  management UI, no rate limiting beyond the existing generic `rateLimited()` bucket on `/v1/auth/login`.
+- Dashboard-web does not yet consume real gateway sessions (see above) — it continues on the legacy
+  path by design, not oversight.
+
 ## 2026-07-10 — Phase K1.4e/f Scope-By-Construction: Identity/Connector Cluster Completed (D-161 implemented)
 
 Supersedes D-161's "proposal, not implemented" status. The user set a new operating standard for
