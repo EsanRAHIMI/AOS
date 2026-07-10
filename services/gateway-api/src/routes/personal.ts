@@ -4,8 +4,8 @@
  * Bodies are moved VERBATIM from the pre-split server.ts; behavior is pinned
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
-import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
-import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, OpportunityReport, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLearningTrack, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, UserGoal } from '@factory/shared';
+import { COLLECTIONS, ERROR_CODES, ESAN_TENANT_ID, ESAN_USER_ID, EVENT_TYPES, INGESTION_KINDS, INTERNAL_TOKEN_HEADER, accessDecisionFilter, aggregateFinance, buildAccessDecision, buildDailyBrainPacket, buildDailyBriefingRun, buildEvidence, buildPersonalGraph, buildUniverseZones, buildWeeklyStrategyRun, canAccess, collection, composeDailyBriefing, detectLanguage, failure, genId, legacyRoleToAuthContext, nextConnectorFor, nowIso, pickActivePriorityFact, rankOpportunities, scopedCollection, scoreNextActions, stampScope, success } from '@factory/shared';
+import type { AccessRequest, AuthContext, ConnectorAccount, ConnectorSyncRun, ConsentGrant, DailyBrainInput, IngestionKind, IngestionResult, OperatorRuntimeMemory, OperatorRuntimeSession, OperatorRuntimeStep, OperatorTool, OperatorToolPermission, OperatorToolRun, OpportunityReport, PersonalAsset, PersonalCareerRecord, PersonalFinanceItem, PersonalHealthState, PersonalIncomeStream, PersonalLearningTrack, PersonalLifeItem, PersonalProject, PersonalRisk, PersonalSystem, ScopedMemory, TenantMembership, UserGoal, UserProfile } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
 
@@ -39,11 +39,14 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
     jarvisMemoryFacts,
     jarvisBriefings,
     tenantsCol,
-    userProfiles,
-    memberships,
-    consentGrants,
-    connectorAccounts,
-    connectorSyncRuns,
+    // userProfiles/memberships/consentGrants — K1.4f (D-163): removed from
+    // GatewayDeps; personal.ts uses userProfileFor/membershipsFor/
+    // consentGrantsFor(scopedCollection) below. Raw handles remain LOCAL to
+    // server.ts (not exported via deps) for the owner-seed bootstrap
+    // (memberships, userProfiles) and the Jarvis/operator executors block
+    // (userProfiles, consentGrants) — see decision-log D-163.
+    // connectorAccounts/connectorSyncRuns — K1.4f (D-163): fully migrated,
+    // no raw handle anywhere; use connectorAccountsFor/connectorSyncRunsFor.
     userGoals,
     dailyBriefings,
     accessDecisions,
@@ -89,15 +92,20 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
       const learningTracksFor = (actor: AuthContext) => scopedCollection<PersonalLearningTrack>(COLLECTIONS.PERSONAL_LEARNING_TRACKS, { actor, scope: 'user' });
 
       // K1.4d (D-160) — opportunity_reports: the last fully-isolated,
-      // properly-scoped personal collection in this route module. Every
-      // other remaining raw handle here is either global (tenantsCol),
-      // missing a scope field on write (consentGrants/connectorAccounts/
-      // connectorSyncRuns/userProfiles/memberships — see D-161), has a
-      // non-uniform access pattern (accessDecisions), or is read/written by
-      // the Jarvis/operator executors subsystem in server.ts (realityProfiles
-      // and the rest of the personal-fact family) and therefore off-limits
-      // this session.
+      // properly-scoped personal collection in this route module at the time.
+      // K1.4e/f (D-162/D-163) then fixed the identity/connector schema gap
+      // and migrated those too. The only remaining raw handles are global
+      // (tenantsCol) or read/written by the Jarvis/operator executors
+      // subsystem in server.ts (realityProfiles and the rest of the
+      // personal-fact family), which stays off-limits per D-157.
       const opportunityReportsFor = (actor: AuthContext) => scopedCollection<OpportunityReport>(COLLECTIONS.OPPORTUNITY_REPORTS, { actor, scope: 'user' });
+      const userProfileFor = (actor: AuthContext) => scopedCollection<UserProfile>(COLLECTIONS.USER_PROFILES, { actor, scope: 'user' });
+      const consentGrantsFor = (actor: AuthContext) => scopedCollection<ConsentGrant>(COLLECTIONS.CONSENT_GRANTS, { actor, scope: 'user' });
+      const connectorAccountsFor = (actor: AuthContext) => scopedCollection<ConnectorAccount>(COLLECTIONS.CONNECTOR_ACCOUNTS, { actor, scope: 'user' });
+      const connectorSyncRunsFor = (actor: AuthContext) => scopedCollection<ConnectorSyncRun>(COLLECTIONS.CONNECTOR_SYNC_RUNS, { actor, scope: 'user' });
+      // Tenant-scoped, not user-scoped — a membership record belongs to the
+      // tenant the actor is currently operating in.
+      const membershipsFor = (actor: AuthContext) => scopedCollection<TenantMembership>(COLLECTIONS.TENANT_MEMBERSHIPS, { actor, scope: 'tenant' });
 
       /** Enforce a scoped access request. Denials/approval-required are
        *  recorded (access_decisions + security event) and answered 403. */
@@ -120,10 +128,10 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         const actor = await enforceScoped(req, reply, { action: 'read', resource: 'me_context', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
         const [profile, tenant, goals, consents, safe] = await Promise.all([
-          userProfiles.findOne({ userId: actor.primaryUserId }, { projection: { _id: 0 } }),
+          userProfileFor(actor).findOne({}, { projection: { _id: 0 } }),
           tenantsCol.findOne({ tenantId: actor.activeTenantId }, { projection: { _id: 0 } }),
           userGoals.countDocuments({ scope: 'user', userId: actor.primaryUserId, status: 'active' }),
-          consentGrants.countDocuments({ userId: actor.primaryUserId ?? '', status: 'active' }),
+          consentGrantsFor(actor).countDocuments({ status: 'active' }),
           isSafeMode(),
         ]);
         return success({
@@ -137,7 +145,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = await enforceScoped(req, reply, { action: 'read', resource: 'user_profile', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
-        return success(await userProfiles.findOne({ userId: actor.primaryUserId }, { projection: { _id: 0 } }));
+        return success(await userProfileFor(actor).findOne({}, { projection: { _id: 0 } }));
       });
       app.patch<{ Body: { displayName?: string; locale?: string; timezone?: string; preferences?: Record<string, unknown> } }>('/v1/me/profile', async (req, reply) => {
         if (!guard(req)) return deny(reply);
@@ -148,7 +156,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (req.body?.locale) upd.locale = String(req.body.locale).slice(0, 10);
         if (req.body?.timezone) upd.timezone = String(req.body.timezone).slice(0, 60);
         if (req.body?.preferences) upd.preferences = req.body.preferences;
-        await userProfiles.updateOne({ userId: actor.primaryUserId }, { $set: upd });
+        await userProfileFor(actor).updateOne({}, { $set: upd });
         return success({ updated: true });
       });
       app.get('/v1/me/goals', async (req, reply) => {
@@ -204,7 +212,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!actor) return reply;
         const [tenant, members] = await Promise.all([
           tenantsCol.findOne({ tenantId: actor.activeTenantId }, { projection: { _id: 0 } }),
-          memberships.find({ tenantId: actor.activeTenantId ?? '' }, { projection: { _id: 0 } }).limit(50).toArray(),
+          membershipsFor(actor).find({}, { projection: { _id: 0 } }).limit(50).toArray(),
         ]);
         return success({ tenant, members });
       });
@@ -214,7 +222,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = await enforceScoped(req, reply, { action: 'list', resource: 'consent_grants', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
-        return success(await consentGrants.find({ userId: actor.primaryUserId ?? '' }, { projection: { _id: 0 } }).sort({ grantedAt: -1 }).limit(50).toArray());
+        return success(await consentGrantsFor(actor).find({}, { projection: { _id: 0 } }).sort({ grantedAt: -1 }).limit(50).toArray());
       });
       app.post<{ Body: { connectorType?: string; scopesAllowed?: string[] } }>('/v1/consents', async (req, reply) => {
         if (!guard(req)) return deny(reply);
@@ -224,8 +232,8 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!connectorType) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'connectorType is required'));
         // Phase AA: consent is READ-ONLY by design. Write modes come later,
         // behind preview + approval + audit + evidence.
-        const grant: ConsentGrant = { grantId: genId('consent'), tenantId: actor.activeTenantId ?? ESAN_TENANT_ID, userId: actor.primaryUserId ?? ESAN_USER_ID, connectorType, scopesAllowed: (req.body?.scopesAllowed ?? []).map(String).slice(0, 20), accessMode: 'read_only', status: 'active', grantedAt: nowIso(), expiresAt: null, revokedAt: null, createdBy: actor.actorId, auditContext: { via: 'gateway' } };
-        await consentGrants.insertOne(grant);
+        const grant: ConsentGrant = { scope: 'user', grantId: genId('consent'), tenantId: actor.activeTenantId ?? ESAN_TENANT_ID, userId: actor.primaryUserId ?? ESAN_USER_ID, connectorType, scopesAllowed: (req.body?.scopesAllowed ?? []).map(String).slice(0, 20), accessMode: 'read_only', status: 'active', grantedAt: nowIso(), expiresAt: null, revokedAt: null, createdBy: actor.actorId, auditContext: { via: 'gateway' } };
+        await consentGrantsFor(actor).insertOne(grant);
         await writeAudit({ actorType: 'human', actorId: actor.actorId, role: declaredRole(req), action: 'consent_granted', targetType: 'consent_grant', targetId: grant.grantId, after: { connectorType, accessMode: grant.accessMode } });
         await ctx.publisher.publish({ type: EVENT_TYPES.CONSENT_GRANTED, taskId: null, payload: { grantId: grant.grantId, connectorType, accessMode: grant.accessMode, message: `Read-only consent granted for ${connectorType}` } });
         return success(grant);
@@ -234,10 +242,10 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = await enforceScoped(req, reply, { action: 'update', resource: 'consent_grants', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
-        const grant = await consentGrants.findOne({ grantId: req.params.id, userId: actor.primaryUserId ?? '' });
+        const grant = await consentGrantsFor(actor).findOne({ grantId: req.params.id });
         if (!grant) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'consent grant not found in your scope'));
-        await consentGrants.updateOne({ grantId: grant.grantId }, { $set: { status: 'revoked', revokedAt: nowIso() } });
-        await connectorAccounts.updateMany({ consentGrantId: grant.grantId }, { $set: { status: 'blocked', error: 'consent revoked', updatedAt: nowIso() } });
+        await consentGrantsFor(actor).updateOne({ grantId: grant.grantId }, { $set: { status: 'revoked', revokedAt: nowIso() } });
+        await connectorAccountsFor(actor).updateMany({ consentGrantId: grant.grantId }, { $set: { status: 'blocked', error: 'consent revoked', updatedAt: nowIso() } });
         await writeAudit({ actorType: 'human', actorId: actor.actorId, role: declaredRole(req), action: 'consent_revoked', targetType: 'consent_grant', targetId: grant.grantId });
         await ctx.publisher.publish({ type: EVENT_TYPES.CONSENT_REVOKED, taskId: null, payload: { grantId: grant.grantId, connectorType: grant.connectorType, message: `Consent revoked for ${grant.connectorType} — future syncs blocked` } });
         return success({ revoked: true });
@@ -246,33 +254,36 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = await enforceScoped(req, reply, { action: 'list', resource: 'connector_accounts', scope: 'user', userId: resolveAuth(req).primaryUserId ?? null });
         if (!actor) return reply;
-        return success(await connectorAccounts.find({ userId: actor.primaryUserId ?? '' }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
+        return success(await connectorAccountsFor(actor).find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray());
       });
       app.post<{ Body: { connectorType?: string; provider?: string; consentGrantId?: string } }>('/v1/connectors', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const auth = resolveAuth(req);
-        const grant = await consentGrants.findOne({ grantId: String(req.body?.consentGrantId ?? ''), userId: auth.primaryUserId ?? '' });
+        const grant = await consentGrantsFor(auth).findOne({ grantId: String(req.body?.consentGrantId ?? '') });
         const actor = await enforceScoped(req, reply, { action: 'create', resource: 'connector_accounts', scope: 'user', userId: auth.primaryUserId ?? null, requiresConsent: true, consentStatus: (grant?.status as 'active' | 'revoked' | 'expired' | undefined) ?? 'missing' });
         if (!actor) return reply;
-        const account: ConnectorAccount = { connectorAccountId: genId('conn'), tenantId: actor.activeTenantId ?? ESAN_TENANT_ID, userId: actor.primaryUserId ?? ESAN_USER_ID, connectorType: String(req.body?.connectorType ?? grant?.connectorType ?? '').slice(0, 40), provider: String(req.body?.provider ?? '').slice(0, 40), status: 'pending', scopes: grant?.scopesAllowed ?? [], consentGrantId: grant?.grantId ?? '', lastSyncAt: null, error: '', metadata: {}, createdAt: nowIso(), updatedAt: nowIso() };
-        await connectorAccounts.insertOne(account);
+        const account: ConnectorAccount = { scope: 'user', connectorAccountId: genId('conn'), tenantId: actor.activeTenantId ?? ESAN_TENANT_ID, userId: actor.primaryUserId ?? ESAN_USER_ID, connectorType: String(req.body?.connectorType ?? grant?.connectorType ?? '').slice(0, 40), provider: String(req.body?.provider ?? '').slice(0, 40), status: 'pending', scopes: grant?.scopesAllowed ?? [], consentGrantId: grant?.grantId ?? '', lastSyncAt: null, error: '', metadata: {}, createdAt: nowIso(), updatedAt: nowIso() };
+        await connectorAccountsFor(actor).insertOne(account);
         return success(account);
       });
       app.post<{ Params: { id: string } }>('/v1/connectors/:id/sync', async (req, reply) => {
         if (!guard(req)) return deny(reply);
         const auth = resolveAuth(req);
-        const account = await connectorAccounts.findOne({ connectorAccountId: req.params.id, userId: auth.primaryUserId ?? '' });
+        const account = await connectorAccountsFor(auth).findOne({ connectorAccountId: req.params.id });
         if (!account) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'connector account not found in your scope'));
-        const grant = await consentGrants.findOne({ grantId: account.consentGrantId });
+        // K1.4f (D-163): scoped to `auth` too — the original raw query had no
+        // scope filter on this lookup at all (relied only on `account` already
+        // being user-owned). scopedCollection makes that guarantee structural.
+        const grant = await consentGrantsFor(auth).findOne({ grantId: account.consentGrantId });
         const consentActive = grant?.status === 'active';
         const run: ConnectorSyncRun = {
-          syncRunId: genId('sync'), connectorAccountId: account.connectorAccountId, tenantId: account.tenantId, userId: account.userId,
+          scope: 'user', syncRunId: genId('sync'), connectorAccountId: account.connectorAccountId, tenantId: account.tenantId, userId: account.userId,
           status: !consentActive ? 'blocked_no_consent' : 'not_configured',
           itemsRead: 0,
           detail: !consentActive ? `consent ${grant?.status ?? 'missing'} — sync refused` : `${account.connectorType} provider integration not configured yet (Phase AA is foundation-only; read-only sync arrives with the connector phase)`,
           startedAt: nowIso(), finishedAt: nowIso(),
         };
-        await connectorSyncRuns.insertOne(run);
+        await connectorSyncRunsFor(auth).insertOne(run);
         if (!consentActive) {
           await ctx.publisher.publish({ type: EVENT_TYPES.CONNECTOR_SYNC_BLOCKED, taskId: null, payload: { connectorAccountId: account.connectorAccountId, message: `Sync blocked: consent ${grant?.status ?? 'missing'}`, level: 'warn' } });
           return reply.code(403).send(failure(ERROR_CODES.FORBIDDEN, 'consent is not active — sync blocked', { syncRunId: run.syncRunId }));
@@ -380,7 +391,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
           learningTracksFor(actor).find({}, { projection: { _id: 0 } }).limit(50).toArray(),
           nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
           personalBriefingRuns.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),
-          connectorAccounts.find({ userId: uid }, { projection: { _id: 0 } }).limit(50).toArray(),
+          connectorAccountsFor(actor).find({}, { projection: { _id: 0 } }).limit(50).toArray(),
           (async () => { try { const r = await fetch(`${env.SERVICE_REGISTRY_URL}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, signal: AbortSignal.timeout(3000) }); const b = (await r.json()) as { data?: unknown[] }; return Array.isArray(b.data) ? b.data.length : 0; } catch { return 0; } })(),
           incidents.find({}, { projection: { _id: 0 } }).limit(100).toArray(),
           operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(1).toArray(),
@@ -456,7 +467,7 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
           nextBestActions.find({ ...uFilter, status: 'proposed' }, { projection: { _id: 0 } }).sort({ priorityScore: -1 }).limit(10).toArray(),
           nextBestActions.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(50).toArray(),
           personalBriefingRuns.find(uFilter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1).toArray(),
-          connectorAccounts.find({ userId: uid }, { projection: { _id: 0 } }).limit(50).toArray(),
+          connectorAccountsFor(actor).find({}, { projection: { _id: 0 } }).limit(50).toArray(),
           (async () => { try { const r = await fetch(`${env.SERVICE_REGISTRY_URL}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, signal: AbortSignal.timeout(3000) }); const b = (await r.json()) as { data?: unknown[] }; return Array.isArray(b.data) ? b.data.length : 0; } catch { return 0; } })(),
           incidents.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray(),
           operationPlans.find({}, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(1).toArray(),
@@ -640,7 +651,10 @@ export function registerPersonalRoutes(app: FastifyInstance, deps: GatewayDeps):
         if (!guard(req)) return deny(reply);
         const actor = resolveAuth(req);
         // Owners/platform roles see the platform access log; others see their own decisions.
-        const filter = actor.isOwner || actor.roles.includes('platform_admin') ? {} : { actorId: actor.actorId };
+        // K1.4f (D-163): policy extracted to accessDecisionFilter() — accessDecisions
+        // itself stays a raw handle (it's an actor-keyed audit log, not a
+        // scope/tenant/user-isolated resource, so scopedCollection doesn't apply).
+        const filter = accessDecisionFilter(actor);
         return success(await accessDecisions.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray());
       });
 

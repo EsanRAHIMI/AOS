@@ -39,6 +39,14 @@ const MIGRATED_COLLECTIONS = [
   'SCOPED_MEMORIES', // K1.4b, D-158
   'PERSONAL_HEALTH_STATES', 'PERSONAL_LIFE_ITEMS', 'PERSONAL_FINANCE_ITEMS', 'PERSONAL_LEARNING_TRACKS', // K1.4c, D-159
   'OPPORTUNITY_REPORTS', // K1.4d, D-160
+  'CONNECTOR_ACCOUNTS', 'CONNECTOR_SYNC_RUNS', // K1.4f, D-163
+  // NOTE: USER_PROFILES, TENANT_MEMBERSHIPS, CONSENT_GRANTS are deliberately
+  // NOT in this ratchet despite routes/personal.ts being fully migrated off
+  // them (K1.4f, D-163). A raw local handle for each legitimately remains in
+  // server.ts: userProfiles+memberships for the owner-seed bootstrap, and
+  // userProfiles+consentGrants for the Jarvis/operator executors block
+  // (D-157, out of scope this session). Adding them here would make the
+  // ratchet fail on that legitimate remaining usage. See decision-log D-163.
 ];
 
 const SHARED_DB_ALLOWED = new Set([

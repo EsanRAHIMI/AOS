@@ -3187,3 +3187,62 @@ complete as it can be without either a schema fix or touching the deferred Jarvi
 Scope: `services/gateway-api/{src/routes/personal.ts, src/routes/deps.ts, src/server.ts,
 test/characterization.personal-scope.test.ts}`, `scripts/check-scope-boundary.mjs`,
 `docs/{decision-log.md, multi-tenant-governance.md, phase-log.md}`.
+
+## Phase K1.4e/f — Identity/Connector Cluster: Schema Fix + Route Migration Completed — COMPLETE (2026-07-10)
+
+**Goal:** implement D-161 for real (schema fix + route migration), not leave it as a proposal —
+per a new operating standard the user set mid-session: a K1 workstream is complete only when it is
+operationally reliable, tested, documented, and has no hidden follow-up inside the same subsystem,
+unless the remainder is genuinely blocked by a *different* prerequisite subsystem (here: the
+Jarvis/operator executors block, D-157, still off-limits by standing instruction).
+
+**K1.4e — schema + write-path (D-162):** added `scope: z.literal('user'|'tenant')` to all five
+identity/connector schemas in `shared/src/schemas/identity.ts`
+(`ConsentGrantSchema`/`ConnectorAccountSchema`/`ConnectorSyncRunSchema`/`UserProfileSchema` →
+`'user'`, `TenantMembershipSchema` → `'tenant'`) without touching their existing `tenantId`/
+`userId` fields; fixed `buildEsanSeed()` and 3 write sites in `personal.ts` to stamp `scope` on
+every new document; extended `scripts/migrate-scope-foundation.mjs` with an idempotent backfill
+for pre-existing documents. Verified in isolation before K1.4f touched a single route: shared
+typecheck clean, shared tests 107/107.
+
+**K1.4f — route migration (D-163):** re-verified server.ts usage per-collection (not assumed) and
+split the 5 collections into three honest categories instead of forcing a uniform outcome:
+- `connectorAccounts`/`connectorSyncRuns` — zero other server.ts usage → fully migrated onto
+  `connectorAccountsFor`/`connectorSyncRunsFor` (11 call sites), raw handle deleted, added to the
+  `check-scope-boundary.mjs` ratchet (6 → 8 entries).
+- `memberships` — one other usage, the singleton owner-seed bootstrap (upsert-only, provably safe,
+  not the Jarvis subsystem) → route usage migrated to `membershipsFor`, raw handle kept LOCAL to
+  `server.ts` for the seed line only, documented as an accepted exception, not added to the ratchet.
+- `userProfiles`/`consentGrants` — genuinely entangled with the D-157 Jarvis/operator executors
+  block (`loadGraphInput` + the operator-context builder) → route usage fully migrated to
+  `userProfileFor`/`consentGrantsFor` (11 call sites across `/v1/me/context`, `/v1/me/profile`
+  GET+PATCH, `/v1/consents` GET+POST, `/v1/consents/:id/revoke`, `/v1/connectors` GET+POST,
+  `/v1/connectors/:id/sync`), but the raw `server.ts` handle stays — recorded in decision-log D-163
+  as an exact blocker (collection, reason, dependency, unblock condition, next action, required
+  test), not vague future work.
+- `accessDecisions`: per D-161's own recommendation, not forced into `scopedCollection` — its
+  owner-sees-all / self-sees-own read policy extracted into a standalone, unit-tested
+  `accessDecisionFilter(actor)` in `shared/src/scope/index.ts` instead.
+- Found and fixed in passing (narrows, doesn't change legitimate behavior): `POST
+  /v1/connectors/:id/sync`'s consent-grant lookup had no scope filter at all pre-migration;
+  `scopedCollection` makes that guarantee structural.
+
+**Tests:** 12 new isolation/write-stamp/fail-closed tests in
+`characterization.personal-scope.test.ts`; 4 new `accessDecisionFilter` unit tests in
+`scope-engine.contract.test.ts`.
+
+**Verification:** shared 111/111 (107 + 4), gateway-api 214/214 (202 + 12); typecheck clean for
+both packages; `check-scope-boundary.mjs` passes (ratchet 6 → 8, server.ts legacy debt 100 → 98).
+
+**Next K1 step:** the personal/user-scoped gateway scope-enforcement subsystem is now complete as
+far as it can go without either (a) taking on the Jarvis/operator executors subsystem itself
+(D-157 — the one remaining, precisely-documented blocker), or (b) starting a different K1
+workstream per master-direction sequencing (Redis event fan-out, real per-user auth). Recommend
+the user chooses explicitly between those two rather than defaulting to more micro-migrations —
+there is no more mechanically-available scope work left on this surface.
+
+Scope: `shared/src/{schemas/identity.ts, scope/index.ts}`, `scripts/{migrate-scope-foundation.mjs,
+check-scope-boundary.mjs}`, `services/gateway-api/src/{routes/personal.ts, routes/deps.ts,
+server.ts}`, `shared/test/scope-engine.contract.test.ts`,
+`services/gateway-api/test/characterization.personal-scope.test.ts`,
+`docs/{decision-log.md, multi-tenant-governance.md, phase-log.md, testing-and-ci.md}`.

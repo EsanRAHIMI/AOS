@@ -59,6 +59,29 @@ for (const name of ESAN_SCOPED) {
   } catch (e) { console.log(`- ${name}: skipped (${e.message})`); }
 }
 
+// 3b — K1.4e (D-162): identity/connector collections whose schema gained an
+// explicit `scope` field. Unlike step 3, these records ALREADY carry correct
+// tenantId/userId (their schemas always required them) — only `scope` is
+// added, so existing values are never overwritten. user_profiles and
+// tenant_memberships get 'user'/'tenant' respectively; the three connector
+// collections are always user-scoped by design.
+const SCOPE_FIELD_ADD = [
+  [COLLECTIONS.USER_PROFILES, 'user'],
+  [COLLECTIONS.TENANT_MEMBERSHIPS, 'tenant'],
+  [COLLECTIONS.CONSENT_GRANTS, 'user'],
+  [COLLECTIONS.CONNECTOR_ACCOUNTS, 'user'],
+  [COLLECTIONS.CONNECTOR_SYNC_RUNS, 'user'],
+];
+for (const [name, scopeValue] of SCOPE_FIELD_ADD) {
+  try {
+    const r = await collection(name).updateMany(
+      { scope: { $exists: false } },
+      { $set: { scope: scopeValue, migrationNote: 'K1.4e (D-162): scope field added, existing tenantId/userId preserved' } },
+    );
+    console.log(`✓ ${name}: ${r.modifiedCount} records stamped scope:'${scopeValue}'`);
+  } catch (e) { console.log(`- ${name}: skipped (${e.message})`); }
+}
+
 await collection(COLLECTIONS.EVENTS).insertOne({ eventId: `evt_migration_${Date.now()}`, type: 'identity.seeded', source: 'migrate-scope-foundation', taskId: null, payload: { message: 'Phase AA scope foundation migration completed', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID }, createdAt: nowIso(), scope: 'global' });
 console.log('\nDone. Re-running is safe: only unscoped records are ever touched.');
 process.exit(0);

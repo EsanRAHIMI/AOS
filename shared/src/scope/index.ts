@@ -210,6 +210,26 @@ export function buildAccessDecision(req: AccessRequest, verdict: AccessVerdict):
   };
 }
 
+/**
+ * K1.4f (D-163) — access_decisions read policy, extracted to a pure,
+ * testable function instead of an inline conditional at the route.
+ *
+ * access_decisions doesn't fit scopedCollection(ctx)'s four-scope model: its
+ * `scope` field classifies the RESOURCE the decision was about (e.g. a
+ * decision on a user-scoped read carries scope:'user'), not the audit-log
+ * record itself — the audit log is fundamentally global, readable in full by
+ * the owner/platform_admin, and readable in a self-only slice (by `actorId`,
+ * not `targetUserId`) by everyone else. This function is the single source
+ * of truth for that filter so a future route can reuse it correctly instead
+ * of re-deriving the rule (and risking getting the actorId/targetUserId
+ * distinction wrong).
+ */
+export function accessDecisionFilter(actor: AuthContext): Record<string, unknown> {
+  const roles = new Set(actor.roles);
+  if (actor.isOwner || roles.has('platform_admin')) return {};
+  return { actorId: actor.actorId };
+}
+
 /* ------------------------------ Esan seed ------------------------------- */
 
 export const ESAN_TENANT_ID = 'tenant_esan_personal';
@@ -221,8 +241,8 @@ export function buildEsanSeed(): { tenant: Tenant; user: UserProfile; membership
   const now = nowIso();
   return {
     tenant: { tenantId: ESAN_TENANT_ID, name: 'Esan — Personal', kind: 'personal', status: 'active', settings: {}, createdBy: ESAN_USER_ID, createdAt: now, updatedAt: now },
-    user: { userId: ESAN_USER_ID, displayName: 'Esan', email: '', actorType: 'human_user', defaultTenantId: ESAN_TENANT_ID, locale: 'en', timezone: 'UTC', preferences: {}, status: 'active', createdAt: now, updatedAt: now },
-    membership: { membershipId: 'membership_esan_owner', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, roles: ['owner', 'tenant_admin'], status: 'active', createdAt: now, updatedAt: now },
+    user: { scope: 'user', userId: ESAN_USER_ID, displayName: 'Esan', email: '', actorType: 'human_user', defaultTenantId: ESAN_TENANT_ID, locale: 'en', timezone: 'UTC', preferences: {}, status: 'active', createdAt: now, updatedAt: now },
+    membership: { scope: 'tenant', membershipId: 'membership_esan_owner', tenantId: ESAN_TENANT_ID, userId: ESAN_USER_ID, roles: ['owner', 'tenant_admin'], status: 'active', createdAt: now, updatedAt: now },
   };
 }
 

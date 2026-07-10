@@ -60,14 +60,33 @@ group in that service's characterization suite — see
 proofs (a foreign user's row seeded directly into the fake collection never
 surfaces through the route).
 
-### Migration status (K1.4b–d)
+### Migration status (K1.4b–f)
 
-Six collections migrated onto `scopedCollection(ctx)` so far, all in
-`routes/personal.ts`: `scoped_memories` (K1.4b, D-158), `personal_health_
-states`/`personal_life_items`/`personal_finance_items`/`personal_learning_
-tracks` (K1.4c, D-159), `opportunity_reports` (K1.4d, D-160). Each is locked
-in `MIGRATED_COLLECTIONS` in `scripts/check-scope-boundary.mjs` — a raw
-handle for any of them can never reappear.
+Eight collections are locked in `MIGRATED_COLLECTIONS` in
+`scripts/check-scope-boundary.mjs` — a raw handle for any of them can never
+reappear anywhere in `services/`: `scoped_memories` (K1.4b, D-158),
+`personal_health_states`/`personal_life_items`/`personal_finance_items`/
+`personal_learning_tracks` (K1.4c, D-159), `opportunity_reports` (K1.4d,
+D-160), `connector_accounts`/`connector_sync_runs` (K1.4f, D-163).
+
+Two more collections had their `routes/personal.ts` call sites fully migrated
+in K1.4f but are **not** in the ratchet, by design — a raw handle legitimately
+remains elsewhere for a documented reason:
+
+- **`tenant_memberships`**: the only other raw usage is the one-time,
+  singleton, upsert-only owner-seed bootstrap in `server.ts` (`$setOnInsert`,
+  can never overwrite existing data, not the Jarvis/operator executors block).
+  Accepted as a provably-safe exception rather than a blocker.
+- **`user_profiles`, `consent_grants`**: genuinely blocked, not a hidden gap —
+  both still have a raw local handle in `server.ts` used by the Jarvis/
+  operator `executors` block (`loadGraphInput` + the operator-context
+  builder, D-157's standing boundary). Every route in `personal.ts` reaches
+  them exclusively through `userProfileFor`/`consentGrantsFor`
+  (`scopedCollection`) now — the raw path is contained entirely to the one
+  subsystem already flagged off-limits, not scattered. Exact blocker
+  (collection, dependency, unblock condition, required test) recorded in
+  decision-log D-163; revisit only when the Jarvis/operator subsystem itself
+  becomes the active workstream.
 
 **Not migrated, and why (this is the honest remainder, not an oversight):**
 
@@ -80,17 +99,22 @@ handle for any of them can never reappear.
   `server.ts`'s Jarvis/operator `executors` block (D-157's standing
   boundary). Migrating them means touching that subsystem, which is out of
   scope until a session explicitly targets it.
-- **`consentGrants`, `connectorAccounts`, `connectorSyncRuns`, `userProfiles`,
-  `memberships`**: schema gap, no `scope` field exists on these documents at
-  all. See D-161 for the proposed fix — logged, not yet implemented.
 - **`accessDecisions`**: has a `scope` field, but it classifies the
   *resource the decision was about*, not the audit-log collection itself; the
-  real access pattern (owner sees all, others see only their own actions by
-  `actorId`) doesn't fit the four-scope model as-is. See D-161 for the
-  recommendation (keep global + explicit allowlist, design a dedicated
-  accessor later if isolation here becomes a priority).
+  real access pattern (owner/platform_admin sees all, others see only their
+  own actions by `actorId`) doesn't fit the four-scope model as-is. Per
+  D-161's recommendation, kept on its raw `GatewayDeps` handle; the read
+  policy itself was extracted into a standalone, unit-tested
+  `accessDecisionFilter(actor)` (`shared/src/scope/index.ts`, K1.4f, D-163) so
+  it's no longer duplicated inline logic even though the collection stays raw.
 - **`tenantsCol`**: correctly global — the tenant registry itself, keyed by
   `tenantId`, not per-record scoped human data.
+
+As of K1.4f, the personal/user-scoped gateway scope-enforcement subsystem is
+complete as far as it can go without either touching the Jarvis/operator
+executors subsystem (the one remaining, precisely-documented blocker) or
+starting a different K1 workstream. There is no more mechanically-available
+scope migration left on this surface.
 
 ## Scope Model
 

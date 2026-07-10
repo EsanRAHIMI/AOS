@@ -78,8 +78,6 @@ import {
   type UserProfile,
   type TenantMembership,
   type ConsentGrant,
-  type ConnectorAccount,
-  type ConnectorSyncRun,
   type UserGoal,
   type DailyBriefing,
   type AccessDecision,
@@ -546,11 +544,18 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
 
       // Compact, secret-free context packet for the voice operator.
       const tenantsCol = collection<Tenant>(COLLECTIONS.TENANTS);
+      // userProfiles/memberships/consentGrants remain LOCAL raw handles —
+      // K1.4f (D-163): no longer part of GatewayDeps (routes/personal.ts uses
+      // scopedCollection(ctx) instead), but still needed right here for the
+      // owner-seed bootstrap below (all three) and the Jarvis/operator
+      // executors block further down (userProfiles, consentGrants) — that
+      // subsystem is out of scope for this session. See decision-log D-163.
       const userProfiles = collection<UserProfile>(COLLECTIONS.USER_PROFILES);
       const memberships = collection<TenantMembership>(COLLECTIONS.TENANT_MEMBERSHIPS);
       const consentGrants = collection<ConsentGrant>(COLLECTIONS.CONSENT_GRANTS);
-      const connectorAccounts = collection<ConnectorAccount>(COLLECTIONS.CONNECTOR_ACCOUNTS);
-      const connectorSyncRuns = collection<ConnectorSyncRun>(COLLECTIONS.CONNECTOR_SYNC_RUNS);
+      // connectorAccounts/connectorSyncRuns deliberately have no raw handle
+      // anywhere — K1.4f (D-163) fully migrated them to scopedCollection(ctx)
+      // in routes/personal.ts. Do not reintroduce a raw handle for either.
       // scoped_memories deliberately has no raw handle here — K1.4b (D-158)
       // moved it to scopedCollection(ctx), built per-request in routes/personal.ts.
       const userGoals = collection<UserGoal>(COLLECTIONS.USER_GOALS);
@@ -1575,11 +1580,8 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         jarvisAnswerScores,
         jarvisBriefings,
         tenantsCol,
-        userProfiles,
-        memberships,
-        consentGrants,
-        connectorAccounts,
-        connectorSyncRuns,
+        // userProfiles/memberships/consentGrants/connectorAccounts/connectorSyncRuns
+        // deliberately absent — K1.4f (D-163). See declarations above.
         userGoals,
         dailyBriefings,
         accessDecisions,

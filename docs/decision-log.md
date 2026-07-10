@@ -2,6 +2,138 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1.4e/f Scope-By-Construction: Identity/Connector Cluster Completed (D-161 implemented)
+
+Supersedes D-161's "proposal, not implemented" status. The user set a new operating standard for
+K1 work: a subsystem is not complete because one safe slice moved — it is complete when it is
+operationally reliable, tested, documented, and has no hidden follow-up inside the same subsystem
+unless that follow-up is genuinely blocked by a different prerequisite subsystem. Under that
+standard, leaving D-161 as a written proposal was not good enough — it left 5 collections
+(`consentGrants`, `connectorAccounts`, `connectorSyncRuns`, `userProfiles`, `memberships`)
+permanently un-isolatable by construction, which is exactly the kind of hidden gap the new
+standard exists to catch. Both the schema fix (D-162) and the route migration (D-163) below were
+implemented in this pass, not deferred again.
+
+### D-162 Identity/connector schemas gained an explicit `scope` field; write paths fixed; legacy data backfilled
+Implemented D-161's proposed fix in full, as its own logically-separate change (schema +
+write-path + backfill), verified and typechecked before D-163's route migration touched a single
+call site — consistent with this session's rule that schema changes and access-pattern migrations
+are different risk classes and stay in separately-verified commits.
+1. `shared/src/schemas/identity.ts`: added `scope: z.literal('user')` to `ConsentGrantSchema`,
+   `ConnectorAccountSchema`, `ConnectorSyncRunSchema`, `UserProfileSchema`; added `scope:
+   z.literal('tenant')` to `TenantMembershipSchema`. Existing `tenantId`/`userId` fields were left
+   untouched (still required, non-null strings) — deliberately NOT switched to
+   `RequiredScopeSchema.extend()`, which would have made them nullable and risked breaking other
+   consumers of these types. `UserProfileSchema` got the field too, per D-161's "still add it, flag
+   as lower urgency" recommendation — consistency with the rest of the pattern outweighs the
+   marginal cost for a 1-row-per-user collection.
+2. `shared/src/scope/index.ts` `buildEsanSeed()`: the owner/user/membership seed objects now
+   include the new `scope` literal, so the very first records ever written already carry it.
+3. Three write sites in `routes/personal.ts` updated to stamp `scope: 'user'` on the object literal
+   at construction time (not `stampScope()`, to keep the diff minimal and match the file's existing
+   style at those call sites): `POST /v1/consents` (ConsentGrant), `POST /v1/connectors`
+   (ConnectorAccount), `POST /v1/connectors/:id/sync` (ConnectorSyncRun).
+4. `scripts/migrate-scope-foundation.mjs` gained a new idempotent, non-destructive backfill section
+   (3b) that adds `scope` to any pre-existing document in the five collections that doesn't already
+   have it — `updateMany({scope:{$exists:false}}, {$set:{scope, migrationNote}})`, never touching
+   `tenantId`/`userId`. Same safe pattern as the existing kernel/voice backfill sections.
+5. Verification: `shared` typecheck clean, `shared` tests 107/107 (pre-existing; D-162 itself added
+   no new shared tests — the schema addition is exercised indirectly via D-163's gateway tests and
+   directly via the new `accessDecisionFilter` unit tests below, which share the file).
+
+### D-163 Identity/connector cluster routes migrated onto `scopedCollection(ctx)`; `accessDecisions` read policy extracted
+With D-162's schema gap closed, re-verified (via `grep -n "\b<name>\." server.ts` per collection,
+not assumption) exactly which of the 5 collections could have their raw `GatewayDeps` handle fully
+removed versus which have a second, legitimate consumer inside `server.ts` that this session is
+still not allowed to touch (D-157, the Jarvis/operator executors block):
+
+- **`connectorAccounts`, `connectorSyncRuns`** — zero usage anywhere in `server.ts` outside their
+  own declaration and the `GatewayDeps` assembly line. Fully migrated: `routes/personal.ts` now
+  uses `connectorAccountsFor(actor)` / `connectorSyncRunsFor(actor)` for every call site (11 total
+  across `GET/POST /v1/connectors`, `POST /v1/connectors/:id/sync`, `POST /v1/consents/:id/revoke`'s
+  cascade block, and the `connectors` slice in `GET /v1/me/universe` + `/v1/me/universe/detail`).
+  Raw handle removed entirely from `server.ts` and `GatewayDeps`. Added to the
+  `check-scope-boundary.mjs` ratchet — a raw handle can never be reintroduced for either, anywhere
+  in `services/`.
+- **`memberships`** — one other usage in `server.ts`: the idempotent owner-seed bootstrap
+  (`await memberships.updateOne({membershipId...}, {$setOnInsert: seed.membership}, {upsert:
+  true})`, inside the "Idempotent bootstrap: Esan is the first owner" block). This is NOT the
+  Jarvis executors subsystem — it is a one-time, singleton, upsert-only write that can never
+  overwrite existing data and never reads arbitrary user data. `routes/personal.ts`'s own usage
+  (`GET /v1/tenants/current`'s member list) is fully migrated to `membershipsFor(actor)`. The raw
+  handle stays LOCAL to `server.ts` for the seed line only — not exported via `GatewayDeps`, not
+  reachable from any route — and is documented as an accepted, provably-safe exception rather than
+  a blocker. NOT added to the ratchet (adding it would fail CI against this legitimate remaining
+  line); the boundary script comments explain why.
+- **`userProfiles`, `consentGrants` — genuine, exact blocker (not vague "future work"):**
+  - **Collections:** `user_profiles`, `consent_grants`.
+  - **Exact remaining raw usage:** `server.ts` line ~1073 (`userProfiles.findOne(...)`) and lines
+    ~1075/~1088 (`consentGrants.find(...)`), both inside the `executors` object's operator-context
+    builder; additionally `consentGrants` is read at line ~602 inside `loadGraphInput()`, which is
+    itself called exclusively from 5 sites inside that same `executors` object (`generate_daily_
+    briefing`, `build_reality_baseline`, resume analysis, weekly strategy, next-action scoring —
+    the D-157 Jarvis/operator tool-executor subsystem).
+  - **Reason it cannot be completed now:** this session is explicitly instructed not to touch the
+    Jarvis/operator executor subsystem in `server.ts`. Removing the raw handle would break those
+    executors; adding either collection to the ratchet would make `check-scope-boundary.mjs` fail
+    against that subsystem's own legitimate (if not yet scope-by-construction) reads.
+  - **Dependency:** a future K-phase that takes on the Jarvis/operator executors subsystem itself
+    (refactoring `loadGraphInput` and the operator-context builder onto `scopedCollection(ctx)`,
+    which requires passing an `AuthContext` through that whole call chain — currently some callers
+    only have a bare `userId`).
+  - **Unblock condition:** when that subsystem is explicitly put in scope (it is out of scope for
+    every K1.4x pass by standing instruction), `loadGraphInput` and the operator-context builder can
+    be refactored to accept/derive an `AuthContext` and use `userProfileFor`/`consentGrantsFor`
+    internally; at that point the raw `server.ts` handles for both collections can be deleted and
+    both names added to the ratchet.
+  - **Required next action:** none in K1 — tracked here so it is never silently forgotten; revisit
+    when the Jarvis/operator subsystem itself becomes the active workstream.
+  - **Test required after unblocking:** an isolation probe equivalent to this pass's — seed a
+    foreign-scoped `user_profiles`/`consent_grants` row directly into the fake collection and prove
+    the operator-context executor (and `loadGraphInput`) never surfaces it, plus the existing
+    fail-closed 403 pattern for a missing actor.
+  - What IS true today, and is a real improvement even with the blocker: `routes/personal.ts` can
+    no longer reach either collection via a raw handle at all — `userProfileFor(actor)` and
+    `consentGrantsFor(actor)` are the only access path from any route, for the read/write sites this
+    session covers (`GET /v1/me/context`, `GET/PATCH /v1/me/profile`, `GET/POST /v1/consents`,
+    `POST /v1/consents/:id/revoke`, `POST /v1/connectors`, `POST /v1/connectors/:id/sync` — 11 call
+    sites in total across the two collections). The remaining raw access is entirely contained to
+    the one subsystem already flagged off-limits by D-157, not scattered.
+- **`accessDecisions`** — per D-161's own recommendation, NOT forced into `scopedCollection`
+  (its `scope` field means "scope of the resource the decision was about", not a classification of
+  the audit-log collection itself; the real read policy is "owner/platform_admin sees everything,
+  everyone else sees only their own actorId"). That policy was previously inlined at the one call
+  site (`GET /v1/access-decisions`); extracted to a pure, independently-testable function —
+  `accessDecisionFilter(actor)` in `shared/src/scope/index.ts` — so the rule is unit-tested
+  (`shared/test/scope-engine.contract.test.ts`) independent of the HTTP layer. `accessDecisions`
+  keeps its raw `GatewayDeps` handle (unchanged from K1.3/D-161 — this was never a candidate for
+  the ratchet).
+- **Security hardening found and fixed in passing, not a behavior change requiring approval:**
+  `POST /v1/connectors/:id/sync`'s `consentGrants.findOne({grantId: account.consentGrantId})` had
+  NO scope filter at all in the pre-migration code — it relied entirely on `account` already being
+  user-owned. `consentGrantsFor(auth).findOne({grantId: account.consentGrantId})` makes that
+  guarantee structural instead of incidental. This only narrows the query (fail-closed direction),
+  never widens it, so it cannot break the "preserve existing behavior unless a test proves it
+  unsafe" rule — the existing behavior for any legitimate (same-user) request is identical.
+  Similarly noted: `POST /v1/connectors/:id/sync` has no `enforceScoped()` call at all (relies on
+  `guard()` + the account/grant lookups being scoped) — pre-existing, not introduced or changed by
+  this pass, left as-is since fixing it would be an authorization-policy change, not a data-access
+  migration, and is out of this pass's scope.
+
+**Tests added:** 12 new isolation/write-stamp/fail-closed tests in
+`services/gateway-api/test/characterization.personal-scope.test.ts` (profile read/update
+isolation, tenant membership list isolation, consent grant read/write/revoke isolation, connector
+account read/write/sync isolation, universe connectors-slice isolation, access-decisions
+owner-vs-non-owner filtering, one fail-closed 403 case) + 4 new unit tests for
+`accessDecisionFilter` in `shared/test/scope-engine.contract.test.ts`.
+
+**Verification:** `shared` typecheck clean, `shared` tests 111/111 (107 + 4 new). `gateway-api`
+typecheck clean, `gateway-api` tests 214/214 (202 + 12 new). `scripts/check-scope-boundary.mjs`
+passes: ratchet grew from 6 to 8 entries (`CONNECTOR_ACCOUNTS`, `CONNECTOR_SYNC_RUNS` added;
+`USER_PROFILES`/`TENANT_MEMBERSHIPS`/`CONSENT_GRANTS` deliberately excluded, with the reason
+recorded inline in the script itself); `server.ts` legacy raw-`collection()` debt count dropped
+from 100 to 98 (the two fully-removed declarations).
+
 ## 2026-07-10 — Phase K1.4d Scope-By-Construction: Last Isolated Collection + Blocked-Collection Proposal
 
 ### D-160 `opportunity_reports` migrated onto `scopedCollection(ctx)` — last collection in this class

@@ -20,9 +20,6 @@ import type {
   CapabilityGap,
   Collection,
   CompressedContext,
-  ConnectorAccount,
-  ConnectorSyncRun,
-  ConsentGrant,
   DailyBriefing,
   DecisionMemory,
   DeploymentChecklist,
@@ -107,9 +104,7 @@ import type {
   SystemRecommendation,
   Task,
   Tenant,
-  TenantMembership,
   UserGoal,
-  UserProfile,
   VerificationResult,
   VoiceMemory,
   VoiceMessage,
@@ -234,11 +229,15 @@ export interface GatewayDeps {
   jarvisAnswerScores: Collection<JarvisAnswerScore>;
   jarvisBriefings: Collection<{ briefingId: string; actorId: string; scope: 'global' | 'user'; headline: string; narrative: string; topPriorities: string[]; decisions: string[]; blockers: string[]; suggestedFollowUps: string[]; language: string; createdAt: string }>;
   tenantsCol: Collection<Tenant>;
-  userProfiles: Collection<UserProfile>;
-  memberships: Collection<TenantMembership>;
-  consentGrants: Collection<ConsentGrant>;
-  connectorAccounts: Collection<ConnectorAccount>;
-  connectorSyncRuns: Collection<ConnectorSyncRun>;
+  // userProfiles/memberships/consentGrants/connectorAccounts/connectorSyncRuns
+  // deliberately absent — K1.4f (D-163) migrated all five off the raw
+  // GatewayDeps handle; routes/personal.ts builds scopedCollection(ctx)
+  // accessors per-request instead (userProfileFor/membershipsFor/
+  // consentGrantsFor/connectorAccountsFor/connectorSyncRunsFor). userProfiles
+  // and consentGrants still have a raw LOCAL const in server.ts (not part of
+  // GatewayDeps) for the owner-seed bootstrap and the Jarvis/operator
+  // executors block — see decision-log D-163. Do not re-add any of the five
+  // as a raw GatewayDeps handle.
   // scopedMemories deliberately absent — K1.4b (D-158) migrated it off the
   // raw GatewayDeps handle; routes.personal.ts builds a scopedCollection(ctx)
   // accessor per-request instead. Do not re-add a raw handle for it.

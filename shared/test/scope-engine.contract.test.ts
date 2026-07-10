@@ -5,7 +5,7 @@
  * breaks, data isolation broke.
  */
 import { describe, it, expect } from 'vitest';
-import { canAccess, classifyGoalScope, legacyRoleToAuthContext, ESAN_TENANT_ID, ESAN_USER_ID, type AccessRequest } from '../src/scope/index.js';
+import { canAccess, classifyGoalScope, legacyRoleToAuthContext, accessDecisionFilter, ESAN_TENANT_ID, ESAN_USER_ID, type AccessRequest } from '../src/scope/index.js';
 import type { AuthContext } from '../src/schemas/scope.js';
 
 /* ------------------------------ fixtures ------------------------------- */
@@ -244,5 +244,32 @@ describe('classifyGoalScope', () => {
   });
   it('kernel work defaults to global', () => {
     expect(classifyGoalScope('refactor the gateway routes').scope).toBe('global');
+  });
+});
+
+/* ------------------------- accessDecisionFilter (K1.4f, D-163) ---------- */
+//
+// GET /v1/access-decisions (routes/personal.ts) used to build this filter
+// inline; extracted to a pure function so the policy — "owners and platform
+// admins see the whole access log, everyone else sees only their own
+// decisions" — is unit-testable independent of the HTTP layer.
+
+describe('accessDecisionFilter', () => {
+  it('an owner sees the whole platform access log (empty filter)', () => {
+    expect(accessDecisionFilter(owner)).toEqual({});
+  });
+
+  it('a platform_admin sees the whole platform access log (empty filter), even if not owner', () => {
+    const admin = member(['platform_admin']);
+    expect(accessDecisionFilter(admin)).toEqual({});
+  });
+
+  it('a non-owner, non-platform_admin actor is filtered to only their own decisions', () => {
+    const viewer = member(['platform_viewer', 'viewer']);
+    expect(accessDecisionFilter(viewer)).toEqual({ actorId: 'user_member' });
+  });
+
+  it('the agent role (no ownership, no platform_admin) is filtered to its own actorId', () => {
+    expect(accessDecisionFilter(agent)).toEqual({ actorId: 'service_agent' });
   });
 });

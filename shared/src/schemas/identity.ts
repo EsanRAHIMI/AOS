@@ -22,6 +22,10 @@ export const TenantSchema = z.object({
 export type Tenant = z.infer<typeof TenantSchema>;
 
 export const UserProfileSchema = z.object({
+  // K1.4e (D-162): explicit scope stamp — a user profile is a 1-row-per-user
+  // identity record, but the field is added for defense-in-depth and pattern
+  // consistency with scopedCollection(ctx); see decision-log D-161/D-162.
+  scope: z.literal('user'),
   userId: z.string(),
   displayName: z.string(),
   email: z.string().default(''),
@@ -37,6 +41,8 @@ export const UserProfileSchema = z.object({
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 
 export const TenantMembershipSchema = z.object({
+  // K1.4e (D-162): explicit scope stamp — see decision-log D-161/D-162.
+  scope: z.literal('tenant'),
   membershipId: z.string(),
   tenantId: z.string(),
   userId: z.string(),
@@ -74,6 +80,8 @@ export type ScopePolicy = z.infer<typeof ScopePolicySchema>;
 /* ------------------------------ consent -------------------------------- */
 
 export const ConsentGrantSchema = z.object({
+  // K1.4e (D-162): explicit scope stamp — see decision-log D-161/D-162.
+  scope: z.literal('user'),
   grantId: z.string(),
   tenantId: z.string(),
   userId: z.string(),
@@ -90,6 +98,8 @@ export const ConsentGrantSchema = z.object({
 export type ConsentGrant = z.infer<typeof ConsentGrantSchema>;
 
 export const ConnectorAccountSchema = z.object({
+  // K1.4e (D-162): explicit scope stamp — see decision-log D-161/D-162.
+  scope: z.literal('user'),
   connectorAccountId: z.string(),
   tenantId: z.string(),
   userId: z.string(),
@@ -108,6 +118,8 @@ export const ConnectorAccountSchema = z.object({
 export type ConnectorAccount = z.infer<typeof ConnectorAccountSchema>;
 
 export const ConnectorSyncRunSchema = z.object({
+  // K1.4e (D-162): explicit scope stamp — see decision-log D-161/D-162.
+  scope: z.literal('user'),
   syncRunId: z.string(),
   connectorAccountId: z.string(),
   tenantId: z.string(),

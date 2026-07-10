@@ -11,7 +11,7 @@ Rule zero: **no feature or refactor merges without tests that pin its contract.*
 | Unit tests | `<package>/test/*.test.ts` | Internal logic of one module | Every CI run |
 | Scenario tests | (K2+) staging scripts | End-to-end flows with real services/models | Pre-release |
 | Isolation probes | `services/gateway-api/test/characterization.personal-scope.test.ts` (K1.4b+) | A foreign-scoped row seeded directly into the fake collection must never surface through a migrated route; missing actor identity must deny (403) before the data layer, not throw (500) | Every CI run |
-| Static boundary gate | `scripts/check-scope-boundary.mjs` (K1.4b+) | Raw `collection()` confined to `shared/src/db/{index,scoped}.ts` + one documented exception; no route module may call it directly; migrated collections can never regain a raw handle (ratchet list) | Every CI run |
+| Static boundary gate | `scripts/check-scope-boundary.mjs` (K1.4b+) | Raw `collection()` confined to `shared/src/db/{index,scoped}.ts` + one documented exception; no route module may call it directly; migrated collections can never regain a raw handle (ratchet list, 8 entries as of K1.4f) | Every CI run |
 
 Naming: `*.contract.test.ts` means "breaking this test = breaking a consumer or a security
 guarantee"; changing one requires a decision-log entry, not just a code change.
@@ -58,10 +58,12 @@ including for agents.
 
 - The local dev mount blocks `pnpm install` writes (see README-SETUP); installs and full test
   runs during agent sessions happen in a sandbox-local copy — CI is the canonical verifier.
-- Gateway characterization tests (K1.3+): `services/gateway-api/test/` — 202 tests (193 from
-  the K1.3 split + 9 K1.4b/c/d isolation probes) build the REAL gateway in-process
-  (`buildGatewayService` + fastify inject + fake Db via `setTestDb`) and pin auth, envelopes,
-  RBAC/safe-mode/rate-limit semantics, the task/approval/infra flows, and (as of K1.4b-d)
-  per-user data isolation for migrated routes. They are the safety net for any gateway
-  refactor. Event-bus service tests remain open (land with the Redis fan-out work).
-- `shared/test/` is at 107 tests (93 from K1.1 + 14 K1.4a `scopedCollection` contract tests).
+- Gateway characterization tests (K1.3+): `services/gateway-api/test/` — 214 tests (193 from
+  the K1.3 split + 21 K1.4b/c/d/f isolation probes: 9 from K1.4b/c/d + 12 from K1.4f's
+  identity/connector cluster) build the REAL gateway in-process (`buildGatewayService` +
+  fastify inject + fake Db via `setTestDb`) and pin auth, envelopes, RBAC/safe-mode/rate-limit
+  semantics, the task/approval/infra flows, and (as of K1.4b-f) per-user data isolation for
+  migrated routes. They are the safety net for any gateway refactor. Event-bus service tests
+  remain open (land with the Redis fan-out work).
+- `shared/test/` is at 111 tests (93 from K1.1 + 14 K1.4a `scopedCollection` contract tests +
+  4 K1.4f `accessDecisionFilter` unit tests).
