@@ -3358,3 +3358,50 @@ Scope: `services/dashboard-web/src/{lib/gateway-session.ts (new), lib/session.ts
 lib/gateway.ts, app/login/actions.ts}`, `services/dashboard-web/{vitest.config.ts (new),
 test/gateway-session.test.ts (new), package.json}`, `services/gateway-api/src/server.ts`,
 `docs/{decision-log.md, phase-log.md, security-and-permissions.md}`.
+
+## Phase K1 Auth Hardening — Provisioning Path + Legacy Fallback Closure Proof — COMPLETE (2026-07-10)
+
+**Goal:** make `FACTORY_ALLOW_LEGACY_ROLE_AUTH=false` safe to actually flip in production — closing
+the two gaps D-165 explicitly left open: no provisioning path for operator/viewer accounts, and
+incomplete explicit test proof for the disabled-switch behavior.
+
+**Gaps found and fixed (real, not hypothetical):** `README-SETUP.md`'s production env blocks were
+missing `FACTORY_OWNER_EMAIL`/`FACTORY_OWNER_PASSWORD_HASH`/`FACTORY_ALLOW_LEGACY_ROLE_AUTH`
+(gateway-api) and `DASHBOARD_ADMIN_EMAIL`/`_PASSWORD_HASH`/`DASHBOARD_SESSION_SECRET`
+(dashboard-web) — meaning a deploy following that doc literally couldn't seed an owner credential,
+couldn't log into the dashboard at all in production, and would silently run on a hardcoded insecure
+session secret. All fixed directly in the doc.
+
+**Delivered:**
+1. `scripts/provision-gateway-user.mjs` (new): thin HTTP client over `POST /v1/auth/users` —
+   provisions owner/operator/viewer accounts without duplicating that route's tested logic. Verified
+   end-to-end against a real listening gateway instance (not `.inject()`): provisioned an operator
+   and a viewer, logged in as each over real HTTP, confirmed `GET /v1/auth/session` resolves the
+   correct role for each.
+2. 3 new tests extending `characterization.auth-real.test.ts`'s kill-switch describe block, closing
+   the exact four proof points required: session-authenticated reads still work, the internal
+   service token is unaffected, unauthenticated requests fail cleanly — combined with D-164's
+   original 4, all four required proof points are now individually tested (7 tests, 27 in the file).
+3. `docs/security-and-permissions.md`: new "Provisioning walkthrough" section (hash-once, provision
+   via script, reuse the same hash in dashboard-web's env — the one-hash-two-env-vars pattern made
+   explicit) and updated deprecation-path language reflecting that the mechanics are now complete.
+4. `README-SETUP.md`: gateway-api and dashboard-web env blocks corrected (see gaps above), plus a
+   provisioning-script usage example.
+
+**Verification:** `gateway-api` 241/241 (238 + 3 new), `shared` 128/128 unaffected, `dashboard-web`
+typecheck and 10/10 tests unaffected (no dashboard code changed), `check-scope-boundary.mjs` green.
+
+**What is still manual, by design:** actually running the provisioning script per production
+operator, and the decision to flip `FACTORY_ALLOW_LEGACY_ROLE_AUTH` to `false` once that's done —
+both deliberately human-gated, not automated, consistent with "no self-serve signup" and "no
+irreversible action without approval."
+
+**Next K1 step:** either (a) the operator actually runs the provisioning script for real production
+users and flips the switch, closing D-164's deprecation path for real, or (b) take on the
+Jarvis/operator executors subsystem (D-157) so real per-user actor context reaches voice/operator
+commands. Per master-direction, Redis/queue work and the agent-loop rebuild (K2) remain explicitly
+out of scope until K1's identity work is judged complete by the user.
+
+Scope: `scripts/provision-gateway-user.mjs` (new),
+`services/gateway-api/test/characterization.auth-real.test.ts`, `README-SETUP.md`,
+`docs/{decision-log.md, phase-log.md, security-and-permissions.md}`.

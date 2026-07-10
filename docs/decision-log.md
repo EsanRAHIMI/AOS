@@ -2,6 +2,86 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — Phase K1 Auth Hardening: Provisioning Path + Legacy Fallback Closure Proof (D-166)
+
+Closes the two remaining gaps D-165 left open: no path existed to provision operator/viewer as real
+gateway users (only the owner had an env-based seed), and the four specific proof points required
+before `FACTORY_ALLOW_LEGACY_ROLE_AUTH` could ever be defaulted to `false` in production weren't all
+individually tested. This is explicitly an operational-completion pass, not a redesign — same
+constraints as D-164/D-165 (no Redis, no Jarvis/operator changes, no UI redesign, no product
+features).
+
+### Gaps found before implementation (worth recording — they were real, not hypothetical)
+Auditing `README-SETUP.md` (the literal Dokploy production deployment reference) against what K1
+Real Auth actually requires turned up three concrete gaps, not just missing docs:
+1. The gateway-api env block had no `FACTORY_OWNER_EMAIL`/`FACTORY_OWNER_PASSWORD_HASH`/
+   `FACTORY_ALLOW_LEGACY_ROLE_AUTH` at all — a production deploy following that doc literally could
+   not seed an owner credential.
+2. The dashboard-web env block had no `DASHBOARD_ADMIN_EMAIL`/`_PASSWORD_HASH` — in
+   `NODE_ENV=production`, `configuredUsers()` (`lib/auth.ts`) returns an empty list without them
+   (demo users are dev-only), meaning **nobody could log into the dashboard at all** under that
+   documented setup.
+3. The dashboard-web env block also had no `DASHBOARD_SESSION_SECRET` — without it, `sessionSecret()`
+   (`lib/session.ts`) silently falls back to a hardcoded, publicly-visible-in-source dev secret, in
+   production too, not just local dev (the fallback isn't gated by `NODE_ENV`).
+All three are fixed directly in `README-SETUP.md` in this pass (with inline Persian comments
+explaining the hash-reuse trick and the production risk), alongside the code changes below.
+
+### Provisioning path (new)
+`scripts/provision-gateway-user.mjs` (new): a thin HTTP client over the gateway's existing,
+owner-only `POST /v1/auth/users`. Deliberately does NOT write Mongo directly and does NOT
+reimplement any of that route's validation/audit/event-publish logic — reuses the one already-tested
+code path rather than adding a second, less-trustworthy one (same principle as D-165's
+`gatewayLogin`/`gatewayLogout` reusing the real endpoints instead of duplicating server logic).
+Supports `--role owner|operator|viewer` (mapped to `TenantMembership.roles`: `['owner']`,
+`['tenant_operator']`, `['viewer']` respectively — consistent with `authContextToRoleName`'s
+existing mapping, no server-side changes needed), defaults to provisioning into the primary/owner
+tenant (`ESAN_TENANT_ID`) unless `--new-tenant` is passed, and accepts either `--password-hash`
+(preferred — reuses the same hash already generated for the matching `DASHBOARD_*_PASSWORD_HASH`
+env var) or `--password` (sent once over the network to the endpoint, which hashes it immediately
+server-side — the same risk class as a real login call, not the "machine invents a secret" class
+D-164's mandatory correction targets). The script's own auth to call the owner-gated endpoint
+defaults to the legacy admin-token + `role:owner` path when no `--session-token` is given — a
+deliberate, documented bootstrap use (there is, by definition, no real owner session the very first
+time any account is provisioned), with `--session-token` preferred once one exists.
+
+**Verified end-to-end against a real listening gateway instance** (not just `.inject()` — an actual
+HTTP server on a real port, via `tsx` against current source): provisioned both an `operator` and a
+`viewer` account, logged in as each over real HTTP, and confirmed `GET /v1/auth/session` resolves
+`roles: ["tenant_operator"]` and `roles: ["viewer"]` respectively, both scoped to
+`tenant_esan_personal`. This is the concrete proof that the provisioning path produces accounts that
+actually work, not just that the script exits 0.
+
+### Explicit `FACTORY_ALLOW_LEGACY_ROLE_AUTH=false` proof points (3 new tests, extending D-164's 4)
+Added to `characterization.auth-real.test.ts`'s existing kill-switch describe block:
+- **Session-authenticated requests still work:** a non-owner (`viewer`) session reads its own scope
+  normally (`GET /v1/me/memories` → 200) with the switch disabled — D-164 only proved this for the
+  owner-write case (`POST /v1/auth/users`); this adds the general read case.
+- **The internal service token is unaffected:** `GET /v1/tasks` with `FACTORY_INTERNAL_TOKEN`
+  alone → 200, switch disabled — internal-token auth (`hasValidInternalToken`) never touched
+  `declaredRole()`/the legacy path in the first place, this makes that explicit rather than assumed.
+- **Unauthenticated requests fail cleanly:** `GET /v1/tasks` with no headers at all → 401, switch
+  disabled — proves disabling the switch doesn't accidentally fail-open anywhere.
+
+Combined with D-164's original 4 (legacy path works by default, no longer elevates when disabled,
+`guard()` still passes on the bare admin token, a real session is unaffected either way), all four
+proof points the user required this round are now individually, explicitly tested — 7 tests total in
+that describe block, 27 in the file, 241 in the gateway-api suite.
+
+### What is still NOT automated (by design)
+Actually running the provisioning script for every production operator remains a manual step —
+correctly so, per D-164's "no self-serve signup" constraint and the standing "no irreversible action
+without approval" security principle; auto-provisioning arbitrary accounts is not a safe default.
+Flipping `FACTORY_ALLOW_LEGACY_ROLE_AUTH` to `false` in production is therefore still a decision the
+operator makes explicitly, once they've confirmed every real dashboard user is provisioned — the
+tooling and test coverage to make that decision safely now fully exist.
+
+### Verification
+`gateway-api` 241/241 (238 + 3 new), `shared` 128/128 unaffected, `dashboard-web` typecheck and
+10/10 tests unaffected (no dashboard code changed this pass), `check-scope-boundary.mjs` green (no
+collection-access changes), `scripts/provision-gateway-user.mjs` syntax-checked and verified against
+a real running gateway instance (see above).
+
 ## 2026-07-10 — Phase K1 Real Auth: Dashboard-Web Gateway Session Bridge (D-165)
 
 Completes the deprecation path D-164 explicitly left open: "the legacy fallback ... must not

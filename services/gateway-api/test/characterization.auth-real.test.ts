@@ -14,7 +14,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { COLLECTIONS, hashPassword, hashSessionToken, SESSION_TOKEN_HEADER } from '@factory/shared';
-import { buildTestGateway, asAdmin } from './helpers/build-app.js';
+import { buildTestGateway, asAdmin, asInternal } from './helpers/build-app.js';
 
 const now = '2026-07-10T00:00:00.000Z';
 const future = '2099-01-01T00:00:00.000Z';
@@ -324,6 +324,37 @@ describe('FACTORY_ALLOW_LEGACY_ROLE_AUTH kill-switch', () => {
     });
     const res = await h.service.app.inject({ method: 'POST', url: '/v1/auth/users', headers: asSession('h'.repeat(64)), payload: { email: 'x@example.com', password: 'whatever123' } });
     expect(res.statusCode).toBe(200);
+    await h.close();
+  });
+
+  // K1 Auth Hardening (D-166) — the four explicit proof points required
+  // before FACTORY_ALLOW_LEGACY_ROLE_AUTH can ever be defaulted to false in
+  // production: (1) session-authenticated requests still work — proven
+  // above for the owner-write case, this adds a non-owner read; (2) legacy
+  // role-header requests no longer get trusted role elevation — proven
+  // above; (3) the internal service token is completely unaffected by the
+  // switch; (4) a fully unauthenticated request still fails cleanly.
+
+  it('a non-owner session (viewer) still reads its own scope normally with the switch disabled', async () => {
+    const h = await buildTestGateway({ FACTORY_ALLOW_LEGACY_ROLE_AUTH: false }, (db) => {
+      seedUser(db, { userId: 'user_v', email: 'v@example.com', password: 'pw', tenantId: 'tenant_v', roles: ['viewer'], token: 'i'.repeat(64), sessionId: 'sess_i' });
+    });
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/me/memories', headers: asSession('i'.repeat(64)) });
+    expect(res.statusCode).toBe(200);
+    await h.close();
+  });
+
+  it('the internal service token (FACTORY_INTERNAL_TOKEN) is unaffected by the switch — it never went through declaredRole at all', async () => {
+    const h = await buildTestGateway({ FACTORY_ALLOW_LEGACY_ROLE_AUTH: false });
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/tasks', headers: asInternal() });
+    expect(res.statusCode).toBe(200);
+    await h.close();
+  });
+
+  it('a fully unauthenticated request (no token of any kind) still fails cleanly with the switch disabled', async () => {
+    const h = await buildTestGateway({ FACTORY_ALLOW_LEGACY_ROLE_AUTH: false });
+    const res = await h.service.app.inject({ method: 'GET', url: '/v1/tasks' });
+    expect(res.statusCode).toBe(401);
     await h.close();
   });
 });

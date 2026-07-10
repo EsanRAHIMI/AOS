@@ -191,6 +191,16 @@ FACTORY_ENV=production
 FACTORY_INTERNAL_TOKEN=
 FACTORY_ADMIN_TOKEN=
 
+# K1 Real Auth (D-164/D-165) — واقعی، DB-backed کاربر و session.
+# FACTORY_OWNER_PASSWORD_HASH را با «node scripts/hash-password.mjs '<password>'»
+# بساز؛ اگر خالی بماند، owner هیچ credential واقعی نمی‌گیرد (هرگز پسورد ساختگی
+# چاپ نمی‌شود). این hash باید دقیقاً همان مقداری باشد که در DASHBOARD_ADMIN_
+# PASSWORD_HASH هم استفاده می‌شود تا bridge دو سیستم فعال شود — یک hash، دو env var.
+# جزئیات کامل: docs/security-and-permissions.md بخش «K1 Real Auth».
+FACTORY_ALLOW_LEGACY_ROLE_AUTH=true
+FACTORY_OWNER_EMAIL=
+FACTORY_OWNER_PASSWORD_HASH=
+
 SERVICE_ID=gateway-api
 SERVICE_NAME=Gateway API
 SERVICE_DOMAIN=https://api.simorx.com
@@ -206,6 +216,16 @@ LOG_LEVEL=info
 ```
 
 **تست:** `curl https://api.simorx.com/health`
+
+**پس از دیپلوی، owner/operator/viewer را provision کن (D-165):**
+
+```bash
+FACTORY_API_URL=https://api.simorx.com FACTORY_ADMIN_TOKEN=<token> \
+  node scripts/provision-gateway-user.mjs --email operator@company.com \
+  --password-hash "$(node scripts/hash-password.mjs '<password>')" --role operator
+```
+
+کامل: `docs/security-and-permissions.md` بخش «K1 Real Auth» و «Provisioning».
 
 ---
 
@@ -741,9 +761,30 @@ FACTORY_API_URL=https://api.simorx.com
 FACTORY_ADMIN_TOKEN=
 EVENT_BUS_URL=https://events.simorx.com
 FACTORY_INTERNAL_TOKEN=
+
+# session cookie signing — بدون این، در production هم به‌طور خاموش روی یک
+# secret نامعتبر و توسعه‌ای fallback می‌کند. حتماً یک مقدار تصادفی قوی بگذار.
+DASHBOARD_SESSION_SECRET=
+
+# ورود owner. حتماً همان hash که به FACTORY_OWNER_PASSWORD_HASH گیت‌وی داده‌ای
+# را اینجا هم بگذار (فرمت scrypt یکسان است در هر دو سرویس) — یک hash، دو env
+# var — وگرنه bridge به session واقعی گیت‌وی (D-165) هرگز فعال نمی‌شود و ورود
+# owner همیشه روی مسیر قدیمی x-factory-role باقی می‌ماند.
+DASHBOARD_ADMIN_EMAIL=
+DASHBOARD_ADMIN_PASSWORD_HASH=
+
+# اختیاری — operator/viewer اضافه. پس از ست‌کردن این دو، باید با همان ایمیل/
+# hash روی گیت‌وی هم provision شوند: scripts/provision-gateway-user.mjs.
+DASHBOARD_OPERATOR_EMAIL=
+DASHBOARD_OPERATOR_PASSWORD_HASH=
+DASHBOARD_VIEWER_EMAIL=
+DASHBOARD_VIEWER_PASSWORD_HASH=
 ```
 
 **تست:** باز کردن https://factory.simorx.com
+
+**نکته امنیتی:** در `NODE_ENV=production`، اگر `DASHBOARD_ADMIN_EMAIL`/`DASHBOARD_ADMIN_PASSWORD_HASH`
+ست نشوند، هیچ‌کس نمی‌تواند وارد داشبورد شود (لاگین‌های دمو فقط در dev فعال‌اند) — این عمداً است، نه باگ.
 
 ---
 

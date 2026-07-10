@@ -49,9 +49,10 @@ approval-gated, least privilege, no hidden production changes.
 ## Required Future Hardening
 
 - OIDC/OAuth2 login (current: first-party email+password only — no external IdP).
-- Provision every production dashboard operator as a real gateway user (D-165 bridge is wired,
-  but activation still requires this manual step per operator), then default
-  `FACTORY_ALLOW_LEGACY_ROLE_AUTH` to `false` (see "K1 Real Auth" deprecation path below).
+- Actually run `scripts/provision-gateway-user.mjs` for every production dashboard operator (the
+  script, bridge, and disabled-switch test coverage are all done — D-165/D-166 — this is now a
+  manual operational step, not a missing mechanism), then default `FACTORY_ALLOW_LEGACY_ROLE_AUTH`
+  to `false` (see "K1 Real Auth" deprecation path below).
 - Tenant model with role inheritance, delegation, and consent records.
 - Redis-backed rate limits, lockouts, sessions, and safe-mode propagation.
 - Short-lived service identity tokens for internal calls.
@@ -93,6 +94,27 @@ timing doesn't leak account existence either.
 plaintext `password` (hashed server-side immediately, never stored/logged/returned) or a pre-hashed
 `passwordHash`. There is no self-serve signup.
 
+**Provisioning walkthrough (D-166).** Only the owner gets an automatic, env-based credential seed
+(above). Operators and viewers must be provisioned explicitly — there is no other path, by design:
+
+1. Generate a password hash once: `node scripts/hash-password.mjs '<password>'` → a
+   `scrypt$<saltHex>$<hashHex>` string. This format is identical between the gateway and
+   dashboard-web, so the SAME hash is reused in both places below — never regenerate a second hash
+   for the same person.
+2. Provision the gateway account: `FACTORY_API_URL=<gateway url> FACTORY_ADMIN_TOKEN=<token> node
+   scripts/provision-gateway-user.mjs --email <email> --role operator --password-hash <hash from
+   step 1>`. This is a thin client over `POST /v1/auth/users` — it does not touch Mongo directly and
+   does not duplicate that route's validation/audit logic. `--role` is `owner`, `operator`, or
+   `viewer`; defaults to the primary/owner tenant unless `--new-tenant` is passed. The very first
+   time this runs (before any real owner session exists), it necessarily uses the legacy admin-token
+   path to authenticate itself — a deliberate, documented bootstrap use, not a gap. Once the owner
+   has a real session, pass `--session-token <owner's token>` instead.
+3. Set the SAME hash as the matching dashboard-web env var (`DASHBOARD_OPERATOR_PASSWORD_HASH` /
+   `DASHBOARD_VIEWER_PASSWORD_HASH` / `DASHBOARD_ADMIN_PASSWORD_HASH`) so the dashboard's local login
+   accepts that person, and the gateway session bridge (D-165) activates for them on sign-in.
+4. Never print or store the plaintext password anywhere after step 1 — only the hash travels from
+   here on.
+
 **No invented secrets, ever.** Neither the gateway's boot-time bootstrap nor
 `scripts/migrate-scope-foundation.mjs` will generate or print a plaintext password. The owner's
 credential is seeded only if `FACTORY_OWNER_PASSWORD_HASH` is set to a validly-formatted
@@ -117,12 +139,14 @@ under a real, revocable, per-user session instead of the legacy role header. If 
 gateway account (dev-only demo logins, or a production operator not yet provisioned), the bridge
 silently no-ops and the dashboard continues on the legacy path exactly as before — zero regression,
 not a degraded mode. **To make a production dashboard operator use a real session, provision them
-as a real gateway user with the same email/password**: `node scripts/hash-password.mjs
-'<password>'` → `POST /v1/auth/users` (owner-only) with that hash and the matching email. **Full
-deprecation path:** once every production dashboard operator (not just the owner) is provisioned
-this way, and CI/internal tooling's direct admin-token usage is the only remaining legacy caller,
-set `FACTORY_ALLOW_LEGACY_ROLE_AUTH=false`. This is not yet safe to do by default — it requires that
-manual provisioning step first.
+as a real gateway user with the same email/password** using `scripts/provision-gateway-user.mjs` —
+see the "Provisioning walkthrough" above. **Full deprecation path:** once every production dashboard
+operator (not just the owner) is provisioned this way, and CI/internal tooling's direct admin-token
+usage is the only remaining legacy caller, set `FACTORY_ALLOW_LEGACY_ROLE_AUTH=false`. The mechanics
+for that switch are fully built and tested (D-166: session-authenticated requests, the internal
+service token, and unauthenticated requests are all proven unaffected by disabling it; only the
+legacy role header loses trust, exactly as designed) — what remains is the operational step of
+actually provisioning every production operator, which is manual by design, not automated here.
 
 ## Phase AA — scope & identity enforcement
 Authorization is centralized in the shared `canAccess` engine, enforced at the
