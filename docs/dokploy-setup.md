@@ -11,6 +11,9 @@ diagnostics, checklists, and approvals.
 - GitHub repo is available to Dokploy.
 - Shared secrets are generated: `FACTORY_INTERNAL_TOKEN`, `FACTORY_ADMIN_TOKEN`,
   dashboard session secret, provider keys as needed.
+- Redis is optional (K1 Redis Backbone, D-167) — only needed when running more than one replica of
+  `gateway-api` or `event-bus-service`. See `docs/deployment-plan.md` → "Redis Backbone" for the
+  full setup and rollback notes.
 
 ## Creating a Service
 

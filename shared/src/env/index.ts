@@ -76,6 +76,21 @@ export const MongoEnvSchema = z.object({
   MONGODB_DB_NAME: z.string().default('autonomous_os_kernel'),
 });
 
+/**
+ * K1 Redis Backbone (D-167). Optional, not required — deliberately NOT part
+ * of BaseEnvSchema since only gateway-api and event-bus-service use it.
+ * REDIS_URL empty (the default) means Redis is disabled: every consumer
+ * (RedisBackbone, EventBroadcaster, the rate limiter's Redis path) falls
+ * back to local/in-process behavior, clearly logged as degraded, never
+ * throwing. This is the correct default for local/dev/test/single-instance
+ * deployments — Redis only matters once a service is horizontally scaled.
+ * See docs/service-communication-protocol.md and decision-log D-167.
+ */
+export const RedisEnvSchema = z.object({
+  REDIS_URL: z.string().optional().default(''),
+  REDIS_KEY_PREFIX: z.string().optional().default('factory:'),
+});
+
 export const S3EnvSchema = z.object({
   AWS_ACCESS_KEY_ID: z.string().min(1),
   AWS_SECRET_ACCESS_KEY: z.string().min(1),

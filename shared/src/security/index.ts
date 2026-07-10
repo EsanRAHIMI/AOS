@@ -158,16 +158,34 @@ export interface RateLimitResult {
   retryAfterMs: number;
 }
 
+/** The narrow slice of RedisBackbone the rate limiter needs — avoids a hard dependency on the redis module's full surface. */
+export interface RedisRateLimitBackend {
+  incrWithWindow(key: string, windowMs: number): Promise<number | null>;
+}
+
 /**
- * Fixed-window in-memory rate limiter. Keyed by an arbitrary string (e.g.
- * `login:<ip>` or `task:<token>`). Single-process only; the interface is kept
- * deliberately small so a Redis-backed implementation can replace it later.
+ * Fixed-window rate limiter. Keyed by an arbitrary string (e.g.
+ * `login:<ip>` or `task:<token>`).
+ *
+ * K1 Redis Backbone (D-167): `check()` now optionally consults a
+ * Redis-backed counter FIRST when a `redis` backend is supplied — this is
+ * what closes the "N gateway-api replicas each enforce their own
+ * independent budget" gap, since every instance pointed at the same Redis
+ * shares one counter per key. `checkLocal()` is the original, unchanged,
+ * synchronous, purely in-process implementation — it is both the
+ * always-available fallback (whenever no Redis backend is configured, or a
+ * Redis call fails) and remains directly usable on its own. Behavior with
+ * no `redis` argument is byte-identical to before this change.
  */
 export class RateLimiter {
   private hits = new Map<string, { count: number; resetAt: number }>();
-  constructor(private readonly defaultLimit = 30, private readonly windowMs = 60_000) {}
+  constructor(
+    private readonly defaultLimit = 30,
+    private readonly windowMs = 60_000,
+    private readonly redis?: RedisRateLimitBackend,
+  ) {}
 
-  check(key: string, limit = this.defaultLimit, windowMs = this.windowMs): RateLimitResult {
+  checkLocal(key: string, limit = this.defaultLimit, windowMs = this.windowMs): RateLimitResult {
     const now = Date.now();
     const cur = this.hits.get(key);
     if (!cur || cur.resetAt <= now) {
@@ -181,12 +199,26 @@ export class RateLimiter {
     return { allowed: true, remaining: limit - cur.count, limit, retryAfterMs: 0 };
   }
 
-  /** Periodically drop expired windows to bound memory. */
+  /** Redis-backed when configured and reachable; falls back to checkLocal() otherwise. Never throws. */
+  async check(key: string, limit = this.defaultLimit, windowMs = this.windowMs): Promise<RateLimitResult> {
+    if (this.redis) {
+      const count = await this.redis.incrWithWindow(key, windowMs);
+      if (count !== null) {
+        if (count > limit) return { allowed: false, remaining: 0, limit, retryAfterMs: windowMs };
+        return { allowed: true, remaining: Math.max(0, limit - count), limit, retryAfterMs: 0 };
+      }
+      // count === null means the Redis call itself failed/disabled — fall through.
+    }
+    return this.checkLocal(key, limit, windowMs);
+  }
+
+  /** Periodically drop expired local windows to bound memory. No-op for the Redis-backed path (Redis handles its own TTLs). */
   sweep(): void {
     const now = Date.now();
     for (const [k, v] of this.hits) if (v.resetAt <= now) this.hits.delete(k);
   }
 
+  /** Local-only snapshot — when Redis-backed, this only reflects local fallback hits, not the shared Redis counters (Redis has no cheap "list all keys under a prefix" primitive worth adding here). */
   snapshot(): Array<{ key: string; count: number; resetAt: string }> {
     return [...this.hits.entries()].map(([key, v]) => ({ key, count: v.count, resetAt: new Date(v.resetAt).toISOString() }));
   }

@@ -18,6 +18,8 @@ fail fast with a readable error. Real secrets are never committed.
 | `SERVICE_REGISTRY_URL` | registry base URL |
 | `EVENT_BUS_URL` | event bus base URL |
 | `LOG_LEVEL` | pino log level |
+| `REDIS_URL` | K1 Redis Backbone (D-167). Only read by `gateway-api` and `event-bus-service`. Default `''` (unset) = local/single-instance mode — event fan-out and rate limiting stay in-process, byte-identical to pre-D-167 behavior. Set to a real, reachable Redis URL (e.g. `redis://host:6379`) to make event fan-out and rate limits cross-instance-correct across N replicas behind one load balancer. Must be the **same** Redis for both services — they share one backbone. Never crashes the service if unreachable; degrades to local behavior with one throttled warning log. |
+| `REDIS_KEY_PREFIX` | default `factory:`. Namespaces all keys/channels this backbone writes, so one Redis instance can safely be shared with other, unrelated key spaces if needed. |
 
 ## Data and Assets
 
@@ -62,6 +64,12 @@ fail fast with a readable error. Real secrets are never committed.
 - Move user auth to OIDC/OAuth2/JWT and persistent per-user RBAC.
 - Add tenant, organization, and public-service identity provider configuration.
 - Add connector consent and permission scopes per tenant/user.
-- Add Redis URL when distributed rate limits/safe mode/session invalidation are implemented.
-- Add NATS/Redis Streams URL if event bus becomes multi-instance.
+- ~~Add Redis URL when distributed rate limits/safe mode/session invalidation are implemented.~~
+  Done for event fan-out and rate limits (D-167, `REDIS_URL`/`REDIS_KEY_PREFIX` above). Session
+  invalidation across instances is not yet built — sessions still resolve from Mongo per-request
+  (already cross-instance-correct on read) but there is no instant cross-instance revocation signal
+  yet.
+- Redis Streams/BullMQ for a real durable task queue (`POST /v1/tasks` is still direct
+  forward-and-forget HTTP to orchestrator-agent) — deliberately deferred, D-167. Redis pub/sub above
+  covers event fan-out only, not a persistent/replayable queue.
 - Add connector-specific env only after read-only connector contracts are documented.

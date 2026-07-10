@@ -11,6 +11,8 @@ import {
   loadEnv,
   BaseEnvSchema,
   MongoEnvSchema,
+  RedisEnvSchema,
+  createRedisBackbone,
   connectMongo,
   collection,
   COLLECTIONS,
@@ -246,7 +248,7 @@ import { manifest } from './factory/manifest.js';
 // K1.3 seam — the gateway is buildable without listening (and, for tests,
 // without a real Mongo connection via the shared setTestDb seam). index.ts
 // is the only caller in production; characterization tests are the other.
-export const GatewayEnvSchema = BaseEnvSchema.merge(MongoEnvSchema);
+export const GatewayEnvSchema = BaseEnvSchema.merge(MongoEnvSchema).merge(RedisEnvSchema);
 export type GatewayEnv = ReturnType<(typeof GatewayEnvSchema)['parse']>;
 
 export interface BuildGatewayOptions {
@@ -349,9 +351,19 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
     return Boolean(s?.value);
   };
 
-  // Rate limiters (in-memory; swap for Redis later). Login is enforced in the
-  // dashboard; here we protect task creation, approvals, and mutations.
-  const mutationLimiter = new RateLimiter(60, 60_000);
+  // K1 Redis Backbone (D-167): when REDIS_URL is configured, rate-limit
+  // counters are shared across every gateway-api instance pointed at the
+  // same Redis — closing the "N replicas each enforce their own budget"
+  // gap. Falls back to the original local in-process counting (byte-
+  // identical to before this change) when REDIS_URL is unset or a Redis
+  // call fails. `ctx.log` isn't constructed yet at this point in boot, so a
+  // plain console fallback is used for the (at-most-once) degraded warning.
+  const redisBackbone = createRedisBackbone({
+    url: env.REDIS_URL,
+    keyPrefix: env.REDIS_KEY_PREFIX,
+    logger: { warn: (obj, msg) => console.warn(`[gateway-api] ${msg ?? ''}`, obj) },
+  });
+  const mutationLimiter = new RateLimiter(60, 60_000, redisBackbone);
   setInterval(() => mutationLimiter.sweep(), 120_000).unref?.();
 
   const service = await createFactoryService({
@@ -378,6 +390,12 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         const message = statusCode >= 500 && isProd ? 'internal error' : err.message;
         reply.header(REQUEST_ID_HEADER, requestId);
         reply.code(statusCode).send(failure(code, message, { requestId }));
+      });
+
+      // K1 Redis Backbone (D-167): release the Redis connection cleanly on
+      // shutdown. A no-op when Redis was never enabled/connected.
+      app.addHook('onClose', async () => {
+        await redisBackbone.quit();
       });
 
       // K1 Real Auth production safety rail (D-164/D-165): make the legacy
@@ -479,7 +497,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       };
       // Fixed-window rate limit for a sensitive mutation. Returns true if blocked (already replied).
       const rateLimited = async (req: Req, reply: FastifyReplyLike, bucket: string): Promise<boolean> => {
-        const res = mutationLimiter.check(`${bucket}:${declaredRole(req)}:${clientIp(req)}`);
+        const res = await mutationLimiter.check(`${bucket}:${declaredRole(req)}:${clientIp(req)}`);
         if (res.allowed) return false;
         reply.header(REQUEST_ID_HEADER, headerStr(req, REQUEST_ID_HEADER));
         await writeSecEvent({ eventType: EVENT_TYPES.RATE_LIMITED, actorId: declaredRole(req), role: declaredRole(req), ip: clientIp(req), userAgent: userAgent(req), target: bucket, result: 'denied', riskLevel: 'medium', detail: 'rate limit exceeded' });

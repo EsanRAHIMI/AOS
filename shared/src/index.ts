@@ -63,3 +63,5 @@ export * from './personal/index.js';
 export * from './jarvis/index.js';
 // Phase AG — Real Research & Intelligence Fabric
 export * from './research/index.js';
+// K1 Redis Backbone (D-167)
+export * from './redis/index.js';

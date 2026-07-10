@@ -161,6 +161,15 @@ EVENT_BUS_URL=https://events.simorx.com
 MONGODB_URI=
 MONGODB_DB_NAME=autonomous_os_kernel
 LOG_LEVEL=info
+
+# K1 Redis Backbone (D-167) — اختیاری. خالی = fan-out فقط داخل همین یک process
+# (رفتار Phase 1، بدون تغییر). وقتی بیش از یک instance از event-bus-service پشت
+# یک load balancer اجرا می‌شود، REDIS_URL را ست کن تا رویدادها بین همه‌ی
+# instanceها sync شوند (Redis pub/sub) — بدون آن، کلاینتی که به instance B وصل
+# است رویدادی را که به instance A رسیده هرگز نمی‌بیند. جزئیات:
+# docs/service-communication-protocol.md بخش «Event Fan-Out».
+REDIS_URL=
+REDIS_KEY_PREFIX=factory:
 ```
 
 **تست:** `curl https://events.simorx.com/health`
@@ -213,6 +222,14 @@ ORCHESTRATOR_AGENT_URL=https://orchestrator.simorx.com
 MONGODB_URI=
 MONGODB_DB_NAME=autonomous_os_kernel
 LOG_LEVEL=info
+
+# K1 Redis Backbone (D-167) — اختیاری. خالی = rate limit فقط داخل همین یک
+# process (رفتار قدیمی، بدون تغییر — هر instance شمارنده‌ی جدا دارد). با بیش
+# از یک instance از gateway-api پشت یک load balancer، REDIS_URL را ست کن تا
+# محدودیت نرخ بین همه‌ی instanceها مشترک شود؛ باید دقیقاً همان مقدار
+# REDIS_URL سرویس event-bus-service باشد (یک Redis مشترک برای کل backbone).
+REDIS_URL=
+REDIS_KEY_PREFIX=factory:
 ```
 
 **تست:** `curl https://api.simorx.com/health`

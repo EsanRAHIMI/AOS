@@ -2,6 +2,103 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-10 — K1 Redis Backbone: Event Fan-Out + Rate Limits, Local-Fallback by Default (D-167)
+
+With K1 auth work declared complete, the assigned goal was to move runtime backbone state off
+single-process memory where `docs/master-direction.md` requires it — event fan-out, rate limits,
+safe mode — as a small, safe foundation step. Explicitly out of scope: Jarvis rewrite, executor
+decomposition, UI redesign, service consolidation, product features, and any real task-queue
+migration (BullMQ etc.) unless proven to be a small step, which it is not.
+
+### What was actually in-memory (verified by reading code, not assuming)
+- **Event fan-out** (`event-bus-service`): genuinely in-process only — a module-level `Map` of SSE
+  subscribers, no cross-instance mechanism. The file's own comment already anticipated this
+  ("Phase 1 uses in-process SSE fan-out; a Redis/NATS backplane can be added later").
+- **Rate limiting** (`gateway-api`'s `RateLimiter`, `shared/src/security`): genuinely in-process
+  only — a synchronous fixed-window counter, one call site (`server.ts`'s `rateLimited` helper).
+- **Safe mode: already correct, contrary to the blanket "in-memory" framing.**
+  `isSafeMode()` does a fresh `systemSettings.findOne()` on every call — no caching anywhere — and
+  `POST /v1/security/safe-mode` already calls `ctx.publisher.publish({type: SAFE_MODE_CHANGED,...})`
+  on change. Safe-mode *enforcement* is Mongo-backed and cross-instance-correct today. Decision:
+  build no separate Redis mechanism for safe mode — do not cache the enforcement read (any
+  staleness window on a safety kill-switch is an unacceptable trade-off for the read), and let
+  cross-instance *notification* of a safe-mode change ride the same event fan-out fix below, for
+  free.
+
+### Design
+- `shared/src/redis/index.ts` (new): `RedisLike` — the narrow interface both `ioredis` and test
+  doubles implement. `RedisBackbone` — a null-safe wrapper that **never throws**; every operation
+  (`publish`/`subscribe`/`incrWithWindow`/`get`/`set`/`ping`/`quit`) is wrapped, warns at most once
+  per process (throttled, not spammed), and returns a degraded sentinel (`false`/`null`) on failure
+  or when `REDIS_URL` is unset — callers fall back to local behavior, they never crash. Real
+  connections use `ioredis` (`lazyConnect: true`, no offline queue) — importing or constructing the
+  wrapper never opens a socket unless a URL was actually configured.
+- `EventBroadcaster<T>` (same file): the reusable cross-instance fan-out primitive. Local
+  subscribers always get zero-latency same-process delivery, unconditionally. When Redis is
+  configured, publishes are also sent on a named Redis channel, and incoming Redis messages are
+  fanned out locally only (never re-published) — this, plus self-echo suppression via a random
+  `originId` tag on every instance (dropping a Redis message that carries the receiving instance's
+  own id), is what prevents both an infinite republish loop and a same-instance double-delivery
+  bug. The double-delivery bug was real — caught by 2 failing assertions in this phase's own test
+  suite before it ever shipped, not found by review.
+- `RateLimiter` gained an optional `RedisRateLimitBackend` (the narrow `incrWithWindow` slice) and
+  a new async `check()` that tries Redis first, falling through to the original synchronous
+  `checkLocal()` (unchanged, renamed) when Redis returns `null` (disabled or failed). Existing
+  synchronous behavior is preserved byte-for-byte as the fallback path.
+- `shared/src/env/index.ts` gained `RedisEnvSchema` (`REDIS_URL` default `''`, `REDIS_KEY_PREFIX`
+  default `'factory:'`) — deliberately **not** part of `BaseEnvSchema`; only `gateway-api` and
+  `event-bus-service` merge it in, since no other service touches Redis.
+- Task queue: explicitly NOT started. `POST /v1/tasks` remains direct forward-and-forget HTTP to
+  orchestrator-agent. A real queue (BullMQ or equivalent) is a new dependency, a worker model, and a
+  retry/idempotency design — not a small foundation step, and would touch orchestrator-agent, which
+  master-direction's current scope excludes.
+
+### Testing strategy and an honest sandbox limitation
+This sandbox has no root/sudo/Docker access: `apt-get install redis-server` fails on the dpkg lock,
+`sudo -n` is blocked by the container's no-new-privileges flag, and `redis-memory-server`'s binary
+download is blocked by the network allowlist. **A real Redis server cannot be run in this sandbox.**
+Given that constraint:
+- `shared/test/helpers/fake-redis.ts` (new): a hand-rolled `FakeRedisBroker`/`FakeRedisClient`
+  double — chosen over `ioredis-mock` to match this codebase's own established precedent
+  (`services/gateway-api/test/helpers/fake-db.ts`) for consistency and full control.
+- `shared/test/redis-backbone.contract.test.ts` (new, 17 tests): `RedisBackbone`
+  disabled/failing/working behavior, `EventBroadcaster` local-only fan-out, the two-instance proof
+  (cross-instance delivery, safe-mode-shaped event propagation, no-republish-loop verified via a
+  publish-call-count spy, three-instance fan-out, Redis-disabled-instance isolation), `RateLimiter`
+  local-behavior regression pin, and a Redis-backed two-instance rate-limit proof (shared counter
+  across two instances sharing one fake broker).
+- `scripts/redis-two-instance-check.mjs` (new): a human-run script — not part of CI, not run by me
+  in this session — that boots two real HTTP `event-bus-service`-shaped instances via the actual
+  `createFactoryService` and proves the same cross-instance contract against a **real** Redis
+  (`REDIS_URL=redis://... node scripts/redis-two-instance-check.mjs`). This is the intended
+  pre-production verification step; the 17 unit tests above are the automated proof for CI.
+
+### Deployment
+`REDIS_URL` is optional everywhere. Unset = local/single-instance mode, identical to pre-D-167
+behavior — this change is safe to deploy with zero config changes. See
+`docs/deployment-plan.md` → "Redis Backbone" for the multi-instance setup/rollback path, and
+`README-SETUP.md`'s `gateway-api`/`event-bus-service` env blocks for the literal deploy reference.
+
+**Verification:** `shared` 145/145 (128 + 17 new), `gateway-api` unaffected-behavior regression
+green (rate limiter local-fallback path unchanged), `event-bus-service` and `gateway-api` typecheck
+clean, `check-scope-boundary.mjs` green. Two-instance proof: 17 unit tests against a fake broker
+(automated, CI-run) plus a one-off manual run of the HTTP-level smoke test against the same fake
+broker in this sandbox, confirming the real `createFactoryService`-based wiring (not just the
+`EventBroadcaster` unit in isolation) delivers cross-instance — `scripts/redis-two-instance-check.mjs`
+remains the real-Redis version of that same check, for the user to run.
+
+**Next K1 step:** either (a) the user runs `scripts/redis-two-instance-check.mjs` against a real
+Redis and provisions one in Dokploy for the first multi-replica deployment, or (b) take on the
+Jarvis/operator executors subsystem (D-157), or (c) begin real per-user RBAC / OIDC. Redis Streams
+or BullMQ for a durable task queue remains explicitly out of scope until proven to be a small step.
+
+Scope: `shared/src/{redis/index.ts (new), env/index.ts, security/index.ts, index.ts}`,
+`shared/test/{helpers/fake-redis.ts (new), redis-backbone.contract.test.ts (new)}`,
+`shared/package.json`, `services/gateway-api/src/server.ts`,
+`services/event-bus-service/src/index.ts`, `scripts/redis-two-instance-check.mjs` (new),
+`docs/{decision-log.md, phase-log.md, service-communication-protocol.md, deployment-plan.md,
+dokploy-setup.md, environment-variables.md}`, `README-SETUP.md`.
+
 ## 2026-07-10 — Phase K1 Auth Hardening: Provisioning Path + Legacy Fallback Closure Proof (D-166)
 
 Closes the two remaining gaps D-165 left open: no path existed to provision operator/viewer as real
