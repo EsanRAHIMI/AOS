@@ -241,6 +241,34 @@ export async function listDeadLetters(serviceId: string): Promise<AgentJobRun[]>
     .toArray();
 }
 
+const TERMINAL_JOB_STATUSES = new Set<AgentJobRunStatus>(['succeeded', 'failed', 'dead_lettered', 'cancelled']);
+
+/**
+ * K1 BullMQ Producer Adoption (D-174) — poll Mongo until a job run reaches a
+ * terminal state, or the timeout elapses. Used ONLY by callers that need a
+ * queue-mode dispatch to behave like today's synchronous, sequential-await
+ * `peer.dispatchTask()` call within a background pipeline step (see
+ * `shared/src/dispatch/index.ts`'s `waitForCompletion` option) — never used
+ * by fire-and-forget producers (gateway's own task creation), which return
+ * as soon as the job is queued, exactly like today's HTTP forward-and-forget.
+ * Pure Mongo polling — no BullMQ/Redis dependency of its own, independently
+ * testable against a fake db. Returns null on timeout; the caller decides
+ * what "no answer yet" means (typically: fall back to HTTP, per D-174).
+ */
+export async function waitForJobRun(
+  jobRunId: string,
+  opts: { timeoutMs: number; pollMs?: number },
+): Promise<AgentJobRun | null> {
+  const pollMs = opts.pollMs ?? 250;
+  const deadline = Date.now() + opts.timeoutMs;
+  for (;;) {
+    const run = await getJobRun(jobRunId);
+    if (run && TERMINAL_JOB_STATUSES.has(run.status)) return run;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Producer — BullMQ-backed, degrades to `{ enqueued: false }` when disabled.
 // ---------------------------------------------------------------------------
@@ -302,18 +330,36 @@ export class AgentTaskQueueClient {
     return { enqueued: true, duplicate: false, jobRunId: outcome.jobRunId, bullJobId: job.id ?? null };
   }
 
-  /** Best-effort cancel: removes the BullMQ job if still waiting/delayed, always attempts the Mongo transition. */
+  /**
+   * Best-effort cancel: removes the BullMQ job if still waiting/delayed,
+   * always attempts the Mongo transition. Skips the BullMQ call entirely
+   * when this client is disabled (REDIS_URL unset) or the run never got a
+   * real bullJobId (e.g. it was only ever dispatched over HTTP) — touching
+   * `this.queueFor(...)` in that state would try to open a live Redis
+   * connection with `connection: null` and fail ungracefully. K1 BullMQ
+   * Producer Adoption (D-174): this is what lets the DLQ ops route
+   * (routes/agent-jobs.ts) call cancel() safely regardless of dispatch mode.
+   */
   async cancel(serviceId: string, jobRunId: string): Promise<AgentJobRun | null> {
     const run = await getJobRun(jobRunId);
-    if (run?.bullJobId) {
+    if (this.enabled && run?.bullJobId) {
       const job = await this.queueFor(serviceId).getJob(run.bullJobId).catch(() => null);
       await job?.remove().catch(() => undefined);
     }
     return markCancelled(jobRunId, this.publish);
   }
 
-  /** Re-enqueue a dead-lettered job with a fresh attempt budget. */
+  /**
+   * Re-enqueue a dead-lettered job with a fresh attempt budget. Same
+   * disabled-client guard as cancel() above — a job can only be
+   * dead_lettered if it was actually processed through BullMQ, which means
+   * `this.enabled` was true when it was dead-lettered, but the client
+   * replaying it later (e.g. from an operational script or a redeployed
+   * gateway) may have since had REDIS_URL removed; fail honestly instead of
+   * attempting a live Queue.add() with no connection.
+   */
   async replayDeadLetter(serviceId: string, jobRunId: string): Promise<EnqueueResult> {
+    if (!this.enabled) return { enqueued: false, duplicate: false, jobRunId, bullJobId: null, reason: 'redis_disabled' };
     const run = await getJobRun(jobRunId);
     if (!run || run.status !== 'dead_lettered') return { enqueued: false, duplicate: false, jobRunId, bullJobId: null, reason: 'not_dead_lettered' };
     const now = nowIso();

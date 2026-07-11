@@ -127,8 +127,14 @@ originals).
 parallel, nothing is removed. See `docs/decision-log.md` D-173,
 `docs/deployment-plan.md`'s "BullMQ Task Queue" section, and
 `scripts/agent-queue-verify.mjs` for a real-Redis+Mongo end-to-end check.
-No orchestrator/gateway call site has been rewired to dispatch through the
-queue yet — this pass only builds and proves the consumer side.
+
+K1 BullMQ Producer Adoption (D-174, later pass) queue-enabled the actual
+PRODUCERS: `gateway-api` and `orchestrator-agent` now dispatch to these 7
+workers through BullMQ when `AGENT_DISPATCH_MODE` is queue-capable (still
+`http`-only by default) — see `docs/decision-log.md` D-174 and
+`docs/service-communication-protocol.md`'s "Task Dispatch" section. This
+service's own code is unaffected by D-174; it already correctly consumed
+queued work regardless of who was producing it.
 
 ## Deployment
 

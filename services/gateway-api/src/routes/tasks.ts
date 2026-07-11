@@ -4,7 +4,7 @@
  * Bodies are moved VERBATIM from the pre-split server.ts; behavior is pinned
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
-import { ERROR_CODES, EVENT_TYPES, INTERNAL_TOKEN_HEADER, TaskRequestSchema, buildAuditLog, failure, genId, nowIso, peerUrl, success } from '@factory/shared';
+import { ERROR_CODES, EVENT_TYPES, INTERNAL_TOKEN_HEADER, TaskRequestSchema, buildAuditLog, failure, genId, nowIso, success } from '@factory/shared';
 import type { Approval, Task } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
@@ -22,6 +22,7 @@ export function registerTasksRoutes(app: FastifyInstance, deps: GatewayDeps): vo
     infra,
     events,
     auditLogs,
+    dispatchTaskToOrchestrator,
   } = deps;
 
       // --- Tasks ----------------------------------------------------------
@@ -51,21 +52,12 @@ export function registerTasksRoutes(app: FastifyInstance, deps: GatewayDeps): vo
         await tasks.insertOne(task);
         await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: task.taskId, payload: { goal: task.goal } });
 
-        // Forward to the orchestrator (best-effort; task is persisted regardless).
-        // Prefer the registry-resolved URL, fall back to env/localhost discovery
-        // so the loop works locally and in independent Dokploy deployments.
-        const orchestrator = await ctx.registry.resolve('orchestrator-agent');
-        const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
-        try {
-          await fetch(`${orchestratorUrl}/.factory/task`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
-            body: JSON.stringify({ taskId: task.taskId, goal: task.goal, input: parsed.data.input, priority: task.priority }),
-          });
-          await tasks.updateOne({ taskId: task.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
-        } catch (e) {
-          ctx.log.warn({ err: e }, 'orchestrator forward failed; task remains queued');
-        }
+        // Forward to the orchestrator (best-effort; task is persisted
+        // regardless). K1 BullMQ Producer Adoption (D-174): routes through
+        // BullMQ when AGENT_DISPATCH_MODE is queue-capable and REDIS_URL is
+        // set, else the exact original best-effort HTTP forward — see
+        // dispatchTaskToOrchestrator (server.ts) and decision-log D-174.
+        await dispatchTaskToOrchestrator({ taskId: task.taskId, goal: task.goal, input: parsed.data.input, priority: task.priority });
         return success(await tasks.findOne({ taskId: task.taskId }, { projection: { _id: 0 } }));
       });
 

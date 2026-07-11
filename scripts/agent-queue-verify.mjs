@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * K1 BullMQ Task Queue (D-173) — real Redis + real MongoDB verification.
+ * K1 BullMQ Task Queue (D-173) + K1 BullMQ Producer Adoption (D-174) —
+ * real Redis + real MongoDB verification.
  *
  * shared/test/queue.contract.test.ts already proves the Mongo state machine
  * (enqueue/claim/run/succeed/fail/retry/dead-letter/cancel) against a fake
@@ -9,13 +10,20 @@
  * `describe.skipIf(!REDIS_URL)` and correctly SKIPS in this sandbox, which
  * has no network egress at all (see decision-log D-169, D-171 — confirmed
  * against a neutral control target, not just this project's own infra).
+ * shared/test/dispatch.contract.test.ts proves dispatchViaQueueOrHttp's mode
+ * branching against a fake queue client — this script is the real-Redis
+ * counterpart for that helper (D-174 section below), same reason: a fake
+ * Redis cannot honestly stand in for BullMQ's own delivery guarantees.
  *
  * This script is the closest thing to "does it actually work against real
  * infrastructure" for the queue workstream, meant to be run by a human (or
  * CI with real services) against a real Redis and a real/disposable Mongo
  * database before relying on the queue path in production. It exercises the
  * same 15-point completion standard decision-log D-173 requires, end to end,
- * against real BullMQ + real Mongo — not mocks.
+ * against real BullMQ + real Mongo — not mocks. The D-174 section below adds
+ * the producer-adoption-specific checks: mode branching, degrade-to-HTTP +
+ * AGENT_DISPATCH_DEGRADED, wait-for-completion, and the DLQ replay/cancel
+ * operational surface's disabled-client guard.
  *
  * Usage:
  *   REDIS_URL=redis://127.0.0.1:6379 \
@@ -39,6 +47,7 @@ import {
   createAgentTaskWorker,
   getJobRun,
   listDeadLetters,
+  dispatchViaQueueOrHttp,
 } from '@factory/shared';
 
 const REDIS_URL = process.env.REDIS_URL;
@@ -183,6 +192,88 @@ async function main() {
     record('12. honest degraded behavior when Redis is unavailable (REDIS_URL="")', out.enqueued === false && out.reason === 'redis_disabled' && disabledWorker.enabled === false);
     await disabledWorker.close();
     await disabledClient.close();
+  }
+
+  // ===========================================================================
+  // K1 BullMQ Producer Adoption (D-174) — dispatchViaQueueOrHttp against real
+  // Redis + real Mongo. Same checklist decision-log D-174 requires as the
+  // "real Redis gate" for the K1 queue-adoption workstream.
+  // ===========================================================================
+
+  // --- D174.1: mode=queue_with_http_fallback, queue healthy → dispatchMode 'queue' ---
+  {
+    const serviceId = `verify-d174-ok-${RUN_ID}`;
+    const worker = createAgentTaskWorker({ serviceId, redisUrl: REDIS_URL, handler: async (r) => ({ taskId: r.taskId ?? '', accepted: true, echo: r.goal }), ctx: {} });
+    workers.push(worker);
+    let httpCalled = false;
+    const out = await dispatchViaQueueOrHttp({
+      serviceId, body: { taskId: 'd174-ok-1', goal: 'design it', input: {}, priority: 'normal' },
+      mode: 'queue_with_http_fallback', queueClient: client,
+      httpDispatch: async () => { httpCalled = true; return { ok: true, status: 200, data: { via: 'http' } }; },
+      waitForCompletion: { timeoutMs: 3000, pollMs: 100 },
+    });
+    if (out.jobRunId) jobRunIds.push(out.jobRunId);
+    record('D174.1 real queue dispatch: enqueue -> worker executes -> waitForCompletion returns the real result, HTTP never called', out.ok === true && out.dispatchMode === 'queue' && !httpCalled && out.data?.echo === 'design it', `dispatchMode=${out.dispatchMode} data=${JSON.stringify(out.data)}`);
+  }
+
+  // --- D174.2: queue client disabled → degrades to HTTP + AGENT_DISPATCH_DEGRADED published ---
+  {
+    const disabledClient = new AgentTaskQueueClient({ redisUrl: '' });
+    let publishedDegraded = null;
+    let httpCalled = false;
+    const out = await dispatchViaQueueOrHttp({
+      serviceId: `verify-d174-degrade-${RUN_ID}`, body: { taskId: 'd174-degrade-1', goal: 'g', input: {}, priority: 'normal' },
+      mode: 'queue_with_http_fallback', queueClient: disabledClient,
+      httpDispatch: async () => { httpCalled = true; return { ok: true, status: 200, data: { via: 'http-fallback' } }; },
+      publish: async (e) => { publishedDegraded = e; return true; },
+    });
+    await disabledClient.close().catch(() => undefined);
+    record('D174.2 disabled queue client degrades to HTTP and publishes AGENT_DISPATCH_DEGRADED (never a silent fallback)', out.dispatchMode === 'http_fallback' && httpCalled === true && publishedDegraded?.type === 'agent.dispatch.degraded', `dispatchMode=${out.dispatchMode} published=${publishedDegraded?.type}`);
+  }
+
+  // --- D174.3: mode=queue_only, queue unhealthy → fails loudly, HTTP never called ---
+  {
+    const disabledClient = new AgentTaskQueueClient({ redisUrl: '' });
+    let httpCalled = false;
+    const out = await dispatchViaQueueOrHttp({
+      serviceId: `verify-d174-queueonly-${RUN_ID}`, body: { taskId: 'd174-qo-1', goal: 'g', input: {}, priority: 'normal' },
+      mode: 'queue_only', queueClient: disabledClient,
+      httpDispatch: async () => { httpCalled = true; return { ok: true, status: 200 }; },
+    });
+    await disabledClient.close().catch(() => undefined);
+    record('D174.3 queue_only mode never silently falls back to HTTP on failure', out.ok === false && httpCalled === false);
+  }
+
+  // --- D174.4: DLQ replay via the operational surface, real Redis round trip ---
+  {
+    const serviceId = `verify-d174-dlq-${RUN_ID}`;
+    let calls = 0;
+    const worker = createAgentTaskWorker({
+      serviceId, redisUrl: REDIS_URL,
+      handler: async (r) => { calls += 1; if (calls === 1) throw new Error('fails on first pass (expected — forces dead-letter)'); return { taskId: r.taskId ?? '', accepted: true }; },
+      ctx: {}, timeoutMs: 500,
+    });
+    workers.push(worker);
+    // maxAttempts:1 on a dedicated client so the FIRST failure exhausts immediately.
+    const oneShotClient = new AgentTaskQueueClient({ redisUrl: REDIS_URL, maxAttempts: 1, backoffMs: 50 });
+    const out = await oneShotClient.enqueue(serviceId, { taskId: 'd174-dlq-1', goal: 'g', input: {}, priority: 'normal' });
+    if (out.jobRunId) jobRunIds.push(out.jobRunId);
+    await wait(1500);
+    const dead = out.jobRunId ? await getJobRun(out.jobRunId) : null;
+    const replay = out.jobRunId ? await oneShotClient.replayDeadLetter(serviceId, out.jobRunId) : null;
+    await wait(1500);
+    const replayed = out.jobRunId ? await getJobRun(out.jobRunId) : null;
+    await oneShotClient.close().catch(() => undefined);
+    record('D174.4 DLQ operational surface: dead-letter -> replay -> succeeds on second pass', dead?.status === 'dead_lettered' && replay?.enqueued === true && replayed?.status === 'succeeded' && calls === 2, `deadStatus=${dead?.status} replayEnqueued=${replay?.enqueued} finalStatus=${replayed?.status} calls=${calls}`);
+  }
+
+  // --- D174.5: cancel + replay/cancel disabled-client guard never crashes on live Redis calls ---
+  {
+    const disabledClient = new AgentTaskQueueClient({ redisUrl: '' });
+    const cancelResult = await disabledClient.cancel('verify-d174-disabled', 'nonexistent-job-run');
+    const replayResult = await disabledClient.replayDeadLetter('verify-d174-disabled', 'nonexistent-job-run');
+    await disabledClient.close().catch(() => undefined);
+    record('D174.5 cancel()/replayDeadLetter() on a disabled client fail gracefully (no live-Redis exception) — the DLQ ops route depends on this', cancelResult === null && replayResult?.reason === 'redis_disabled');
   }
 
   // --- cleanup ---------------------------------------------------------------

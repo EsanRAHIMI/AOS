@@ -452,6 +452,10 @@ export const EVENT_TYPES = {
   AGENT_JOB_RETRYING: 'agent.job.retrying',
   AGENT_JOB_DEAD_LETTERED: 'agent.job.dead_lettered',
   AGENT_JOB_CANCELLED: 'agent.job.cancelled',
+  // K1 BullMQ Producer Adoption (D-174) — emitted whenever a queue-mode
+  // dispatch could not use the queue and fell back to HTTP, so this is never
+  // a SILENT fallback (see decision-log D-174, requirement 3).
+  AGENT_DISPATCH_DEGRADED: 'agent.dispatch.degraded',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

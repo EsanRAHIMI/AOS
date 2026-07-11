@@ -9,7 +9,7 @@
 import type { ServiceContext } from '@factory/service-kit';
 import {
   buildAuditLog, buildSecurityEvent, auditEnvironment, scoreNextActions,
-  classifyGoalScope, RateLimiter,
+  classifyGoalScope, RateLimiter, type AgentTaskQueueClient, type DispatchOutcome,
 } from '@factory/shared';
 import type {
   AccessDecision,
@@ -159,6 +159,14 @@ export interface GatewayDeps {
   dokploySync: { lastAt: string | null };
   voiceServiceUrl: () => string;
   createKernelTask: (goal: string, tags: string[]) => Promise<string>;
+  /** K1 BullMQ Producer Adoption (D-174) — the single mode-aware dispatch
+   *  path for every gateway→orchestrator-agent "fire-and-forget" call site.
+   *  See server.ts's definition and decision-log D-174. */
+  dispatchTaskToOrchestrator: (args: { taskId: string; goal: string; input?: Record<string, unknown>; priority?: Task['priority'] }) => Promise<DispatchOutcome>;
+  /** The queue client dispatchTaskToOrchestrator uses — exposed on deps so
+   *  routes/agent-jobs.ts (DLQ operational surface) can share the same
+   *  instance rather than constructing a second one. */
+  agentQueueClient: AgentTaskQueueClient;
   loadGraphInput: (actor: AuthContext) => Promise<PersonalGraphInput>;
   userStamp: (actor: AuthContext) => Parameters<typeof scoreNextActions>[1];
   codeAgentTask: (action: string, input?: Record<string, unknown>, timeoutMs?: number) => Promise<{ ok: boolean; summary: string; data?: unknown }>;

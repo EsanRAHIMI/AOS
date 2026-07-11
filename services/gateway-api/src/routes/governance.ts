@@ -4,14 +4,13 @@
  * Bodies are moved VERBATIM from the pre-split server.ts; behavior is pinned
  * by the characterization suite. Shared runtime lives in GatewayDeps.
  */
-import { ERROR_CODES, EVENT_TYPES, INTERNAL_TOKEN_HEADER, buildScoringProfile, failure, genId, hasPermission, nowIso, peerUrl, success } from '@factory/shared';
+import { ERROR_CODES, EVENT_TYPES, buildScoringProfile, failure, genId, hasPermission, nowIso, success } from '@factory/shared';
 import type { Task } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req, FastifyReplyLike } from './deps.js';
 
 export function registerGovernanceRoutes(app: FastifyInstance, deps: GatewayDeps): void {
   const {
-    env,
     ctx,
     guard,
     deny,
@@ -42,6 +41,7 @@ export function registerGovernanceRoutes(app: FastifyInstance, deps: GatewayDeps
     improvementWorkflows,
     impactAssessments,
     memoryMaintenanceRuns,
+    dispatchTaskToOrchestrator,
   } = deps;
 
       // --- Phase 8: Learning Governance & Adaptive Intelligence ----------
@@ -159,12 +159,10 @@ export function registerGovernanceRoutes(app: FastifyInstance, deps: GatewayDeps
         await writeAudit({ actorType: 'human', actorId: role, role, action: 'recommendation_approved', targetType: 'system_recommendation', targetId: rec.recommendationId, after: { taskId: newTask.taskId, type: rec.type }, reason: rec.reason });
         await ctx.publisher.publish({ type: EVENT_TYPES.RECOMMENDATION_DECIDED, taskId: newTask.taskId, payload: { recommendationId: rec.recommendationId, status: 'approved', taskId: newTask.taskId, message: `Recommendation approved → improvement workflow` } });
         await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: newTask.taskId, payload: { goal: newTask.goal } });
-        const orchestrator = await ctx.registry.resolve('orchestrator-agent');
-        const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
-        try {
-          await fetch(`${orchestratorUrl}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: newTask.taskId, goal: newTask.goal, input: { recommendationId: rec.recommendationId } }) });
-          await tasks.updateOne({ taskId: newTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
-        } catch (e) { ctx.log.warn({ err: e }, 'improvement task forward failed'); }
+        // K1 BullMQ Producer Adoption (D-174) — see routes/tasks.ts's primary
+        // call site for the full rationale; same helper, same preserved
+        // fallback semantics.
+        await dispatchTaskToOrchestrator({ taskId: newTask.taskId, goal: newTask.goal, input: { recommendationId: rec.recommendationId } });
         return success({ approved: true, taskId: newTask.taskId });
       });
 
@@ -194,12 +192,10 @@ export function registerGovernanceRoutes(app: FastifyInstance, deps: GatewayDeps
         trig.dispatchedTaskId = learnTask.taskId;
         await learningTriggers.insertOne(trig as never);
         await ctx.publisher.publish({ type: EVENT_TYPES.LEARNING_TRIGGERED, taskId: learnTask.taskId, payload: { triggerId: trig.triggerId, message: 'Learning run triggered' } });
-        const orchestrator = await ctx.registry.resolve('orchestrator-agent');
-        const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
-        try {
-          await fetch(`${orchestratorUrl}/.factory/task`, { method: 'POST', headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN }, body: JSON.stringify({ taskId: learnTask.taskId, goal: learnTask.goal, input: {} }) });
-          await tasks.updateOne({ taskId: learnTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
-        } catch (e) { ctx.log.warn({ err: e }, 'learning trigger forward failed'); }
+        // K1 BullMQ Producer Adoption (D-174) — see routes/tasks.ts's primary
+        // call site for the full rationale; same helper, same preserved
+        // fallback semantics.
+        await dispatchTaskToOrchestrator({ taskId: learnTask.taskId, goal: learnTask.goal, input: {} });
         return success({ triggered: true, taskId: learnTask.taskId });
       });
       app.post<{ Params: { id: string } }>('/v1/learning/schedules/:id/toggle', async (req, reply) => {

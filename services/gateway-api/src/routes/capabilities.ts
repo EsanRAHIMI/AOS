@@ -38,6 +38,7 @@ export function registerCapabilitiesRoutes(app: FastifyInstance, deps: GatewayDe
     planScores,
     policyDecisions,
     decisionMemories,
+    dispatchTaskToOrchestrator,
   } = deps;
 
       // --- Phase 3: Capability graph reads -------------------------------
@@ -126,18 +127,15 @@ export function registerCapabilitiesRoutes(app: FastifyInstance, deps: GatewayDe
             };
             await tasks.insertOne(buildTask);
             await ctx.publisher.publish({ type: EVENT_TYPES.TASK_CREATED, taskId: buildTask.taskId, payload: { goal: buildTask.goal } });
-            const orchestrator = await ctx.registry.resolve('orchestrator-agent');
-            const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
-            try {
-              await fetch(`${orchestratorUrl}/.factory/task`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
-                body: JSON.stringify({ taskId: buildTask.taskId, goal: buildTask.goal, input: { action: 'build_from_proposal', proposalId: proposal.proposalId }, priority: 'high' }),
-              });
-              await tasks.updateOne({ taskId: buildTask.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
-            } catch (e) {
-              ctx.log.warn({ err: e }, 'build forward failed; build task remains queued');
-            }
+            // K1 BullMQ Producer Adoption (D-174) — see routes/tasks.ts's
+            // primary call site for the full rationale; same helper, same
+            // preserved fallback semantics.
+            await dispatchTaskToOrchestrator({
+              taskId: buildTask.taskId,
+              goal: buildTask.goal,
+              input: { action: 'build_from_proposal', proposalId: proposal.proposalId },
+              priority: 'high',
+            });
             return success({ proposal, buildTaskId: buildTask.taskId });
           }
           return success({ proposal });

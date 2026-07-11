@@ -20,7 +20,7 @@ on. This README summarizes the surface; the authoritative route list is
   voice,personal,operator,system}.ts` — route registrations, bodies moved
   verbatim from the pre-split monolith; each destructures what it uses from
   `GatewayDeps` (`src/routes/deps.ts`).
-- `test/characterization.*.test.ts` — 193 tests pinning auth, envelopes,
+- `test/characterization.*.test.ts` — 254 tests pinning auth, envelopes,
   RBAC/safe-mode/rate-limit behavior, and the task/approval/infra flows.
   They must stay green through any refactor of this service.
 
@@ -32,6 +32,7 @@ on. This README summarizes the surface; the authoritative route list is
 
 ## Route groups (`/v1/*`, dashboard/admin auth + RBAC)
 - **Tasks & approvals** — `/v1/tasks`, `/v1/tasks/:id`, `/v1/tasks/:id/timeline`, `/v1/approvals`
+- **Agent job / DLQ operations (K1 BullMQ Producer Adoption, D-174)** — `GET /v1/agent-jobs/dead-letters?serviceId=`, `GET /v1/agent-jobs/:jobRunId`, `POST /v1/agent-jobs/:jobRunId/{replay,cancel}` (owner/operator only — `manage_agent_jobs`, safe-mode-blocked, audited)
 - **Operator / Jarvis runtime (Phase X, AD–AF.4.4)** — `POST /v1/operator/command`, `GET /v1/operator/live-state` (persistent snapshot: active/recent sessions, pending approvals, recent tasks/events — see `docs/decision-log.md` D-120–D-128), `GET /v1/operator/sessions/active`, `POST /v1/operator/permissions/:id/decision`, `/v1/operator/{tools,capabilities,sessions,memories}`
 - **Personal reality / Jarvis intelligence (Phase AB, AD–AE.1)** — `/v1/me/reality/*` (ingest, review, next-actions decision), `/v1/me/universe` (the 9-zone Command Universe contract), `/v1/jarvis/briefing`
 - **Voice** — `/v1/voice/{realtime-token, realtime/sdp, session, message, tool-confirm, permission, sessions, memories, tool-calls}`

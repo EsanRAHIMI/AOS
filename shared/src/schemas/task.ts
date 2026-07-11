@@ -28,6 +28,15 @@ export const TaskSchema = z.object({
   tags: z.array(z.string()).default([]),
   result: z.unknown().optional(),
   error: z.string().nullable().default(null),
+  /**
+   * K1 BullMQ Producer Adoption (D-174). Records which dispatch path was
+   * actually used for this task's forward-to-orchestrator call — 'queue'
+   * (BullMQ), 'http_fallback' (queue was attempted but degraded to HTTP,
+   * see AGENT_DISPATCH_DEGRADED), or 'http' (AGENT_DISPATCH_MODE=http, the
+   * default — identical to pre-D-174 behavior). Optional/absent on tasks
+   * created before this field existed, or tasks not dispatched this way.
+   */
+  dispatchMode: z.enum(['queue', 'http', 'http_fallback']).optional(),
   createdAt: IsoDate,
   updatedAt: IsoDate,
 }).merge(ScopeFieldsSchema);

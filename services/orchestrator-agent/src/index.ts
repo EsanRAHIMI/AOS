@@ -17,11 +17,15 @@ import {
   BaseEnvSchema,
   MongoEnvSchema,
   LlmEnvSchema,
+  RedisEnvSchema,
+  AgentQueueEnvSchema,
   connectMongo,
   collection,
   COLLECTIONS,
   EVENT_TYPES,
   PeerClient,
+  createAgentTaskWorker,
+  AgentTaskQueueClient,
   genId,
   nowIso,
   buildSeedCapabilities,
@@ -43,12 +47,33 @@ import {
   type Role,
   type Permission,
   type RbacUser,
+  type AgentTaskWorkerHandle,
 } from '@factory/shared';
 import { createFactoryService, type TaskHandler, type ServiceContext } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
 import { runPipeline, runBuildPipeline } from './pipeline.js';
 
-const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema).merge(LlmEnvSchema));
+// RedisEnvSchema/AgentQueueEnvSchema (K1 BullMQ Producer Adoption, D-174):
+// REDIS_URL unset (the default) means the BullMQ Worker started in main()
+// below simply doesn't start — this process runs exactly as it did before
+// D-174, HTTP-`/.factory/task`-only. Setting REDIS_URL additionally starts
+// one Worker consuming the `agent-tasks:orchestrator-agent` queue, calling
+// the SAME `handleTask` the HTTP route already calls — both paths work in
+// parallel. This is what lets gateway-api's dispatchTaskToOrchestrator
+// (server.ts) actually deliver queued work somewhere; see decision-log D-174.
+const env = loadEnv(BaseEnvSchema.merge(MongoEnvSchema).merge(LlmEnvSchema).merge(RedisEnvSchema).merge(AgentQueueEnvSchema));
+
+// K1 BullMQ Producer Adoption (D-174): one queue client, constructed once at
+// module scope (same pattern as gateway-api's server.ts), used by
+// pipeline.ts's dispatchPeerTask for every orchestrator→{architect,qa,
+// reviewer,report,memory,documentation-service,internet-research-service}
+// call. `.enabled` is false when REDIS_URL is unset — dispatchPeerTask
+// degrades to the exact original peer.dispatchTask HTTP call in that case.
+const agentQueueClient = new AgentTaskQueueClient({
+  redisUrl: env.REDIS_URL,
+  maxAttempts: env.AGENT_QUEUE_MAX_ATTEMPTS,
+  backoffMs: env.AGENT_QUEUE_BACKOFF_MS,
+});
 
 /** Idempotently seed the capability graph with the kernel's built-in abilities. */
 async function seedCapabilities(): Promise<void> {
@@ -104,10 +129,11 @@ const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
 
   // Choose pipeline: build-from-approved-proposal, or analyze-then-delegate.
   const action = (req.input as Record<string, unknown> | undefined)?.action;
+  const dispatchArgs = { agentQueueClient, dispatchMode: env.AGENT_DISPATCH_MODE, dispatchWaitMs: env.AGENT_QUEUE_TIMEOUT_MS };
   const pipeline =
     action === 'build_from_proposal'
-      ? runBuildPipeline({ taskId, goal: req.goal, ctx, peer, input: req.input })
-      : runPipeline({ taskId, goal: req.goal, ctx, peer, input: req.input });
+      ? runBuildPipeline({ taskId, goal: req.goal, ctx, peer, input: req.input, ...dispatchArgs })
+      : runPipeline({ taskId, goal: req.goal, ctx, peer, input: req.input, ...dispatchArgs });
 
   // Run the pipeline in the background; respond immediately for a live timeline.
   void pipeline
@@ -171,9 +197,42 @@ async function main(): Promise<void> {
     eventBusUrl: env.EVENT_BUS_URL,
     logLevel: env.LOG_LEVEL,
     taskHandler: handleTask,
+    // K1 BullMQ Producer Adoption (D-174): a second listener (the BullMQ
+    // Worker below) shares this process, same reason as aos-agent-runtime —
+    // see the doc comment on this option in packages/service-kit.
+    registerSignalHandlers: false,
   });
 
   await service.listen();
+
+  // --- K1 BullMQ Producer Adoption (D-174) — queue consumption ------------
+  // orchestrator-agent's OWN task handler, wired to a BullMQ Worker so it can
+  // consume jobs gateway-api enqueues via dispatchTaskToOrchestrator. Uses
+  // manifest.serviceId ('orchestrator-agent') as the queue name, matching
+  // exactly what gateway-api's AgentTaskQueueClient.enqueue('orchestrator-agent', ...) targets.
+  const queueHandle: AgentTaskWorkerHandle = createAgentTaskWorker({
+    serviceId: manifest.serviceId,
+    redisUrl: env.REDIS_URL,
+    handler: handleTask,
+    ctx: service.ctx,
+    concurrency: env.AGENT_QUEUE_CONCURRENCY,
+    timeoutMs: env.AGENT_QUEUE_TIMEOUT_MS,
+    publish: (e) => service.ctx.publisher.publish(e),
+  });
+  if (queueHandle.enabled) {
+    console.log('orchestrator-agent: BullMQ queue worker ENABLED (REDIS_URL set) — HTTP /.factory/task remains fully functional in parallel');
+  } else {
+    console.log('orchestrator-agent: REDIS_URL not set — queue worker disabled, HTTP-only mode (unchanged from pre-D-174 behavior)');
+  }
+
+  // Single shared graceful shutdown for the HTTP service + the queue worker —
+  // see registerSignalHandlers:false above and its doc comment.
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, () => {
+      console.log(`orchestrator-agent: received ${sig}, shutting down HTTP + queue worker`);
+      void Promise.all([service.close(), queueHandle.close()]).finally(() => process.exit(0));
+    });
+  }
 }
 
 main().catch((err) => {

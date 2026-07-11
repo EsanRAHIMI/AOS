@@ -103,6 +103,16 @@ export const AgentQueueEnvSchema = z.object({
   AGENT_QUEUE_BACKOFF_MS: z.coerce.number().int().positive().optional().default(2000),
   AGENT_QUEUE_CONCURRENCY: z.coerce.number().int().positive().optional().default(4),
   AGENT_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(30000),
+  /**
+   * K1 BullMQ Producer Adoption (D-174). Default `http` is BYTE-IDENTICAL to
+   * pre-D-174 behavior — the queue producer code path is not even attempted.
+   * `queue_with_http_fallback` tries the queue first and falls back to HTTP
+   * on any failure, always emitting AGENT_DISPATCH_DEGRADED (never a silent
+   * fallback). `queue_only` never falls back — a queue failure is surfaced
+   * directly, for environments that have already proven queue reliability.
+   * See docs/decision-log.md D-174.
+   */
+  AGENT_DISPATCH_MODE: z.enum(['http', 'queue_with_http_fallback', 'queue_only']).optional().default('http'),
 });
 
 export const S3EnvSchema = z.object({

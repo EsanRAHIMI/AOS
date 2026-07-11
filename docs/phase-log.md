@@ -3690,3 +3690,65 @@ Scope: `shared/src/{queue/index.ts (new), constants/index.ts, env/index.ts, inde
 queue.bullmq-integration.contract.test.ts (new)}`, `services/aos-agent-runtime/src/index.ts`,
 `scripts/agent-queue-verify.mjs` (new), `docs/{decision-log.md (D-173), phase-log.md,
 deployment-plan.md, environment-variables.md}`.
+
+## Phase K1 BullMQ Producer Adoption / End-to-End Reliable Dispatch (2026-07-11)
+
+**Goal:** D-173 built the queue backbone and consumer side only. Owner directed the next step: move
+real gateway/orchestrator task traffic onto BullMQ, with HTTP kept only as a temporary, explicit
+fallback — not a redesign of K2/Jarvis/UI, not more service consolidation, not a claim of production
+readiness without real-Redis evidence.
+
+**Correction surfaced this phase:** the pre-implementation plan's dispatch-site inventory ("3 real
+`peer.dispatchTask()` calls in `pipeline.ts`") was wrong — a regex miss on generic type arguments. The
+real count, re-verified before any code was written, is 25 call sites, matching D-173's own earlier
+"~25+" estimate. See decision-log D-174 for the corrected inventory and full A-M plan.
+
+**Built:** `shared/src/dispatch/index.ts` (new) — `dispatchViaQueueOrHttp`, a mode-aware
+(`AGENT_DISPATCH_MODE`: `http` default | `queue_with_http_fallback` | `queue_only`) dispatch helper
+composing D-173's queue primitives with each caller's own existing HTTP transport, so gateway-api and
+orchestrator-agent each keep their own URL-resolution behavior on the fallback path. Wired into
+`gateway-api`'s 4 gateway→orchestrator-agent forward points (one shared `dispatchTaskToOrchestrator`
+helper) and 12 of `orchestrator-agent/src/pipeline.ts`'s 25 dispatch call sites — specifically every
+call targeting one of the 7 `aos-agent-runtime` consolidated workers (architect/qa/reviewer/report/
+memory/documentation-service/internet-research-service); the 13 call sites targeting isolated services
+(builder-agent/devops-agent/monitor-agent/browser-testing-agent) are deliberately untouched, per the
+owner's explicit "do not migrate isolated services blindly" instruction. `orchestrator-agent` itself
+now also consumes its own queue (`agent-tasks:orchestrator-agent`) via `createAgentTaskWorker`, same
+pattern as `aos-agent-runtime`'s 7 workers. New `Task.dispatchMode` field and `agent.dispatch.degraded`
+event record/announce which path actually ran, per-task — never a silent fallback. New DLQ operational
+surface (`gateway-api`'s `routes/agent-jobs.ts`): list/inspect/replay/cancel, RBAC-gated
+(`manage_agent_jobs`), safe-mode-blocked, fully audited. Found and fixed a real gap while building that
+route: `AgentTaskQueueClient.cancel()`/`replayDeadLetter()` didn't check `.enabled` before touching
+BullMQ, so calling either with `REDIS_URL` unset would have attempted a live connection instead of
+failing gracefully — fixed to match `enqueue()`'s existing honest-degradation contract.
+
+**Tests:** `shared/test/dispatch.contract.test.ts` (12 tests, new) proves `dispatchViaQueueOrHttp`'s
+full mode-branching matrix. `services/gateway-api/test/characterization.agent-jobs.test.ts` (13 tests,
+new) proves the DLQ route's RBAC/safe-mode/audit/disabled-client-guard behavior — this is what caught
+the `cancel`/`replayDeadLetter` gap above. `services/orchestrator-agent/test/pipeline.dispatch.test.ts`
+(3 tests, new — this service's first-ever test suite, `vitest` added) proves `dispatchPeerTask`'s
+`PipelineArgs` wiring. All pre-existing suites re-run clean: `shared` 170/175 (5 correctly skipped, no
+Redis), `gateway-api` 254/254. `scripts/agent-queue-verify.mjs` extended with 5 new D174.* checks
+(mode branching, degrade+publish, `queue_only` no-fallback, a real DLQ dead-letter→replay→succeed round
+trip, the disabled-client-guard fix) — confirmed to load and fail cleanly at its `REDIS_URL` guard in
+this sandbox, not run to completion (no network egress here, same as D-169/D-171/D-173).
+
+**What did NOT happen:** no K2 agent loop; no Jarvis/UI redesign; no additional service consolidation;
+no HTTP compatibility removed (default mode is still `http`, byte-identical to before this phase); no
+production-readiness claim without real-Redis evidence; the 4 isolated services' security posture is
+unchanged (still HTTP-only, still no queue design for them).
+
+**Operational status: code-complete, additive, HTTP-compatible by default. NOT operationally complete**
+per decision-log D-174's honest gate check — item 5 (retry/timeout/DLQ/replay proven against real
+Redis) and full confidence on items 1/2/6 require running `scripts/agent-queue-verify.mjs` and the
+real-Redis test suite against actual infrastructure, unavailable in this sandbox.
+
+Scope: `shared/src/{dispatch/index.ts (new), queue/index.ts, env/index.ts, schemas/task.ts,
+constants/index.ts, governance/index.ts, index.ts}`, `shared/test/dispatch.contract.test.ts` (new),
+`services/gateway-api/src/{server.ts, routes/{deps.ts, tasks.ts, capabilities.ts, governance.ts,
+agent-jobs.ts (new)}}`, `services/gateway-api/test/characterization.agent-jobs.test.ts` (new),
+`services/orchestrator-agent/src/{index.ts, pipeline.ts}`,
+`services/orchestrator-agent/{package.json, vitest.config.ts (new)}`,
+`services/orchestrator-agent/test/pipeline.dispatch.test.ts` (new), `scripts/agent-queue-verify.mjs`,
+`docs/{decision-log.md (D-174), phase-log.md, service-communication-protocol.md, deployment-plan.md,
+environment-variables.md}`.

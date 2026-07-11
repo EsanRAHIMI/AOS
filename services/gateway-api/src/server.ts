@@ -12,6 +12,10 @@ import {
   BaseEnvSchema,
   MongoEnvSchema,
   RedisEnvSchema,
+  AgentQueueEnvSchema,
+  AgentTaskQueueClient,
+  dispatchViaQueueOrHttp,
+  type DispatchOutcome,
   createRedisBackbone,
   connectMongo,
   collection,
@@ -232,6 +236,7 @@ import {
 import { createFactoryService, type FactoryService } from '@factory/service-kit';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerTasksRoutes } from './routes/tasks.js';
+import { registerAgentJobsRoutes } from './routes/agent-jobs.js';
 import { registerCapabilitiesRoutes } from './routes/capabilities.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
 import { registerSecurityRoutes } from './routes/security.js';
@@ -248,7 +253,7 @@ import { manifest } from './factory/manifest.js';
 // K1.3 seam — the gateway is buildable without listening (and, for tests,
 // without a real Mongo connection via the shared setTestDb seam). index.ts
 // is the only caller in production; characterization tests are the other.
-export const GatewayEnvSchema = BaseEnvSchema.merge(MongoEnvSchema).merge(RedisEnvSchema);
+export const GatewayEnvSchema = BaseEnvSchema.merge(MongoEnvSchema).merge(RedisEnvSchema).merge(AgentQueueEnvSchema);
 export type GatewayEnv = ReturnType<(typeof GatewayEnvSchema)['parse']>;
 
 export interface BuildGatewayOptions {
@@ -365,6 +370,24 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
   });
   const mutationLimiter = new RateLimiter(60, 60_000, redisBackbone);
   setInterval(() => mutationLimiter.sweep(), 120_000).unref?.();
+
+  // K1 BullMQ Producer Adoption (D-174): one queue client for gateway's own
+  // dispatch-to-orchestrator call sites. `AGENT_DISPATCH_MODE=http` (the
+  // default) means this is constructed but never actually used — see
+  // `dispatchTaskToOrchestrator` below and decision-log D-174. No `publish`
+  // callback here: `ctx` (and therefore `ctx.publisher`) doesn't exist yet
+  // at this point in boot, so this process's own AGENT_JOB_* lifecycle
+  // events (Mongo tracking of THIS queue client's own enqueues) aren't
+  // published to the event bus — a minor, documented gap, not a functional
+  // one (the job's `agent_job_runs` Mongo row is unaffected). The dispatch
+  // degraded/mode events that matter for THIS workstream's requirement 3
+  // (AGENT_DISPATCH_DEGRADED) are published per-call from inside the route
+  // handlers below, where `ctx` is available.
+  const agentQueueClient = new AgentTaskQueueClient({
+    redisUrl: env.REDIS_URL,
+    maxAttempts: env.AGENT_QUEUE_MAX_ATTEMPTS,
+    backoffMs: env.AGENT_QUEUE_BACKOFF_MS,
+  });
 
   const service = await createFactoryService({
     manifest,
@@ -625,6 +648,59 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
           await tasks.updateOne({ taskId: task.taskId }, { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', updatedAt: nowIso() } });
         } catch { /* task persists regardless */ }
         return task.taskId;
+      };
+
+      // K1 BullMQ Producer Adoption (D-174) — the ONE place all 4 gateway→
+      // orchestrator "fire-and-forget" call sites (routes/tasks.ts,
+      // routes/capabilities.ts's build-from-proposal branch, routes/
+      // governance.ts x2) now go through, instead of each duplicating a
+      // fetch-then-catch block. `httpDispatch` below preserves the EXACT
+      // pre-D-174 behavior on purpose: the original code never checked
+      // `res.ok` — any non-throwing fetch (even a non-2xx response) was
+      // treated as "forwarded", only a network-level exception (refused/
+      // timeout/DNS) counted as a real failure. Changing that now would be
+      // a silent behavior change unrelated to this workstream, so it's
+      // preserved verbatim here rather than "fixed" as a side effect.
+      // Byte-identical to before D-174 when AGENT_DISPATCH_MODE=http (the
+      // default) — see dispatchViaQueueOrHttp in @factory/shared.
+      const dispatchTaskToOrchestrator = async (args: {
+        taskId: string;
+        goal: string;
+        input?: Record<string, unknown>;
+        priority?: Task['priority'];
+      }): Promise<DispatchOutcome> => {
+        const orchestrator = await ctx.registry.resolve('orchestrator-agent');
+        const orchestratorUrl = orchestrator?.domain ?? peerUrl('orchestrator-agent');
+        const body = { taskId: args.taskId, goal: args.goal, input: args.input ?? {}, priority: args.priority ?? 'normal' as const };
+        const outcome = await dispatchViaQueueOrHttp({
+          serviceId: 'orchestrator-agent',
+          body,
+          mode: env.AGENT_DISPATCH_MODE,
+          queueClient: agentQueueClient,
+          publish: (e) => ctx.publisher.publish(e),
+          httpDispatch: async () => {
+            try {
+              await fetch(`${orchestratorUrl}/.factory/task`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
+                body: JSON.stringify(body),
+              });
+              return { ok: true, status: 200 };
+            } catch (e) {
+              return { ok: false, status: 0, error: e instanceof Error ? e.message : 'request failed' };
+            }
+          },
+        });
+        if (outcome.ok) {
+          await tasks.updateOne(
+            { taskId: args.taskId },
+            { $set: { assignedServiceId: 'orchestrator-agent', status: 'planning', dispatchMode: outcome.dispatchMode, updatedAt: nowIso() } },
+          );
+        } else {
+          ctx.log.warn({ err: outcome.error, dispatchMode: outcome.dispatchMode, taskId: args.taskId }, 'orchestrator forward failed; task remains queued');
+          await tasks.updateOne({ taskId: args.taskId }, { $set: { dispatchMode: outcome.dispatchMode, updatedAt: nowIso() } });
+        }
+        return outcome;
       };
 
       // Compact, secret-free context packet for the voice operator.
@@ -1675,6 +1751,8 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         dokploySync,
         voiceServiceUrl,
         createKernelTask,
+        dispatchTaskToOrchestrator,
+        agentQueueClient,
         loadGraphInput,
         userStamp,
         codeAgentTask,
@@ -1784,6 +1862,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
 
       registerAuthRoutes(app, deps);
       registerTasksRoutes(app, deps);
+      registerAgentJobsRoutes(app, deps);
       registerCapabilitiesRoutes(app, deps);
       registerGovernanceRoutes(app, deps);
       registerSecurityRoutes(app, deps);

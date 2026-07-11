@@ -67,3 +67,5 @@ export * from './research/index.js';
 export * from './redis/index.js';
 // K1 BullMQ Task Queue (D-173)
 export * from './queue/index.js';
+// K1 BullMQ Producer Adoption (D-174)
+export * from './dispatch/index.js';

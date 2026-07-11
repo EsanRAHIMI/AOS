@@ -2,6 +2,155 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-11 — K1 BullMQ Producer Adoption / End-to-End Reliable Dispatch (D-174)
+
+D-173 built the BullMQ backbone and proved the consumer side (all 7 `aos-agent-runtime` workers can
+process queued jobs), but explicitly left every producer untouched — `gateway-api` and
+`orchestrator-agent` still dispatched 100% of task traffic over HTTP regardless of `REDIS_URL`, and
+the real-Redis integration tests were still skipped in this sandbox. The owner directed the next
+workstream: move real traffic onto the queue while HTTP remains a temporary, explicit fallback.
+
+**Correction to the prior dispatch-site inventory.** The plan presented for this workstream, before
+editing, cited "only 3 real `peer.dispatchTask()` calls in `pipeline.ts`" — a fresh grep for
+`peer\.dispatchTask\(` immediately before implementation. That regex was wrong: it does not match
+calls with an explicit generic type argument (`peer.dispatchTask<{...}>(...)`), which most call sites
+use. The real count, re-verified with `peer\.dispatchTask` (no trailing paren), is **25** call sites in
+`pipeline.ts` — matching D-173's own earlier, correct "~25+" estimate. Caught before any code was
+written against the wrong number, but flagged here because the "3 call sites" framing was already
+described to the owner in this workstream's pre-implementation plan and was incorrect.
+
+### A-M plan, as executed
+
+**A-C. Dispatch inventory (corrected).** `gateway-api`: 4 gateway→`orchestrator-agent` forward points
+(`routes/tasks.ts` `POST /v1/tasks`, `routes/capabilities.ts` build-from-proposal,
+`routes/governance.ts` recommendation-approved + learning-trigger) — all byte-identical
+insert-Task/best-effort-fetch/catch-and-log blocks. `orchestrator-agent/src/pipeline.ts`: 25
+`peer.dispatchTask()` call sites total, of which 12 target one of the 7 `aos-agent-runtime`
+consolidated workers (`architect-agent` ×2, `qa-agent` ×1, `reviewer-agent` ×1, `report-agent` ×1,
+`memory-agent` ×3, `documentation-service` ×3, `internet-research-service` ×1) and 13 target isolated
+services (`builder-agent` ×5, `devops-agent` ×4, `monitor-agent` ×3, `browser-testing-agent` ×1).
+`orchestrator-agent`'s own `handleTask` (index.ts) is fire-and-forget already (`void pipeline.then(...)`,
+returns immediately) — confirming the gateway→orchestrator hop was the natural first queue-consumer
+target. Also found (out of the gateway→orchestrator/orchestrator→worker scope the owner asked about,
+noted but not touched): gateway→`monitor-agent` ×2, gateway→`internet-research-service` (synchronous
+RPC — Jarvis awaits and returns inline), gateway→`voice-operator-agent`, gateway→`code-operator-agent`
+— all isolated and/or synchronous-RPC-shaped; queue-enabling them would need a Jarvis response-flow
+redesign, explicitly out of scope.
+
+**B/C. What moved to queue vs. stayed HTTP.** Moved: the 4 gateway→orchestrator-agent points, plus the
+12 `pipeline.ts` call sites targeting the 7 consolidated workers. Stayed HTTP: the 13 `pipeline.ts`
+call sites targeting `builder-agent`/`devops-agent`/`monitor-agent`/`browser-testing-agent` — the exact
+"isolated services" list the owner named, each classified must-remain-separate in D-170 (filesystem
+writes, real GitHub API writes, live secret minting, or a spawned browser process). No isolated-service
+queue design exists yet; migrating them "for free" alongside this pass would have been exactly the
+"do not migrate isolated services blindly" the owner warned against.
+
+**D. Queue producer ownership.** One `AgentTaskQueueClient` constructed at module scope in each of
+`gateway-api`'s `server.ts` and `orchestrator-agent`'s `index.ts` (mirrors the existing
+`aos-agent-runtime` pattern) — not per-request, not shared across processes.
+
+**E. taskId/jobRun/idempotency-key mapping.** Unchanged from D-173: `idempotencyKey` defaults to
+`{serviceId}:{taskId}`; `jobRunId` is a new id per enqueue attempt, correlated to `taskId` via the
+`agent_job_runs` row. D-174 adds no new identifier — it only adds more producers using the existing
+mapping.
+
+**F. Mongo lifecycle mapping.** `Task.status` stays authored ONLY by existing domain code (unchanged);
+`AgentJobRun.status` stays authored ONLY by queue infra (unchanged). The one deliberate coupling point:
+`dispatchTaskToOrchestrator` (gateway) records `Task.dispatchMode` and, on an initial-dispatch failure,
+sets `Task.status:'failed'` — no general bidirectional sync mechanism, no always-on background
+reconciler (flagged as a reasonable future step, not built here — nobody asked for new always-on
+infrastructure).
+
+**G. Retry/failure propagation.** Reused BullMQ's existing D-173 retry/backoff/DLQ machinery
+unchanged. `runDelegationPipeline`'s existing tolerance for a failed `architect-agent` dispatch
+(`!arch.ok` → a `warn` log, never throws or fails the Task) already covered what queue-mode dispatch
+needed — no new failure-propagation logic required for that call site or the other 11.
+
+**H. Fallback conditions.** `dispatchViaQueueOrHttp` (new, `shared/src/dispatch/index.ts`) degrades
+`queue_with_http_fallback` → HTTP on: queue client disabled (`REDIS_URL` unset), an enqueue failure, an
+enqueue exception, or (for `waitForCompletion` callers) a job that doesn't reach a terminal state
+before the timeout. Every degrade publishes `agent.dispatch.degraded` — never silent — except the
+`queueClient === null` case (no client constructed at all, not "constructed but disabled"), which is
+treated as "queue not applicable to this process" rather than a failure worth an event; in practice
+both `gateway-api` and `orchestrator-agent` always construct a client, so this distinction only matters
+for a caller that never wires one up at all.
+
+**I. Cancellation.** No new cancellation behavior — `AgentTaskQueueClient.cancel()` (D-173, best-effort:
+removes a still-waiting/delayed BullMQ job, always attempts the Mongo transition, cannot force-kill an
+in-flight processor) is exposed through the new DLQ ops route (below). Fixed a real gap found while
+building that route: `cancel()`/`replayDeadLetter()` did not check `this.enabled` before touching
+BullMQ, so calling either with `REDIS_URL` unset would have tried to open a live Queue with a `null`
+connection instead of failing gracefully — both now short-circuit to the same
+`{enqueued:false, reason:'redis_disabled'}`/no-op shape `enqueue()` already used.
+
+**J. DLQ operational surface.** New `gateway-api` route group, `routes/agent-jobs.ts`:
+`GET /v1/agent-jobs/dead-letters?serviceId=` (list), `GET /v1/agent-jobs/:jobRunId` (inspect),
+`POST /v1/agent-jobs/:jobRunId/replay`, `POST /v1/agent-jobs/:jobRunId/cancel`. Found and fixed an RBAC
+gap before writing the route: `canRolePerformAction` returns `true` (allowed) for any action not
+explicitly registered in `DASHBOARD_ACTION_PERMISSIONS` — a new `manage_agent_jobs` permission was
+added to `PERMISSION_CATALOG`/`ROLE_PERMISSIONS` (owner + operator) and `replayAgentJob`/`cancelAgentJob`
+were registered against it BEFORE the route existed, so the two mutating endpoints are gated from
+their first commit, not left open by omission. Both are automatically included in
+`SAFE_MODE_BLOCKED_ACTIONS` (derived from the map's keys) and every action is audited via
+`buildAuditLog`.
+
+**K. Tests.** `shared/test/dispatch.contract.test.ts` (12 tests, new) — exhaustive
+`dispatchViaQueueOrHttp` mode-branching proof against a fake Mongo + a faked `AgentTaskQueueClient`
+(the class's private fields make it nominally, not structurally, typed for tests — a narrow,
+documented cast) for the enqueue path, and a REAL disabled `AgentTaskQueueClient` (`redisUrl:''`) for
+the disabled-client path — both http-mode-never-touches-queue and degrade-with-published-event are
+proven. `services/gateway-api/test/characterization.agent-jobs.test.ts` (13 tests, new) — RBAC
+enforcement (viewer denied), safe-mode blocking, 404s, and the disabled-queue-client-fails-gracefully
+proof (this is what caught the `cancel`/`replayDeadLetter` gap above), all against the existing
+`FakeDb` harness. `services/orchestrator-agent/test/pipeline.dispatch.test.ts` (3 tests, new — first
+test suite this service has ever had; `vitest`/`vitest.config.ts` added) — proves `dispatchPeerTask`'s
+wiring of `PipelineArgs` (`agentQueueClient`/`dispatchMode`/`dispatchWaitMs`/`peer`/`ctx`) into the
+shared helper, deliberately not re-proving the mode-branching logic itself (already covered by the
+shared suite above). Full existing suites re-run clean: `shared` 170/175 (5 correctly skipped, no
+Redis), `gateway-api` 254/254.
+
+**L. Real-Redis gate.** Same conclusion as D-173: this sandbox has zero network egress (re-confirmed —
+`curl https://api.github.com` → `403 from proxy after CONNECT`; raw `/dev/tcp/8.8.8.8/443` and
+`/dev/tcp/1.1.1.1/6379` → "Network is unreachable", a stronger signal than the HTTP-proxy-specific
+result alone). `shared/test/queue.bullmq-integration.contract.test.ts` remains correctly SKIPPED, not
+fake-passed. `scripts/agent-queue-verify.mjs` was extended with 5 new D174.* checks (mode branching,
+degrade+publish, `queue_only` no-fallback, a real DLQ dead-letter→replay→succeed round trip, and the
+disabled-client-guard fix) but — like the rest of the script — could only be confirmed to load and
+fail cleanly at its `REDIS_URL` guard clause in this environment, not run to completion. **This
+workstream is therefore explicitly NOT claiming the real-Redis gate is satisfied** — that requires a
+human (or CI with a real Redis) running `scripts/agent-queue-verify.mjs` against real infrastructure.
+
+**M. Rollout/rollback.** See `docs/deployment-plan.md` → "BullMQ Producer Adoption (K1, D-174)" for the
+full step-by-step (deploy at `http` default → verify real Redis via the script → set
+`queue_with_http_fallback` on `orchestrator-agent` then `gateway-api`, one at a time, watching for
+`agent.dispatch.degraded` → optionally `queue_only` later). Rollback is setting
+`AGENT_DISPATCH_MODE=http` (or unsetting it) and redeploying — no code change, no data migration,
+independently reversible per-service.
+
+### Operational completion gate — honest status against the 8 required items
+
+1. Normal Gateway task creation uses BullMQ — **code-complete, not yet exercised against real Redis.**
+2. Orchestrator consumes queue jobs — **code-complete, not yet exercised against real Redis.**
+3. The 7 runtime workers receive real queued work — **proven in D-173** (unchanged by this pass).
+4. Two-worker deduplication — **proven in D-173** (`claimJobRun`'s atomic guard, unchanged; this pass
+   adds no new worker-side code).
+5. Retry/timeout/DLQ/replay proven against real Redis — **NOT satisfied.** `scripts/agent-queue-verify.mjs`
+   is extended and ready to run, but has not been run against real infrastructure in this environment.
+6. Mongo and queue lifecycle remain consistent — **proven structurally** (strict authorship separation,
+   `dispatchMode` recording) and by the fake-Mongo test suites; not yet proven under real concurrent
+   real-Redis load.
+7. HTTP fallback is explicit/observable/temporary — **satisfied**: `AGENT_DISPATCH_MODE` default is
+   `http` (temporary = opt-in), every degrade publishes `agent.dispatch.degraded` (observable), and
+   `Task.dispatchMode` records which path ran (explicit).
+8. All tests/typechecks/builds pass — **satisfied** for everything runnable in this environment: `shared`,
+   `gateway-api`, `orchestrator-agent`, `aos-agent-runtime` all typecheck/build clean; 170+254+3 = 427
+   new-or-existing tests pass, 5 correctly skip (real-Redis gated).
+
+**Conclusion: K1 queue-adoption work is code-complete and additive, but NOT operationally complete** —
+item 5 (and, honestly, full confidence on items 1/2/6) requires running `scripts/agent-queue-verify.mjs`
+and the real-Redis test suite against actual infrastructure, which this sandbox cannot do. Same
+category of gap as D-173, now extended to the producer side.
+
 ## 2026-07-11 — K1 BullMQ Task Queue / Reliable Agent Dispatch (D-173)
 
 With K1 consolidation code work declared complete for all safe-to-consolidate

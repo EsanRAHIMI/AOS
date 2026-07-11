@@ -81,16 +81,74 @@ fallback. `scripts/redis-two-instance-check.mjs` is a human-run script (requires
 Redis — not available in every dev sandbox) that boots two real HTTP instances and proves the same
 contract end to end over real Redis pub/sub.
 
+## Task Dispatch (K1 BullMQ Task Queue + Producer Adoption, D-173/D-174)
+
+Every service-to-service task dispatch in the kernel is one of two transports, selected per-process by
+`AGENT_DISPATCH_MODE` (`http` | `queue_with_http_fallback` | `queue_only`, default `http` — byte-identical
+to the original HTTP-only behavior):
+
+- **HTTP** (`PeerClient.dispatchTask` / gateway's own `fetch`) — the original, always-available
+  transport. `POST /.factory/task` on the target service, no retry, no idempotency, no dead-letter.
+- **BullMQ** (`shared/src/queue/index.ts`, D-173) — one `Queue`/`Worker` pair per `serviceId`
+  (`agent-tasks:{serviceId}`), a Mongo-backed `agent_job_runs` lifecycle
+  (`queued→claimed→running→succeeded|failed→retrying|dead_lettered|cancelled`) separate from
+  `Task.status`, idempotency-key enforcement at enqueue time, configurable retry/backoff/timeout, and a
+  DLQ (list/inspect/replay/cancel).
+
+`shared/src/dispatch/index.ts`'s `dispatchViaQueueOrHttp` (D-174) is the single mode-aware helper both
+producers use — it is NOT a new transport, only a router between the two above:
+
+- `http` (the default): calls the HTTP transport directly, queue code is never entered. Zero risk,
+  zero behavior change from pre-D-173.
+- `queue_with_http_fallback`: enqueues via BullMQ; if the queue client is disabled (`REDIS_URL` unset),
+  the enqueue fails, or (when the caller needs a synchronous-style result) the job doesn't reach a
+  terminal state before a timeout, it falls back to HTTP AND publishes `agent.dispatch.degraded` — a
+  queue-capable dispatch never silently reverts to HTTP without a visible event.
+- `queue_only`: same enqueue attempt, but never falls back — a queue failure is reported as a failure,
+  not silently absorbed by HTTP. Every `Task`/dispatch result records which path actually ran
+  (`Task.dispatchMode: 'queue' | 'http' | 'http_fallback'`).
+
+**Current producers/consumers (D-174):**
+
+- `gateway-api`'s `POST /v1/tasks` (and the 3 other gateway→orchestrator-agent forward points —
+  `capabilities.ts`'s build-from-proposal, `governance.ts`'s recommendation-approved and
+  learning-trigger) all route through one shared `dispatchTaskToOrchestrator` helper
+  (`server.ts`), fire-and-forget (no `waitForCompletion`) — matching the original forward-and-forget
+  semantics exactly when queue mode degrades or is off.
+- `orchestrator-agent` consumes its own queue (`agent-tasks:orchestrator-agent`) via
+  `createAgentTaskWorker` wired to the same `handleTask` its HTTP route already calls (same pattern as
+  `aos-agent-runtime`'s 7 workers, D-173).
+- Inside `orchestrator-agent/src/pipeline.ts`, every dispatch call TO one of the 7 `aos-agent-runtime`
+  consolidated workers (`architect-agent`, `qa-agent`, `reviewer-agent`, `report-agent`, `memory-agent`,
+  `documentation-service`, `internet-research-service` — 12 call sites total across
+  `runResearchPipeline`/`runDelegationPipeline`/`runBuildPipeline`/`runActivationPipeline`) goes through
+  `dispatchPeerTask`, which uses `waitForCompletion` so the queue path stands in for today's
+  sequential-awaited HTTP call without changing pipeline control flow.
+- Dispatches to the isolated services — `builder-agent`, `devops-agent`, `monitor-agent`,
+  `browser-testing-agent` (13 call sites in `pipeline.ts`), plus gateway's own calls to
+  `internet-research-service` (synchronous RPC for Jarvis), `voice-operator-agent`, and
+  `code-operator-agent` — remain HTTP-only. These are either security-isolated (filesystem writes, real
+  GitHub API writes, a spawned browser process — see D-170) or synchronous request/response flows a
+  queue redesign would change the shape of; neither is in scope for this pass.
+
+**DLQ operational surface (D-174):** `gateway-api`'s `routes/agent-jobs.ts` —
+`GET /v1/agent-jobs/dead-letters?serviceId=`, `GET /v1/agent-jobs/:jobRunId`,
+`POST /v1/agent-jobs/:jobRunId/replay`, `POST /v1/agent-jobs/:jobRunId/cancel`. The two mutating routes
+require the `manage_agent_jobs` RBAC permission, are blocked in safe mode, and every action is audited
+(`buildAuditLog`) — same pattern as every other sensitive dashboard action in this file.
+
 ## Future Direction
 
 - Add typed client generation from OpenAPI.
-- Add retry/backoff/circuit-breaker helpers in `@factory/shared`.
 - Add distributed tracing headers across gateway and agents.
 - Move internal service auth toward short-lived service tokens when the platform
   is ready for a service identity layer.
 - Redis-backed session invalidation (list/revoke sessions across instances) — not yet built; K1
   auth still resolves sessions from Mongo per-request, which is already cross-instance-correct but
   does not yet support instant cross-instance revocation notification the way events/rate-limits do.
-- BullMQ or an equivalent real task queue for `POST /v1/tasks` — deliberately deferred (D-167): the
-  current forward-and-forget HTTP call to orchestrator-agent is unchanged; a real queue is a new
-  dependency, worker model, and retry/idempotency design, not a small foundation step.
+- Queue-enable the isolated services (`builder-agent`, `devops-agent`, `monitor-agent`,
+  `browser-testing-agent`) — deliberately deferred: each needs its own security-isolation-aware queue
+  design (D-170), not a blind migration.
+- Queue-enable gateway's synchronous RPC calls (`internet-research-service`, `voice-operator-agent`,
+  `code-operator-agent`) — would require a Jarvis-response-flow redesign to poll/await a queued result
+  instead of an inline HTTP round trip; out of scope for D-174.

@@ -71,14 +71,47 @@ in parallel with HTTP (both paths work simultaneously; nothing is removed):
 - Set `REDIS_URL` on the `aos-agent-runtime` app. Optionally tune `AGENT_QUEUE_MAX_ATTEMPTS` (default 3),
   `AGENT_QUEUE_BACKOFF_MS` (default 2000), `AGENT_QUEUE_CONCURRENCY` (default 4),
   `AGENT_QUEUE_TIMEOUT_MS` (default 30000) — all optional, all have safe defaults.
-- No orchestrator/gateway changes are required to deploy this — those services keep dispatching over
-  HTTP exactly as before. Adopting the queue for dispatch (rather than just running the consumer side)
-  is a separate, later step per decision-log D-173's rollout plan.
 - Rollback: unset `REDIS_URL` and redeploy — `aos-agent-runtime` falls back to HTTP-only with no code
   changes and no data loss (`agent_job_runs` holds no state anything else depends on).
 - Verify with `REDIS_URL=<url> MONGODB_URI=<uri> node scripts/agent-queue-verify.mjs` before relying on
   the queue path in production — see the script's own header comment for the full 15-point check it
-  performs against real Redis + real Mongo.
+  performs against real Redis + real Mongo (extended with a D-174 dispatch-mode section below).
+
+## BullMQ Producer Adoption (K1, D-174)
+
+D-173 above built the queue backbone and consumer side only — `gateway-api` and `orchestrator-agent`
+still dispatched every task over HTTP regardless of `REDIS_URL`. D-174 makes those two services'
+dispatch paths mode-aware via `AGENT_DISPATCH_MODE` (`http` default | `queue_with_http_fallback` |
+`queue_only` — see `docs/environment-variables.md`), so real task traffic can actually move onto BullMQ.
+
+**Recommended rollout order, one step at a time, re-verifying after each:**
+
+1. Deploy this code with `AGENT_DISPATCH_MODE` unset (`http`) on both `gateway-api` and
+   `orchestrator-agent` — byte-identical to pre-D-174 behavior, safe to ship with zero risk. Confirms
+   nothing regressed before touching dispatch mode at all.
+2. Confirm `REDIS_URL` is set and `scripts/agent-queue-verify.mjs`'s D174.* checks pass against the
+   real Redis + Mongo this deployment uses (do this before step 3, not after).
+3. Set `AGENT_DISPATCH_MODE=queue_with_http_fallback` on `orchestrator-agent` first (it has more
+   dispatch call sites — the architect/qa/reviewer/report/memory/documentation-service/
+   internet-research-service delegations in `pipeline.ts` — and every one keeps working via automatic
+   HTTP fallback + an `agent.dispatch.degraded` event if anything about the queue path misbehaves).
+   Watch the dashboard's `/events` feed for that event type; it should not appear under normal
+   operation once Redis is healthy.
+4. Set `AGENT_DISPATCH_MODE=queue_with_http_fallback` on `gateway-api` (its 4 gateway→orchestrator-agent
+   forward points — `POST /v1/tasks` and 3 internal triggers).
+5. After an observation period with no unexpected `agent.dispatch.degraded` events and no
+   `Task.status`/`AgentJobRun.status` inconsistencies (spot-check via `GET /v1/agent-jobs/:jobRunId`
+   against a task's own timeline), optionally move to `queue_only` on one service at a time — this
+   removes the HTTP safety net, so only do this once the queue path has real operational history.
+- **Rollback:** set `AGENT_DISPATCH_MODE=http` (or unset it) and redeploy — no code change, no data
+  migration; `agent_job_runs` rows already written are simply not read by the HTTP path, and vice
+  versa. Safe to roll back independently per-service (gateway-api and orchestrator-agent do not have
+  to be in the same mode).
+- **DLQ operations:** `gateway-api`'s `GET /v1/agent-jobs/dead-letters?serviceId=`,
+  `GET /v1/agent-jobs/:jobRunId`, `POST /v1/agent-jobs/:jobRunId/replay`,
+  `POST /v1/agent-jobs/:jobRunId/cancel` (owner/operator role required — `manage_agent_jobs`
+  permission, blocked in safe mode, every action audited). No new Dokploy app or infrastructure
+  request is needed — this is a route group on the existing `gateway-api` app.
 
 ## aos-agent-runtime cutover (transitional, D-168/D-169)
 
@@ -147,9 +180,12 @@ produced them.
   rate limits (D-167, see above). Safe-mode *enforcement* was already Mongo-backed/cross-instance-
   correct before this; Redis now also gives faster cross-instance safe-mode *notification* via the
   same event fan-out.
-- Redis Streams or a real task queue (BullMQ or equivalent) behind `POST /v1/tasks` — deliberately
-  deferred (D-167): the current Redis work covers pub/sub fan-out only, not a durable/replayable
-  queue, which is a larger, separate step.
+- ~~Redis Streams or a real task queue (BullMQ or equivalent) behind `POST /v1/tasks`.~~ Done (D-173
+  backbone + D-174 producer adoption, see above) — `AGENT_DISPATCH_MODE` still defaults to `http`
+  until the rollout steps above are executed against real infrastructure.
+- Queue-enable the remaining isolated services (`builder-agent`, `devops-agent`, `monitor-agent`,
+  `browser-testing-agent`) — deliberately deferred past D-174; each needs its own
+  security-isolation-aware queue design (D-170), not a blind migration.
 - Redis-backed cross-instance session invalidation (revoke-everywhere) — not yet built.
 - OpenTelemetry traces and metrics.
 - Backup drills, secret rotation drills, rollback rehearsal.

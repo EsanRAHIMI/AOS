@@ -16,6 +16,18 @@ See `docs/agent-map.md` for the full responsibility list.
 - `POST /.factory/task`
 - `GET /.factory/logs`
 
+## Task dispatch (K1 BullMQ, D-173/D-174)
+`REDIS_URL` unset (the default) — this service dispatches and receives every task over HTTP only,
+unchanged from before D-173. Setting `REDIS_URL` additionally starts a BullMQ `Worker` consuming
+`agent-tasks:orchestrator-agent` (wired to the same `handleTask` the HTTP route calls), and —
+independently, gated by `AGENT_DISPATCH_MODE` (`http` default | `queue_with_http_fallback` |
+`queue_only`) — lets `pipeline.ts`'s 12 dispatch calls to the 7 `aos-agent-runtime` consolidated
+workers (architect/qa/reviewer/report/memory/documentation-service/internet-research-service) route
+through BullMQ instead of HTTP, via `dispatchPeerTask`. The 13 dispatch calls to isolated services
+(`builder-agent`/`devops-agent`/`monitor-agent`/`browser-testing-agent`) are unaffected — HTTP only,
+by design (see decision-log D-170/D-174). See `docs/decision-log.md` D-174 and
+`docs/service-communication-protocol.md`'s "Task Dispatch" section for the full design.
+
 ## Environment variables
 See `.env.example` and `docs/environment-variables.md`.
 
@@ -27,8 +39,12 @@ Independently deployable on Dokploy. See `deployment/dokploy/agent-services.md`.
 Root directory: `services/orchestrator-agent` · Port `4102` · Domain `orchestrator.simorx.com`.
 
 ## Current status
-Phase 1 — running skeleton: standard endpoints, persisted agent runs, event
-emission. Domain reasoning logic to be expanded in later phases.
+Standard endpoints, persisted agent runs, event emission, and the full delegation/build/activation/
+repair/strategic/governance/learning/improvement pipelines (`src/pipeline.ts`). K1 BullMQ Producer
+Adoption (D-174) added optional queue-mode dispatch (see above) and this service's first test suite
+(`test/pipeline.dispatch.test.ts`, 3 tests) — `tsc --noEmit`/`vitest run` verified clean.
 
 ## Future improvements
-LLM router integration, tool execution, retries/backoff, richer task planning.
+Broader test coverage (pipeline.ts's other 9 sub-pipelines have no test coverage yet), queue-enable
+the isolated services once a security-isolation-aware queue design exists for them (D-170), richer
+task planning.

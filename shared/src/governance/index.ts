@@ -136,6 +136,8 @@ export const PERMISSION_CATALOG = [
   'run_learning_trigger',
   'github_delivery',
   'manage_security',
+  // K1 BullMQ Producer Adoption (D-174) — DLQ operational surface (replay/cancel).
+  'manage_agent_jobs',
 ] as const;
 export type PermissionId = (typeof PERMISSION_CATALOG)[number];
 
@@ -152,6 +154,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, PermissionId[]> = {
     'run_learning_trigger',
     'view_dashboard',
     'view_evidence',
+    'manage_agent_jobs',
   ],
   viewer: ['view_dashboard', 'view_evidence'],
   agent: [],
@@ -186,6 +189,9 @@ export const DASHBOARD_ACTION_PERMISSIONS: Record<string, PermissionId> = {
   createOperation: 'create_task',
   confirmOperationTarget: 'create_task',
   decideOperation: 'approve_deployment',
+  // K1 BullMQ Producer Adoption (D-174) — DLQ operational surface.
+  replayAgentJob: 'manage_agent_jobs',
+  cancelAgentJob: 'manage_agent_jobs',
 };
 
 /** True when `role` may perform the named sensitive dashboard action. */
