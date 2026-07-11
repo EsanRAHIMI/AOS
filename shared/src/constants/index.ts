@@ -275,6 +275,9 @@ export const COLLECTIONS = {
   JARVIS_MEMORY_FACTS: 'jarvis_memory_facts',
   JARVIS_ANSWER_SCORES: 'jarvis_answer_scores',
   JARVIS_BRIEFINGS: 'jarvis_briefings',
+  // K1 BullMQ Task Queue (D-173) — job-level lifecycle tracking, separate
+  // from the coarser `tasks` collection's status field (see shared/src/queue).
+  AGENT_JOB_RUNS: 'agent_job_runs',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -440,6 +443,15 @@ export const EVENT_TYPES = {
   // operation feed nor any SSE listener could ever observe "approved" or
   // "rejected" as a distinct moment (only the eventual session completion).
   OPERATOR_APPROVAL_DECIDED: 'operator.approval.decided',
+  // K1 BullMQ Task Queue (D-173) — one event per agent_job_runs transition.
+  AGENT_JOB_QUEUED: 'agent.job.queued',
+  AGENT_JOB_CLAIMED: 'agent.job.claimed',
+  AGENT_JOB_STARTED: 'agent.job.started',
+  AGENT_JOB_SUCCEEDED: 'agent.job.succeeded',
+  AGENT_JOB_FAILED: 'agent.job.failed',
+  AGENT_JOB_RETRYING: 'agent.job.retrying',
+  AGENT_JOB_DEAD_LETTERED: 'agent.job.dead_lettered',
+  AGENT_JOB_CANCELLED: 'agent.job.cancelled',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

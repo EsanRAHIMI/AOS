@@ -59,6 +59,27 @@ load balancer, so event fan-out and mutation rate limits stay correct across ins
 - Verify with `REDIS_URL=<url> node scripts/redis-two-instance-check.mjs` before relying on it in
   production with multiple replicas — see the script's own header comment for details.
 
+## BullMQ Task Queue (K1, D-173)
+
+`REDIS_URL` (the same variable used by the Redis Backbone above) is **optional** here too. Unset (the
+default) means `aos-agent-runtime`'s 7 workers run exactly as before D-173 — HTTP `/.factory/task` only,
+identical behavior, zero new required infrastructure. Set it to additionally queue-enable all 7 workers
+in parallel with HTTP (both paths work simultaneously; nothing is removed):
+
+- Provision one reachable Redis instance — the same instance already used for the Redis Backbone can be
+  reused (BullMQ uses its own dedicated connection with different settings, but the same server is fine).
+- Set `REDIS_URL` on the `aos-agent-runtime` app. Optionally tune `AGENT_QUEUE_MAX_ATTEMPTS` (default 3),
+  `AGENT_QUEUE_BACKOFF_MS` (default 2000), `AGENT_QUEUE_CONCURRENCY` (default 4),
+  `AGENT_QUEUE_TIMEOUT_MS` (default 30000) — all optional, all have safe defaults.
+- No orchestrator/gateway changes are required to deploy this — those services keep dispatching over
+  HTTP exactly as before. Adopting the queue for dispatch (rather than just running the consumer side)
+  is a separate, later step per decision-log D-173's rollout plan.
+- Rollback: unset `REDIS_URL` and redeploy — `aos-agent-runtime` falls back to HTTP-only with no code
+  changes and no data loss (`agent_job_runs` holds no state anything else depends on).
+- Verify with `REDIS_URL=<url> MONGODB_URI=<uri> node scripts/agent-queue-verify.mjs` before relying on
+  the queue path in production — see the script's own header comment for the full 15-point check it
+  performs against real Redis + real Mongo.
+
 ## aos-agent-runtime cutover (transitional, D-168/D-169)
 
 **Status: BLOCKED_ON_MANUAL_DEPLOYMENT.** This sandbox has no network path to

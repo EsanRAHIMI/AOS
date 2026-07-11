@@ -65,3 +65,5 @@ export * from './jarvis/index.js';
 export * from './research/index.js';
 // K1 Redis Backbone (D-167)
 export * from './redis/index.js';
+// K1 BullMQ Task Queue (D-173)
+export * from './queue/index.js';

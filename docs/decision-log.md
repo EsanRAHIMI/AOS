@@ -2,6 +2,188 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-11 — K1 BullMQ Task Queue / Reliable Agent Dispatch (D-173)
+
+With K1 consolidation code work declared complete for all safe-to-consolidate
+services (D-168/D-172) and Batch-1 cutover confirmed staying
+`BLOCKED_ON_MANUAL_DEPLOYMENT` (D-169/D-171), the owner explicitly directed
+K1 work to continue with a new workstream: replace the current direct HTTP
+forward-and-forget task dispatch (`PeerClient.dispatchTask` →
+`/.factory/task`) with a production-safe Redis/BullMQ execution backbone,
+additive and non-destructive — Mongo remains the durable system of record,
+HTTP dispatch stays fully functional as a compatibility fallback, and no
+existing caller is rewired this pass.
+
+### Current state (A-C of the required plan)
+
+**A. Dispatch flow.** `gateway-api`'s `POST /v1/tasks` inserts a `Task`
+document (`tasks` collection, status `queued`), then makes one best-effort
+`fetch` to the assigned service's `/.factory/task` via
+`orchestrator-agent`; on failure it logs and leaves the task `queued` — no
+retry. `orchestrator-agent/src/pipeline.ts` makes ~25+ sequential
+`peer.dispatchTask(serviceId, {taskId, goal, input, priority})` calls across
+~10 sub-pipelines (`runResearchPipeline`, `runBuildPipeline`,
+`runDelegationPipeline`, etc.).
+
+**B. Every HTTP dispatch call site.** All routed through
+`shared/src/discovery/index.ts`'s `PeerClient.dispatchTask()` — a plain
+`fetch` POST with a 15s `AbortController` timeout, no retry, no
+idempotency, no dead-letter. Callers: `gateway-api/src/routes/tasks.ts`
+(1 call site) and `orchestrator-agent/src/pipeline.ts` (~25+ call sites).
+
+**C. Mongo task/run state transitions.** `Task.status` (`tasks` collection):
+`queued → planning → awaiting_approval → in_progress → blocked → completed
+→ failed → cancelled` (`shared/src/schemas/task.ts`). `agent_runs`
+(`shared/src/agentrun/index.ts`): `startAgentRun`/`finishAgentRun` bracket a
+single handler invocation. Neither tracks per-dispatch delivery, retry, or
+duplicate-execution state — the gap this workstream fills.
+
+### Target architecture (D-P)
+
+**D-E. Queue architecture / naming.** One BullMQ `Queue` per `serviceId`:
+`agent-tasks:{serviceId}` (`agentQueueName()`). A new Mongo collection,
+`agent_job_runs`, tracks fine-grained per-attempt job lifecycle —
+deliberately separate from `Task.status`, so nothing existing is renamed or
+put at risk.
+
+**F. Worker ownership/concurrency.** One `bullmq` `Worker` per serviceId,
+wired directly to that worker's existing in-process `handleTask` (no HTTP
+hop for the 7 `aos-agent-runtime` workers). Concurrency configurable via
+`AGENT_QUEUE_CONCURRENCY` (default 4).
+
+**G. Retry/backoff.** `AGENT_QUEUE_MAX_ATTEMPTS` (default 3),
+exponential backoff via `AGENT_QUEUE_BACKOFF_MS` (default 2000ms), both
+BullMQ job options.
+
+**H. Idempotency.** Enforced at ENQUEUE time: `enqueueJobRun` checks Mongo
+for an existing non-terminal row with the same `idempotencyKey` (default
+`{serviceId}:{taskId}`) before ever calling `queue.add()`; `jobId:
+idempotencyKey` gives BullMQ's own native dedup as a second layer while the
+original job is still waiting/active/delayed.
+
+**I. Dead-letter.** On BullMQ's `worker.on('failed', ...)`, compares
+`job.attemptsMade` to `job.opts.attempts` to distinguish "will retry"
+(`retrying`) from "exhausted" (`dead_lettered`). `listDeadLetters()`
+inspects; `AgentTaskQueueClient.replayDeadLetter()` re-enqueues with a
+fresh attempt budget.
+
+**J. Cancellation/timeout.** Cancellation is best-effort and honestly
+documented as such: removes the BullMQ job if still waiting/delayed,
+transitions Mongo to `cancelled` — does NOT claim to hard-kill an in-flight
+processor (BullMQ cannot do this without extra infrastructure). Each
+handler invocation is raced against `AGENT_QUEUE_TIMEOUT_MS` (default
+30000ms) via `Promise.race`; a timeout feeds the same retry/backoff/DLQ
+path as any other failure.
+
+**K. Events/audit.** New event types
+`AGENT_JOB_{QUEUED,CLAIMED,STARTED,SUCCEEDED,FAILED,RETRYING,
+DEAD_LETTERED,CANCELLED}`, one per `agent_job_runs` transition, published
+through the same `EventPublisher` each worker already has.
+
+**L. Migration/compatibility.** Additive only. HTTP `/.factory/task`
+remains fully functional and untouched on every service. The 7
+`aos-agent-runtime` workers are queue-enabled when `REDIS_URL` is set;
+`orchestrator-agent/src/pipeline.ts`'s ~25+ HTTP call sites are
+deliberately NOT rewired this pass — deferred to the user's own rollout
+step 7 ("only then classify remaining workers for queue adoption").
+
+**M. Files/packages touched.** `shared/src/queue/index.ts` (new),
+`shared/src/constants/index.ts` (+`AGENT_JOB_RUNS` collection, +8 event
+types), `shared/src/env/index.ts` (+`AgentQueueEnvSchema`),
+`shared/src/index.ts` (+barrel export), `shared/package.json`
+(+`bullmq`), `services/aos-agent-runtime/src/index.ts` (queue-wires all 7
+existing workers), `scripts/agent-queue-verify.mjs` (new).
+
+**N. Tests/verification.** `shared/test/queue.contract.test.ts` (13 tests,
+pure Mongo state-machine, no Redis dependency) — proves enqueue/idempotency/
+claim-guard/retry-vs-dead-letter/cancel transitions in isolation.
+`shared/test/queue.bullmq-integration.contract.test.ts` (5 tests, real
+`bullmq`/Redis, `describe.skipIf(!REDIS_URL)`) — proves two-worker
+no-double-execution, retry-then-succeed, dead-letter-after-exhaustion +
+replay, timeout-as-failure, and idempotent-re-enqueue-is-a-no-op against
+REAL BullMQ/Redis mechanics; correctly SKIPS (not fake-passes) in this
+sandbox's zero-network-egress environment (see D-169/D-171) — `ioredis-mock`
+does not reliably implement the Lua scripts BullMQ depends on internally,
+so faking this tier would produce false confidence, not real proof.
+`scripts/agent-queue-verify.mjs` (new) exercises the same 15-point
+completion standard end to end against real Redis + real Mongo for a human
+(or CI with real services) to run before relying on the queue path in
+production.
+
+**O. Deployment/env.** `REDIS_URL` (reused from D-167's `RedisEnvSchema`,
+still optional) plus 4 new optional vars:
+`AGENT_QUEUE_MAX_ATTEMPTS`/`AGENT_QUEUE_BACKOFF_MS`/
+`AGENT_QUEUE_CONCURRENCY`/`AGENT_QUEUE_TIMEOUT_MS`. `REDIS_URL` unset (the
+default) means `aos-agent-runtime` runs exactly as it did before D-173,
+HTTP-only — no behavior change, no new required infrastructure.
+
+**P. Risks/rollback.** Additive and optional — rollback is reverting the
+commit or simply never setting `REDIS_URL`; no existing HTTP path, schema,
+or contract is touched. Main risk is the stalled-job handoff race BullMQ
+itself documents as at-least-once, not exactly-once; mitigated by the
+Mongo atomic `claimJobRun` guard as a second, independent check (see
+`shared/src/queue/index.ts`'s module doc comment for the full two-guarantee
+design).
+
+### Completion standard — verified against the required 15 items
+
+1. Real BullMQ producer — `AgentTaskQueueClient` (real `bullmq.Queue`,
+   tested in `queue.bullmq-integration.contract.test.ts`).
+2. Real worker consumption path — `createAgentTaskWorker` (real
+   `bullmq.Worker`), wired to all 7 `aos-agent-runtime` workers'
+   existing `handleTask` functions in `services/aos-agent-runtime/
+   src/index.ts`.
+3. Mongo (`agent_job_runs`) remains the durable system of record —
+   `Task.status` untouched.
+4. Explicit lifecycle: `queued/claimed/running/succeeded/failed/
+   retrying/dead_lettered/cancelled` (`AGENT_JOB_STATUSES`).
+5. Idempotency key enforcement — enforced at enqueue time, proven in
+   `queue.contract.test.ts`.
+6. Configurable retry/exponential backoff —
+   `AGENT_QUEUE_MAX_ATTEMPTS`/`AGENT_QUEUE_BACKOFF_MS`.
+7. Per-worker concurrency — `AGENT_QUEUE_CONCURRENCY`.
+8. Timeout handling — `Promise.race` against `AGENT_QUEUE_TIMEOUT_MS`.
+9. Dead-letter inspection/replay — `listDeadLetters`/`replayDeadLetter`.
+10. Events for all meaningful transitions — 8 new `AGENT_JOB_*` event
+    types.
+11. Audit/evidence links preserved — `jobRunId`/`taskId`/`serviceId` on
+    every event and Mongo row.
+12. Honest degraded behavior when Redis unavailable — `enabled: false`,
+    `{enqueued:false, reason:'redis_disabled'}`, never throws.
+13. Compatibility path for current HTTP workers — untouched, unchanged.
+14. Tests proving no double execution across two worker instances —
+    `queue.contract.test.ts`'s claim-guard test (pure logic) +
+    `queue.bullmq-integration.contract.test.ts`'s two-real-worker test
+    (gated on real Redis).
+15. Tests proving retry/failure/timeout/dead-letter/idempotency — both
+    test files, itemized above.
+
+### Honesty note on verification tier
+
+This sandbox has no network egress at all (confirmed against a neutral
+control target, not just this project's own infrastructure — see D-169,
+D-171). `queue.bullmq-integration.contract.test.ts`'s 5 real-Redis tests
+and `scripts/agent-queue-verify.mjs` were both written as genuine, complete
+implementations that WOULD run and prove the guarantees against a real
+Redis + Mongo, but both correctly report their gated/blocked status in
+this environment rather than fabricating a pass. The 13 pure-logic Mongo
+tests in `queue.contract.test.ts` pass for real, with zero Redis
+dependency, and independently prove the state-machine/idempotency/claim-
+guard contracts that the BullMQ layer is built on top of.
+
+**Operational status: code-complete, additive, HTTP-compatible. Queue path
+is NOT yet exercised against real Redis in this environment — run
+`scripts/agent-queue-verify.mjs` against real infrastructure before
+depending on it in production.** No orchestrator/gateway call sites were
+rewired; HTTP dispatch remains the live production path unchanged.
+
+Scope: `shared/src/{queue/index.ts (new), constants/index.ts, env/index.ts,
+index.ts}`, `shared/package.json`, `shared/test/{queue.contract.test.ts
+(new), queue.bullmq-integration.contract.test.ts (new)}`,
+`services/aos-agent-runtime/src/index.ts`, `scripts/agent-queue-verify.mjs`
+(new), `docs/{decision-log.md, phase-log.md, deployment-plan.md,
+environment-variables.md}`.
+
 ## 2026-07-11 — K1 Consolidation Prep Batch 2A: documentation-service, memory-agent, internet-research-service — Code-Level Candidate (D-172)
 
 With D-171 confirming Batch-1 cutover stays `BLOCKED_ON_MANUAL_DEPLOYMENT`

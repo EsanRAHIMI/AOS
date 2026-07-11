@@ -3637,3 +3637,56 @@ and unaffected by this phase).
 Scope: `services/{documentation-service,memory-agent,internet-research-service}/*` (server.ts split +
 tests), `services/aos-agent-runtime/*` (3 new workers, index.ts, batch2a test, README, .env.example,
 package.json), `docs/{decision-log.md (D-172), phase-log.md, service-map.md, dokploy-setup.md}`.
+
+## Phase K1 BullMQ Task Queue / Reliable Agent Dispatch (2026-07-11)
+
+**Goal:** with K1 consolidation code work declared complete and Batch-1 cutover still
+`BLOCKED_ON_MANUAL_DEPLOYMENT`, owner directed the next K1 workstream: replace direct HTTP
+forward-and-forget task dispatch with a production-safe Redis/BullMQ execution backbone — additive,
+non-destructive, Mongo remains the system of record, HTTP dispatch stays as a compatibility fallback.
+
+**Built:** `shared/src/queue/index.ts` (new) — `AgentJobRun` Mongo state machine
+(`queued/claimed/running/succeeded/failed/retrying/dead_lettered/cancelled`), a real BullMQ producer
+(`AgentTaskQueueClient`, one `Queue` per `serviceId`, idempotency-key enforced at enqueue time), and a
+real BullMQ consumer factory (`createAgentTaskWorker`) with a two-layer double-execution guard (BullMQ's
+own Redis-lock delivery, plus a Mongo atomic `claimJobRun` as a second guard for BullMQ's documented
+at-least-once stalled-job-handoff edge case). All 7 `aos-agent-runtime` workers (Batch 1 + Batch 2A)
+wired to their own queue, each still processing through their EXISTING `handleTask` — the same function
+HTTP `/.factory/task` already calls. `REDIS_URL` unset (the default) means zero behavior change from
+before this phase.
+
+**Tests:** `shared/test/queue.contract.test.ts` (13 tests, pure Mongo logic, no Redis) proves the state
+machine, idempotent-enqueue, double-claim-guard, and retry-vs-dead-letter transitions in isolation —
+all passing. `shared/test/queue.bullmq-integration.contract.test.ts` (5 tests, real `bullmq`/Redis,
+`describe.skipIf(!REDIS_URL)`) proves two-worker no-double-execution, retry-then-succeed,
+dead-letter-after-exhaustion + replay, timeout-as-failure, and idempotent-re-enqueue against REAL
+BullMQ mechanics — correctly SKIPS, not fake-passes, in this sandbox's zero-network-egress environment
+(same condition documented in D-169/D-171). `scripts/agent-queue-verify.mjs` (new) — a genuine,
+runnable end-to-end check against real Redis + real Mongo, following the same honest-attempt pattern as
+`scripts/redis-two-instance-check.mjs`; exits with a clear "REDIS_URL not set" failure in this sandbox
+rather than fabricating a pass.
+
+**Sandbox note:** while re-verifying the consolidated `aos-agent-runtime` wiring after this phase's
+edits, the sandbox's local build copy's `node_modules` was found in a partially-linked state
+(package content present in the pnpm virtual store, but some top-level symlinks missing) after an
+offline `pnpm install` attempt failed part-way through due to the same zero-network-egress condition —
+repaired by manually reconstructing the needed symlinks from the already-resolved virtual store rather
+than requiring network access. `shared` (158/158 non-gated tests + typecheck + build), `service-kit`
+(typecheck + build), and `aos-agent-runtime` (45/45 tests + typecheck, all 7 workers) all verified green
+afterward. This was a sandbox-local build-cache issue only — no source files were affected, and the
+mounted repository (the actual deliverable) was never touched by the broken install attempts.
+
+**What did NOT happen:** no orchestrator/gateway call sites rewired to the queue (deferred per the
+owner's own rollout step 7 — "only then classify remaining workers for queue adoption"); no HTTP
+dispatch path removed or altered; no additional service consolidation; no K2 agent loop; no Jarvis/UI
+changes; no production deployment or Dokploy change.
+
+**Operational status: code-complete, additive, HTTP-compatible. Not yet exercised against real
+Redis/Mongo in this environment** — `scripts/agent-queue-verify.mjs` must be run against real
+infrastructure before the queue path is relied on in production.
+
+Scope: `shared/src/{queue/index.ts (new), constants/index.ts, env/index.ts, index.ts}`,
+`shared/package.json`, `shared/test/{queue.contract.test.ts (new),
+queue.bullmq-integration.contract.test.ts (new)}`, `services/aos-agent-runtime/src/index.ts`,
+`scripts/agent-queue-verify.mjs` (new), `docs/{decision-log.md (D-173), phase-log.md,
+deployment-plan.md, environment-variables.md}`.

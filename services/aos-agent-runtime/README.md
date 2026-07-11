@@ -117,6 +117,19 @@ Same as the 7 original services combined: `gateway-api`, `event-bus-service`,
 (declared per-worker in each `src/workers/*.ts` manifest, unchanged from the
 originals).
 
+## Task queue (K1 BullMQ, D-173, optional)
+
+`REDIS_URL` unset (the default) means all 7 workers process tasks over HTTP
+`/.factory/task` only — identical to before this feature existed. Setting
+`REDIS_URL` additionally starts one `bullmq` `Worker` per worker (queue
+`agent-tasks:{serviceId}`), each processing through that worker's SAME
+`handleTask` function the HTTP route already calls — both paths work in
+parallel, nothing is removed. See `docs/decision-log.md` D-173,
+`docs/deployment-plan.md`'s "BullMQ Task Queue" section, and
+`scripts/agent-queue-verify.mjs` for a real-Redis+Mongo end-to-end check.
+No orchestrator/gateway call site has been rewired to dispatch through the
+queue yet — this pass only builds and proves the consumer side.
+
 ## Deployment
 
 Not yet deployed. Batch 1: **BLOCKED_ON_MANUAL_DEPLOYMENT (D-169/D-171)** —

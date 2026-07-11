@@ -91,6 +91,20 @@ export const RedisEnvSchema = z.object({
   REDIS_KEY_PREFIX: z.string().optional().default('factory:'),
 });
 
+/**
+ * K1 BullMQ Task Queue (D-173). Optional, not required — reuses `REDIS_URL`
+ * from `RedisEnvSchema` (queue workers only start when it's set; unset means
+ * `aos-agent-runtime` runs HTTP-only, identical to before this workstream).
+ * These four control retry/backoff/concurrency/timeout for the BullMQ
+ * `Worker`s only — they have no effect when `REDIS_URL` is unset.
+ */
+export const AgentQueueEnvSchema = z.object({
+  AGENT_QUEUE_MAX_ATTEMPTS: z.coerce.number().int().positive().optional().default(3),
+  AGENT_QUEUE_BACKOFF_MS: z.coerce.number().int().positive().optional().default(2000),
+  AGENT_QUEUE_CONCURRENCY: z.coerce.number().int().positive().optional().default(4),
+  AGENT_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(30000),
+});
+
 export const S3EnvSchema = z.object({
   AWS_ACCESS_KEY_ID: z.string().min(1),
   AWS_SECRET_ACCESS_KEY: z.string().min(1),

@@ -20,6 +20,10 @@ fail fast with a readable error. Real secrets are never committed.
 | `LOG_LEVEL` | pino log level |
 | `REDIS_URL` | K1 Redis Backbone (D-167). Only read by `gateway-api` and `event-bus-service`. Default `''` (unset) = local/single-instance mode — event fan-out and rate limiting stay in-process, byte-identical to pre-D-167 behavior. Set to a real, reachable Redis URL (e.g. `redis://host:6379`) to make event fan-out and rate limits cross-instance-correct across N replicas behind one load balancer. Must be the **same** Redis for both services — they share one backbone. Never crashes the service if unreachable; degrades to local behavior with one throttled warning log. |
 | `REDIS_KEY_PREFIX` | default `factory:`. Namespaces all keys/channels this backbone writes, so one Redis instance can safely be shared with other, unrelated key spaces if needed. |
+| `AGENT_QUEUE_MAX_ATTEMPTS` | K1 BullMQ Task Queue (D-173). Default `3`. Only read by `aos-agent-runtime`'s BullMQ workers (reuses `REDIS_URL` above — unset means these workers simply don't start, HTTP-only, unchanged from pre-D-173 behavior). Max delivery attempts per job before it's marked `dead_lettered`. |
+| `AGENT_QUEUE_BACKOFF_MS` | default `2000`. Base exponential backoff delay (ms) between retry attempts. |
+| `AGENT_QUEUE_CONCURRENCY` | default `4`. Max jobs a single worker instance processes concurrently, per serviceId queue. |
+| `AGENT_QUEUE_TIMEOUT_MS` | default `30000`. A handler invocation slower than this is treated as a failure and feeds the same retry/backoff/dead-letter path as any other error. |
 
 ## Data and Assets
 
