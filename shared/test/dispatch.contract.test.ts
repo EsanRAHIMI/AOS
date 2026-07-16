@@ -202,3 +202,61 @@ describe('dispatchViaQueueOrHttp — waitForCompletion (synchronous-style dispat
     expect(publish).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ reason: 'job_run_wait_timeout' }) }));
   }, 2000);
 });
+
+describe('dispatchViaQueueOrHttp — bounded enqueue (mid-run Redis outage)', () => {
+  // BullMQ's required `maxRetriesPerRequest: null` makes ioredis buffer
+  // commands FOREVER while Redis is down, so enqueue() hangs rather than
+  // rejects. These prove the enqueueTimeoutMs bound (found by
+  // agent-queue-e2e-verify.mjs E2E.6: gateway stopped answering after Redis
+  // was killed mid-run).
+
+  it('an enqueue that never settles degrades to HTTP after enqueueTimeoutMs', async () => {
+    const { db } = createFakeDb();
+    setTestDb(db);
+    const queueClient = fakeQueueClient(() => new Promise(() => undefined)); // hangs forever, like ioredis buffering
+    const publish = vi.fn().mockResolvedValue(true);
+    const httpDispatch = vi.fn().mockResolvedValue(httpOk);
+    const out = await dispatchViaQueueOrHttp({
+      serviceId: 'architect-agent', body, mode: 'queue_with_http_fallback', queueClient,
+      httpDispatch, publish, enqueueTimeoutMs: 50,
+    });
+    expect(out.dispatchMode).toBe('http_fallback');
+    expect(httpDispatch).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ reason: 'enqueue_timeout' }) }));
+  }, 2000);
+
+  it('queue_only mode fails loudly (never HTTP) when the enqueue times out', async () => {
+    const { db } = createFakeDb();
+    setTestDb(db);
+    const queueClient = fakeQueueClient(() => new Promise(() => undefined));
+    const httpDispatch = vi.fn();
+    const out = await dispatchViaQueueOrHttp({
+      serviceId: 'architect-agent', body, mode: 'queue_only', queueClient,
+      httpDispatch, enqueueTimeoutMs: 50,
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe('enqueue_timeout');
+    expect(httpDispatch).not.toHaveBeenCalled();
+  }, 2000);
+
+  it('a LATE-settling enqueue (Redis came back after the fallback) has its job run cancelled — no double execution', async () => {
+    const { db } = createFakeDb();
+    setTestDb(db);
+    let settleLate: (r: EnqueueResult) => void = () => undefined;
+    const cancel = vi.fn().mockResolvedValue(null);
+    const queueClient = {
+      enabled: true,
+      enqueue: vi.fn(() => new Promise<EnqueueResult>((resolve) => { settleLate = resolve; })),
+      cancel,
+    } as unknown as AgentTaskQueueClient;
+    const httpDispatch = vi.fn().mockResolvedValue(httpOk);
+    const out = await dispatchViaQueueOrHttp({
+      serviceId: 'architect-agent', body, mode: 'queue_with_http_fallback', queueClient,
+      httpDispatch, enqueueTimeoutMs: 50,
+    });
+    expect(out.dispatchMode).toBe('http_fallback'); // HTTP already delivered the work
+    settleLate({ enqueued: true, duplicate: false, jobRunId: 'jr_late', bullJobId: 'b_late' });
+    await new Promise((r) => setTimeout(r, 20)); // let the abandon-late-enqueue hook run
+    expect(cancel).toHaveBeenCalledWith('architect-agent', 'jr_late');
+  }, 2000);
+});

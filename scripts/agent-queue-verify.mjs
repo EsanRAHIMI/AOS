@@ -7,9 +7,10 @@
  * (enqueue/claim/run/succeed/fail/retry/dead-letter/cancel) against a fake
  * db, with no BullMQ dependency. shared/test/queue.bullmq-integration.
  * contract.test.ts contains the real-BullMQ proofs but is gated on
- * `describe.skipIf(!REDIS_URL)` and correctly SKIPS in this sandbox, which
- * has no network egress at all (see decision-log D-169, D-171 — confirmed
- * against a neutral control target, not just this project's own infra).
+ * `describe.skipIf(!REDIS_URL)` and SKIPS wherever no Redis is reachable
+ * (see decision-log D-169, D-171). First executed for real on 2026-07-17
+ * against Redis 7.4.2 + MongoDB 4.4.6 — 16/16 checks passed after the
+ * BullMQ ':'-rejection fixes (see shared/src/queue/index.ts).
  * shared/test/dispatch.contract.test.ts proves dispatchViaQueueOrHttp's mode
  * branching against a fake queue client — this script is the real-Redis
  * counterpart for that helper (D-174 section below), same reason: a fake
@@ -156,9 +157,20 @@ async function main() {
     workers.push(worker);
     const out = await client.enqueue(serviceId, { taskId: 'slow-1', goal: 'g', input: {}, priority: 'normal' });
     if (out.jobRunId) jobRunIds.push(out.jobRunId);
-    await wait(1500);
-    const run = out.jobRunId ? await getJobRun(out.jobRunId) : null;
-    record('8. a handler slower than the configured timeout is treated as a failure', run?.status === 'retrying' || run?.status === 'dead_lettered', `status=${run?.status}`);
+    // Poll instead of sampling one instant: with timeoutMs=300, maxAttempts=3
+    // and exponential backoff (200/400ms), the run legitimately passes back
+    // through 'running' between attempts — a fixed 1500ms sleep lands mid-
+    // attempt and misreads correct retry behavior as a failure. Timeout-as-
+    // failure is proven by attempts>0 (a timeout consumed an attempt) or a
+    // retrying/dead_lettered status, whichever is observed first.
+    let run = null;
+    let sawTimeoutFailure = false;
+    for (let i = 0; i < 25 && !sawTimeoutFailure; i += 1) {
+      await wait(200);
+      run = out.jobRunId ? await getJobRun(out.jobRunId) : null;
+      sawTimeoutFailure = run?.status === 'retrying' || run?.status === 'dead_lettered' || (run?.attempts ?? 0) > 0;
+    }
+    record('8. a handler slower than the configured timeout is treated as a failure', sawTimeoutFailure, `status=${run?.status} attempts=${run?.attempts}`);
   }
 
   // --- 14. two worker instances never double-execute the same job ----------

@@ -57,7 +57,7 @@ import { runPipeline, runBuildPipeline } from './pipeline.js';
 // REDIS_URL unset (the default) means the BullMQ Worker started in main()
 // below simply doesn't start — this process runs exactly as it did before
 // D-174, HTTP-`/.factory/task`-only. Setting REDIS_URL additionally starts
-// one Worker consuming the `agent-tasks:orchestrator-agent` queue, calling
+// one Worker consuming the `agent-tasks.orchestrator-agent` queue, calling
 // the SAME `handleTask` the HTTP route already calls — both paths work in
 // parallel. This is what lets gateway-api's dispatchTaskToOrchestrator
 // (server.ts) actually deliver queued work somewhere; see decision-log D-174.
@@ -216,7 +216,11 @@ async function main(): Promise<void> {
     handler: handleTask,
     ctx: service.ctx,
     concurrency: env.AGENT_QUEUE_CONCURRENCY,
-    timeoutMs: env.AGENT_QUEUE_TIMEOUT_MS,
+    // AGENT_JOB_TIMEOUT_MS, NOT AGENT_QUEUE_TIMEOUT_MS: this handler is the
+    // whole pipeline, which itself queue-waits on peers for up to
+    // AGENT_QUEUE_TIMEOUT_MS each — its own execution budget must be the
+    // larger, independent knob (see AgentQueueEnvSchema).
+    timeoutMs: env.AGENT_JOB_TIMEOUT_MS,
     publish: (e) => service.ctx.publisher.publish(e),
   });
   if (queueHandle.enabled) {

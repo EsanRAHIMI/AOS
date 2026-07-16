@@ -3752,3 +3752,65 @@ agent-jobs.ts (new)}}`, `services/gateway-api/test/characterization.agent-jobs.t
 `services/orchestrator-agent/test/pipeline.dispatch.test.ts` (new), `scripts/agent-queue-verify.mjs`,
 `docs/{decision-log.md (D-174), phase-log.md, service-communication-protocol.md, deployment-plan.md,
 environment-variables.md}`.
+
+## Phase K1 BullMQ — Static Verification Pass (2026-07-17, D-175)
+
+Owner directed a full local Redis/BullMQ verification via Docker Desktop, with real tests run and any
+bugs fixed, not just documented. Investigation confirmed two structural sandbox blockers (background
+processes don't survive across separate tool invocations; the real `MONGODB_URI` Atlas cluster is
+unreachable — DNS-SRV fails, no local `mongod` obtainable) — sharper restatement of D-169/D-171/D-173's
+already-documented "zero network egress," not a new regression. Owner chose to proceed static-only:
+fix what's real and verifiable, do not claim what didn't run.
+
+**Two real, previously-undetected bugs found and fixed:** (1) `bullmq`/`ioredis` were declared in
+`shared/package.json` but never actually installed in the repo's `node_modules` — `tsc` failed with
+`TS2307` on both. A real `pnpm install` (scoped to the 6 affected packages) fixed it —
+`bullmq@5.80.5`/`ioredis@5.11.1` now resolve. (2) `scripts/check-scope-boundary.mjs` failed:
+`shared/src/queue/index.ts` makes 12 raw `collection()` calls outside `shared/src/db`. `AgentJobRun` has
+no scope/tenant fields — same global-kernel-state rationale as the existing `agentrun/index.ts`
+allowlist entry — so it was added to `SHARED_DB_ALLOWED` rather than migrated onto
+`scopedCollection(ctx)`, which would be architecturally wrong for non-human-scoped data.
+
+**Also fixed:** `.env.example` was missing `REDIS_URL`/`REDIS_KEY_PREFIX` (D-167) and the 5
+`AGENT_QUEUE_*`/`AGENT_DISPATCH_MODE` vars (D-173/D-174) — fully documented in
+`docs/environment-variables.md` but never added to the actual template. Added; `sync-local-env.mjs`
+already propagates them with no script change needed.
+
+**Full regression, all real, all green:** `shared` (typecheck/build clean, 170/170 tests passed + 5
+correctly skipped — the real-Redis tier, honest `skipIf`, not faked), `packages/service-kit`
+(typecheck/build clean — was also silently broken by the same missing-deps issue),
+`gateway-api` (clean, 254/254), `orchestrator-agent` (clean, 3/3), `aos-agent-runtime` (clean, 45/45),
+`event-bus-service` (clean, no test script). `scripts/check-scope-boundary.mjs` passes clean.
+
+**What did NOT run, honestly:** the 5 real-Redis BullMQ integration tests, `scripts/agent-queue-
+verify.mjs`'s 20 checks, and the full gateway→queue→worker E2E flow (all 13 owner-specified cases) —
+blocked by the environment finding above, not skipped by choice. Exact commands for the owner to run
+these for real on their own machine added to `docs/deployment-plan.md` → "K1 BullMQ — Local Real-Infra
+Verification." No commit made this session — the owner's own gate (real-Redis tests + E2E green before
+committing) was not met.
+
+Scope: `.env.example`, `scripts/check-scope-boundary.mjs`, `docs/{decision-log.md (D-175), phase-log.md,
+deployment-plan.md}`. No `shared/src` or `services/*/src` business logic changed — the D-173/D-174
+queue implementation itself needed no code fix, only the two repo-state gaps above.
+
+## Phase K1 BullMQ — Real-Infra Verification COMPLETE (2026-07-17, D-176)
+
+The gate D-175 could not meet was met this session. Full detail in
+decision-log D-176; summary:
+
+- Real Redis 7.4.2 (compiled from the GitHub source mirror) + real mongod
+  4.4.6 (owner-approved throwaway, sandbox-only; Atlas unchanged as the
+  production data layer, but allowlist-blocked from the sandbox).
+- BullMQ integration suite 5/5 PASSED un-skipped; `agent-queue-verify.mjs`
+  16/16 PASSED; NEW `scripts/agent-queue-e2e-verify.mjs` 7/7 PASSED (real
+  4-service stack: queue consumption, timeline lifecycle events, live HTTP
+  cancel, mid-run Redis-outage degrade to HTTP within ~3.6s).
+- 4 real bugs fixed: BullMQ v5 ':'-rejection in queue names AND job ids;
+  indefinite dispatch stall on mid-run Redis outage (now bounded by
+  `enqueueTimeoutMs` + late-enqueue cancellation); worker job-timeout
+  decoupled from producer queue-wait (`AGENT_JOB_TIMEOUT_MS`).
+- After fixes: shared 175/175, gateway-api 254/254, orchestrator 3/3,
+  architect 9/9, service-kit 3/3, typechecks clean, scope boundary clean.
+- K1 Queue is operationally complete at the queue tier and the service tier.
+  Remaining production gate: re-run both verify scripts against Atlas + the
+  production Redis from the owner's machine (commands in deployment-plan).

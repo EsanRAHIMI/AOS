@@ -104,6 +104,17 @@ export const AgentQueueEnvSchema = z.object({
   AGENT_QUEUE_CONCURRENCY: z.coerce.number().int().positive().optional().default(4),
   AGENT_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(30000),
   /**
+   * Job-EXECUTION timeout for a service's own BullMQ Worker (how long its
+   * handler may run), deliberately separate from AGENT_QUEUE_TIMEOUT_MS
+   * (how long a PRODUCER waits for a downstream job before degrading to
+   * HTTP). The orchestrator's handler is a pipeline that itself performs
+   * queue-waits on peers — if one env var governed both (the original
+   * K1 D-174 wiring), any pipeline with a couple of sequential peer waits
+   * would exceed its own job timeout, get retried by BullMQ, and re-run the
+   * pipeline. Found by scripts/agent-queue-e2e-verify.mjs.
+   */
+  AGENT_JOB_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(120000),
+  /**
    * K1 BullMQ Producer Adoption (D-174). Default `http` is BYTE-IDENTICAL to
    * pre-D-174 behavior — the queue producer code path is not even attempted.
    * `queue_with_http_fallback` tries the queue first and falls back to HTTP

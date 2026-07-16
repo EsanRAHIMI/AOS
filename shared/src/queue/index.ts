@@ -73,11 +73,28 @@ export interface AgentJobRun {
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
 export function agentQueueName(serviceId: string): string {
-  return `agent-tasks:${serviceId}`;
+  // BullMQ v5 rejects queue names containing ':' (it is BullMQ's own Redis
+  // key separator — `bull:<name>:<id>`), so the serviceId is joined with '.'
+  // instead. Caught by the first real-Redis run of the D-173 integration
+  // suite; the fake-db tier could never see this because the validation
+  // lives in BullMQ's Queue/Worker constructors.
+  return `agent-tasks.${serviceId}`;
 }
 
 export function defaultIdempotencyKey(serviceId: string, taskId: string | null | undefined): string {
   return `${serviceId}:${taskId ?? genId('adhoc')}`;
+}
+
+/**
+ * BullMQ v5 rejects custom job ids containing ':' (its own Redis key
+ * separator). The idempotencyKey remains the domain-level identity stored in
+ * Mongo verbatim; this deterministic mapping is applied ONLY at the BullMQ
+ * boundary (enqueue/replay jobIds), so the same key always yields the same
+ * jobId and BullMQ's jobId-dedup guarantee is preserved. Caught by the first
+ * real-Redis run of the D-173 integration suite (`Custom Id cannot contain :`).
+ */
+export function toBullJobId(idempotencyKey: string): string {
+  return idempotencyKey.replaceAll(':', '.');
 }
 
 /**
@@ -320,13 +337,13 @@ export class AgentTaskQueueClient {
     if (outcome.duplicate) return { enqueued: false, duplicate: true, jobRunId: outcome.jobRunId, bullJobId: null, reason: 'duplicate_idempotency_key' };
 
     const job = await this.queueFor(serviceId).add('task', taskRequest, {
-      jobId: outcome.idempotencyKey,
+      jobId: toBullJobId(outcome.idempotencyKey),
       attempts: this.maxAttempts,
       backoff: { type: 'exponential', delay: this.backoffMs },
       removeOnComplete: { age: 24 * 3600 },
       removeOnFail: false, // keep failed jobs for DLQ inspection until explicitly replayed
     });
-    await recordBullJobId(outcome.jobRunId, job.id ?? outcome.idempotencyKey);
+    await recordBullJobId(outcome.jobRunId, job.id ?? toBullJobId(outcome.idempotencyKey));
     return { enqueued: true, duplicate: false, jobRunId: outcome.jobRunId, bullJobId: job.id ?? null };
   }
 
@@ -369,11 +386,11 @@ export class AgentTaskQueueClient {
     );
     // Fresh BullMQ jobId (the original may still be retained for DLQ history) — same idempotencyKey, new attempt.
     const job = await this.queueFor(serviceId).add('task', { taskId: run.taskId, goal: '', input: {}, priority: 'normal' } as TaskRequest, {
-      jobId: `${run.idempotencyKey}:replay:${genId('r')}`,
+      jobId: toBullJobId(`${run.idempotencyKey}.replay.${genId('r')}`),
       attempts: this.maxAttempts,
       backoff: { type: 'exponential', delay: this.backoffMs },
     });
-    await recordBullJobId(jobRunId, job.id ?? run.idempotencyKey);
+    await recordBullJobId(jobRunId, job.id ?? toBullJobId(run.idempotencyKey));
     return { enqueued: true, duplicate: false, jobRunId, bullJobId: job.id ?? null };
   }
 
@@ -427,7 +444,7 @@ export function createAgentTaskWorker<TCtx>(opts: CreateAgentTaskWorkerOptions<T
   const publish = opts.publish;
 
   const processor = async (job: Job): Promise<unknown> => {
-    // BullMQ's jobId IS our idempotencyKey (see AgentTaskQueueClient.enqueue),
+    // BullMQ's jobId is `toBullJobId(idempotencyKey)` (see AgentTaskQueueClient.enqueue),
     // but the AgentJobRun row is looked up by matching bullJobId, since the
     // worker only has the BullMQ job, not the jobRunId directly.
     const run = await collection<AgentJobRun>(COLLECTIONS.AGENT_JOB_RUNS).findOne({ bullJobId: job.id ?? '' });

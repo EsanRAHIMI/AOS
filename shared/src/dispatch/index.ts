@@ -63,7 +63,21 @@ export interface DispatchViaQueueOrHttpArgs<T = Record<string, unknown>> {
    *  back to HTTP — the caller (gateway/orchestrator) uses this to publish
    *  AGENT_DISPATCH_DEGRADED, satisfying "never a silent fallback". */
   publish?: Publish;
+  /**
+   * Upper bound on the enqueue call itself (default 3000ms). BullMQ's
+   * connection is deliberately configured with `maxRetriesPerRequest: null`
+   * (required by BullMQ), which means ioredis buffers commands FOREVER while
+   * Redis is unreachable — so `queue.add()` never rejects on outage, it just
+   * hangs. Without this bound, a mid-run Redis outage turns every
+   * queue-capable dispatch into an indefinite stall instead of an HTTP
+   * fallback. Found by scripts/agent-queue-e2e-verify.mjs E2E.6 (gateway
+   * stopped answering POST /v1/tasks after Redis was killed).
+   */
+  enqueueTimeoutMs?: number;
 }
+
+/** Sentinel for a timed-out enqueue — never a valid EnqueueResult. */
+const ENQUEUE_TIMED_OUT = Symbol('enqueue_timed_out');
 
 function jobRunToDispatchResult<T>(run: AgentJobRun): PeerDispatchResult<T> {
   if (run.status === 'succeeded') return { ok: true, status: 200, data: run.result as T };
@@ -112,7 +126,30 @@ export async function dispatchViaQueueOrHttp<T = Record<string, unknown>>(
   }
 
   try {
-    const enq = await queueClient.enqueue(serviceId, body);
+    // Bounded enqueue (see enqueueTimeoutMs doc comment above): the enqueue
+    // promise itself may still settle long after Redis comes back — if it
+    // does land after we've already fallen back to HTTP, cancel the late
+    // job run so a worker never re-executes work HTTP already delivered.
+    const enqueueTimeoutMs = args.enqueueTimeoutMs ?? 3000;
+    const enqueuePromise = queueClient.enqueue(serviceId, body);
+    const raced = await Promise.race([
+      enqueuePromise,
+      new Promise<typeof ENQUEUE_TIMED_OUT>((resolve) => {
+        const t = setTimeout(() => resolve(ENQUEUE_TIMED_OUT), enqueueTimeoutMs);
+        (t as unknown as { unref?: () => void }).unref?.();
+      }),
+    ]);
+    if (raced === ENQUEUE_TIMED_OUT) {
+      void enqueuePromise
+        .then((late) => {
+          if (late.enqueued && late.jobRunId) return queueClient.cancel(serviceId, late.jobRunId);
+          return null;
+        })
+        .catch(() => undefined);
+      if (mode === 'queue_only') return { ok: false, status: 0, error: 'enqueue_timeout', dispatchMode: 'queue' };
+      return degradeToHttp<T>(args, 'enqueue_timeout');
+    }
+    const enq = raced;
 
     if (!enq.enqueued && !enq.duplicate) {
       if (mode === 'queue_only') return { ok: false, status: 0, error: enq.reason ?? 'enqueue_failed', dispatchMode: 'queue' };

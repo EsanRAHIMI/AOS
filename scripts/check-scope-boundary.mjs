@@ -60,6 +60,14 @@ const SHARED_DB_ALLOWED = new Set([
   // schemas/scope.ts header). Pre-existing, unrelated to K1.4b; allowlisted
   // rather than silently ignored.
   'shared/src/agentrun/index.ts',
+  // Same rationale, K1 BullMQ Task Queue (D-173): agent_job_runs tracks
+  // per-attempt queue/job lifecycle (jobRunId/serviceId/idempotencyKey/
+  // status/attempts) — no scope/tenant fields exist on AgentJobRun, it is
+  // global kernel state exactly like agent_runs above, not human-scoped
+  // data that belongs behind scopedCollection(ctx). Discovered as a real
+  // scope-boundary-check failure during the K1 queue static-verification
+  // pass (see decision-log) and allowlisted here rather than migrated.
+  'shared/src/queue/index.ts',
 ]);
 
 function walk(dir, exts, skipDirs) {

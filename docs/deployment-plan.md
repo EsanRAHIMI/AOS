@@ -113,6 +113,66 @@ dispatch paths mode-aware via `AGENT_DISPATCH_MODE` (`http` default | `queue_wit
   permission, blocked in safe mode, every action audited). No new Dokploy app or infrastructure
   request is needed — this is a route group on the existing `gateway-api` app.
 
+### K1 BullMQ — Local Real-Infra Verification (D-175)
+
+The sandbox this project is normally developed in has no path to real Redis/Mongo (see D-175) — run
+these on your own machine before relying on the queue path anywhere. Uses a disposable Mongo database
+name (`agent_queue_verify`) on your real cluster so nothing touches production data; the script deletes
+every row it inserts on exit either way.
+
+```bash
+# 1. Real Redis via Docker Desktop (already running per your setup)
+docker run -d --name aos-redis -p 6379:6379 redis:7-alpine
+docker exec aos-redis redis-cli ping   # expect: PONG
+
+# 2. Point REDIS_URL + AGENT_DISPATCH_MODE at it, then re-sync into every service's local .env
+#    (edit the root .env — never .env.example — then:)
+pnpm sync:env
+
+# 3. Run the real-Redis BullMQ integration tests (5 tests, shared/test/queue.bullmq-integration.contract.test.ts)
+REDIS_URL=redis://127.0.0.1:6379 pnpm --filter @factory/shared test
+
+# 4. Run the 20-point real Redis + real Mongo verification script
+REDIS_URL=redis://127.0.0.1:6379 \
+MONGODB_URI="<your real MONGODB_URI from .env>" \
+MONGODB_DB_NAME=agent_queue_verify \
+node scripts/agent-queue-verify.mjs
+
+# 5. Full E2E flow: start the real stack, then create a task through gateway-api and watch it
+#    move through the queue.
+pnpm dev:all   # starts every LOCAL_SERVICES entry (service-registry, event-bus, gateway-api,
+               # orchestrator-agent, etc.) per scripts/local-services.mjs, in order
+
+# In a second terminal, with aos-agent-runtime NOT started via dev:all by default (see the
+# LOCAL_SERVICES comment in scripts/local-services.mjs — it shares ports with the 4 standalone
+# agents it's meant to replace). To exercise the real BullMQ worker path, stop architect-agent
+# first, then:
+cd services/aos-agent-runtime && pnpm dev
+
+# Create a task and watch it move through the queue:
+curl -X POST http://localhost:4101/v1/tasks \
+  -H "Content-Type: application/json" \
+  -H "x-factory-admin-token: <FACTORY_ADMIN_TOKEN>" \
+  -d '{"serviceId":"architect-agent","goal":"design something","input":{}}'
+# -> note the returned jobRunId, then:
+curl http://localhost:4101/v1/agent-jobs/<jobRunId> -H "x-factory-admin-token: <FACTORY_ADMIN_TOKEN>"
+# status should move queued -> claimed -> running -> succeeded; check GET /v1/events for the
+# AGENT_JOB_* trail and confirm no unexpected agent.dispatch.degraded.
+```
+
+**Required test cases to exercise manually against this real stack** (per the owner's own checklist —
+none of these were run in the sandbox this pass, D-175): successful queued execution; two workers
+racing the same job (start `aos-agent-runtime` twice with different `SERVICE_PORT`s pointed at the same
+queue) never double-execute; a handler that fails once then succeeds proves retry; a handler slower
+than `AGENT_QUEUE_TIMEOUT_MS` proves timeout-as-failure; a handler that always fails proves dead-letter
+after `AGENT_QUEUE_MAX_ATTEMPTS`; `GET /v1/agent-jobs/dead-letters` proves DLQ inspection;
+`POST /v1/agent-jobs/:jobRunId/replay` proves replay-to-success; enqueuing the same
+`serviceId`+`taskId` twice proves idempotency (second call returns `duplicate:true`, no second
+execution); `POST /v1/agent-jobs/:jobRunId/cancel` on a still-`queued` job proves cancellation;
+stopping the Redis container mid-run proves `queue_with_http_fallback` degrades to HTTP with a visible
+`agent.dispatch.degraded` event (never a silent fallback); and cross-checking a task's `Task.status`
+against its `AgentJobRun.status` at every stage proves the two never contradict each other.
+
 ## aos-agent-runtime cutover (transitional, D-168/D-169)
 
 **Status: BLOCKED_ON_MANUAL_DEPLOYMENT.** This sandbox has no network path to

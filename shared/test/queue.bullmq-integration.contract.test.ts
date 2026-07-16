@@ -10,12 +10,16 @@
  * scripts BullMQ depends on internally, so faking this tier would produce
  * false confidence, not real proof.
  *
- * Honesty note (see decision-log D-173, D-169, D-171): this sandbox has no
- * network egress at all (confirmed against a neutral control target, not
- * just this project's own infra) — so this file WILL be skipped, not
- * passing, when run in this environment. Run it with a real `REDIS_URL` set
- * (locally or in CI with a Redis service container) to get the actual proof
- * `scripts/agent-queue-verify.mjs` also performs at the process level.
+ * Honesty note (see decision-log D-173, D-169, D-171): without a reachable
+ * Redis this file SKIPS, not passes. First executed for real on 2026-07-17
+ * against Redis 7.4.2 (K1 queue verification session): the run immediately
+ * exposed two bugs the fake-db tier could never see — BullMQ v5 rejects
+ * queue names AND custom job ids containing ':' — both fixed in
+ * shared/src/queue/index.ts (agentQueueName now joins with '.',
+ * toBullJobId() sanitizes at the BullMQ boundary). Run with a real
+ * `REDIS_URL` set (locally or in CI with a Redis service container) to get
+ * the proof `scripts/agent-queue-verify.mjs` also performs at the process
+ * level.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Queue } from 'bullmq';

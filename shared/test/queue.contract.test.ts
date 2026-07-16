@@ -77,8 +77,9 @@ function createFakeDb() {
 }
 
 describe('agentQueueName / defaultIdempotencyKey', () => {
-  it('names one queue per serviceId', () => {
-    expect(agentQueueName('architect-agent')).toBe('agent-tasks:architect-agent');
+  it('names one queue per serviceId (no ":" — BullMQ v5 rejects it as its own key separator)', () => {
+    expect(agentQueueName('architect-agent')).toBe('agent-tasks.architect-agent');
+    expect(agentQueueName('architect-agent')).not.toContain(':');
   });
   it('derives a stable default idempotency key from serviceId+taskId', () => {
     expect(defaultIdempotencyKey('architect-agent', 'task-1')).toBe('architect-agent:task-1');
