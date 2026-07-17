@@ -2,6 +2,88 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-17 — K2 Real Intelligence: the shared agent loop, persistent Jarvis, Memory v2, missions, independent research (D-177)
+
+The K2 mandate: replace the deterministic "fake center" with ONE governed,
+multi-turn, tool-using agent runtime and make Jarvis a genuinely usable
+persistent personal-intelligence layer. Delivered as coherent vertical slices,
+all with contract tests and real-infra runtime proofs (real Redis + real
+MongoDB + a real **local** OpenAI-compatible model — no paid API anywhere).
+
+**Decisions & rationale:**
+
+1. **One shared agent loop (`shared/src/agentcore/loop.ts`), not a second
+   Jarvis.** goal → context → model planning → governed tool request →
+   execution → observation → replan → approval pause/exact-resume →
+   verification → grounded answer. Native provider tool calling
+   (`shared/src/llm/toolcalling.ts`) is primary; a validated structured
+   `{"tool":...}` JSON path is the compat fallback; no provider ⇒ honest
+   `no_model` stop. The old single-shot `generateStructured` Jarvis is demoted
+   to the degraded composer only. *Alternative rejected:* bolting a new
+   "Jarvis v2" beside the old — the mandate explicitly forbids a second
+   competing brain.
+
+2. **Unified governed tool registry (`shared/src/agentcore/registry.ts`).**
+   One authoritative registry with the full governance surface (scope,
+   permission, risk, policy category, approval, owner-only, idempotency, side
+   effects, evidence, rollback, output-trust). `available` is truth: a tool
+   marked available MUST have a real executor; unconfigured integrations
+   register `available:false` with the exact reason. Policy fails **closed**.
+
+3. **Governance unchanged and central.** Raw model text never mutates state;
+   the only mutation path is a governed executor. Sensitive tools pause with a
+   persisted `ApprovalCheckpoint`; approval resumes the EXACT run from its
+   persisted transcript (survives restart). Untrusted web content is fenced as
+   data before any model sees it (prompt-injection defense).
+
+4. **Independence by construction.** Model registry resolves a self-hosted
+   OpenAI-compatible endpoint (Ollama/vLLM) BEFORE any cloud key; nothing
+   hardcodes one company. Research uses self-hosted SearXNG + direct
+   fetch/RSS/sitemap; Tavily is demoted to an optional adapter, never a runtime
+   requirement. Embeddings use a self-hostable local endpoint; lexical
+   (bilingual FA/EN) retrieval always works with zero dependencies; vectors
+   live in Mongo (no paid hosted vector DB). *Alternative rejected:* Tavily as
+   the primary search path (violates the local-first mandate).
+
+5. **Memory v2 that changes later answers.** One scoped `memory_records`
+   collection with kind + status (confirmed/inferred/temporary) + provenance +
+   lastConfirmedAt. Hybrid retrieval (lexical always; vector when configured),
+   contradiction/supersede, correction, pin, delete-propagation, stale decay.
+   Proven by the cross-session-recall contract test AND the runtime scenario —
+   a fact stored in session A changes the answer in a NEW session B.
+
+6. **Mission hierarchy (`mission_nodes`).** vision→objective→program→mission→
+   plan→task→action in one collection with parent-type integrity and a
+   duplicate guard (no endless duplicate tasks). Stall/overdue/review
+   detection; upward-linkage context ("how today's task connects to a bigger
+   objective").
+
+7. **Proactive watches + briefing v2 + self-dev record.** Dedup-aware watch
+   firings; an owner briefing built from REAL mission/memory/approval state
+   (honestly empty when nothing exists — never a generic digest); a
+   self-development state machine enforcing approval-before-implement and
+   verify-before-merge gates (real code changes run through the existing
+   code-operator workspace runtime — no fabricated PR metadata).
+
+**Verification (this session, real infra):**
+- Contract suites: shared 219/219 pass (46 new K2 proofs across agentcore,
+  memory2, missions, research, watches/self-dev), gateway 254/254.
+- `scripts/jarvis-runtime-verify.mjs`: **8/8** against real Redis + real
+  MongoDB + a real local OpenAI-compatible model — multi-turn grounded loop,
+  cross-session recall, session persistence, mission creation via governed
+  tool, approval pause + exact resume, tool ledger, degraded-mode honesty.
+- `scripts/jarvis-http-verify.mjs`: **7/7** through the REAL gateway process
+  over HTTP (the dashboard's exact API surface) with a local model.
+- Typechecks clean; `check-scope-boundary` clean (K2 modules are
+  scope-enforcing repositories, allowlisted with their isolation proofs).
+
+**Honest status (see final report):** the flows are RUNTIME_VERIFIED at the
+API tier; the `/jarvis` dashboard UI is CODE_COMPLETE + typecheck-clean but not
+yet click-verified in a logged-in browser (no browser in this sandbox).
+Deep-research synthesis over many live sources and the full reviewer/QA
+self-dev loop are CODE_COMPLETE — the primitives are real and tested, the
+end-to-end multi-source runs need a networked environment to exercise.
+
 ## 2026-07-17 — K1 BullMQ Task Queue: REAL-Infra Verification Completed, 4 Bugs Fixed (D-176)
 
 The D-175 blocker was broken this session by working WITH the sandbox's

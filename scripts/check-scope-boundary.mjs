@@ -68,6 +68,33 @@ const SHARED_DB_ALLOWED = new Set([
   // scope-boundary-check failure during the K1 queue static-verification
   // pass (see decision-log) and allowlisted here rather than migrated.
   'shared/src/queue/index.ts',
+  // K2 Agent Core / Jarvis persistence (D-177). These modules are the
+  // scope-ENFORCING repository layer for their entities (memory_records,
+  // mission_nodes, jarvis_sessions/turns, agent_loop_runs/steps,
+  // tool_invocations, research_sources). Every public function REQUIRES an
+  // explicit actor and routes every query through a `scopeFilter(actor)` /
+  // ScopeFields stamp — the same guarantee scopedCollection(ctx) provides,
+  // just realized as a purpose-built typed repository rather than the generic
+  // wrapper (the generic wrapper's ctx shape doesn't fit these
+  // multi-collection modules cleanly). Cross-user isolation is proven by
+  // contract test (memory2/missions/*.contract.test.ts "scope isolation")
+  // — allowlisted with that proof, not silently ignored.
+  'shared/src/memory2/index.ts',
+  'shared/src/missions/index.ts',
+  'shared/src/jarvis/session.ts',
+  'shared/src/agentcore/loop.ts',
+  // research_sources is a global provenance ledger (no human-scope fields on
+  // RetrievedSource — it records public web sources), same category as
+  // agent_runs / agent_job_runs above.
+  'shared/src/research/providers.ts',
+  // K2 proactive watches (D-177): same scope-enforcing repository pattern as
+  // memory2/missions — every function requires an actor + scopeFilter(actor);
+  // isolation covered by the watches contract test.
+  'shared/src/watches/index.ts',
+  // self_dev_runs is GLOBAL software-evolution state ("Global software
+  // evolution. Scoped human data." — schemas/scope.ts) exactly like
+  // agent_runs; scope is fixed to 'global', no human-scope fields.
+  'shared/src/selfdev/index.ts',
 ]);
 
 function walk(dir, exts, skipDirs) {

@@ -26,7 +26,7 @@ export interface WebSearchResult {
 }
 
 export interface WebSearchProvider {
-  readonly providerId: 'tavily';
+  readonly providerId: 'tavily' | 'searxng';
   search(query: string, opts?: { maxResults?: number }): Promise<WebSearchResult[]>;
 }
 
@@ -75,15 +75,42 @@ export class TavilyProvider implements WebSearchProvider {
   }
 }
 
-/** `null` (not a Mock provider) when unconfigured — there is no honest
- *  deterministic stand-in for "the internet said X", unlike LLM's MockProvider
- *  which can validly return an empty completion for its caller to handle. */
+/**
+ * K2 D-177 (independence mandate): self-hosted SearXNG is the PREFERRED
+ * search layer; Tavily is a strictly optional adapter that is never a
+ * runtime requirement. `null` (not a Mock provider) when neither is
+ * configured — there is no honest deterministic stand-in for "the internet
+ * said X"; callers degrade to direct-source research (providers.ts) and say
+ * so.
+ */
 export function webSearchProviderFromEnv(env: NodeJS.ProcessEnv = process.env): WebSearchProvider | null {
+  const searxBase = (env.SEARXNG_BASE_URL ?? '').trim();
+  if (searxBase) {
+    const base = searxBase.replace(/\/$/, '');
+    return {
+      providerId: 'searxng',
+      async search(query: string, opts?: { maxResults?: number }): Promise<WebSearchResult[]> {
+        const res = await fetch(`${base}/search?q=${encodeURIComponent(query)}&format=json`, { headers: { accept: 'application/json' } });
+        if (!res.ok) throw new Error(`searxng search failed: ${res.status}`);
+        const body = (await res.json()) as { results?: Array<{ title?: string; url?: string; content?: string; publishedDate?: string | null }> };
+        return (body.results ?? [])
+          .filter((r) => r.url)
+          .slice(0, opts?.maxResults ?? 6)
+          .map((r) => ({
+            title: r.title?.trim() || (r.url as string),
+            url: r.url as string,
+            publisher: hostnameOf(r.url as string),
+            publishedAt: r.publishedDate ?? '',
+            snippet: (r.content ?? '').slice(0, 600),
+          }));
+      },
+    };
+  }
   const key = (env.TAVILY_API_KEY ?? '').trim();
   return key ? new TavilyProvider(key) : null;
 }
 
-export interface WebSearchStatus { configured: boolean; provider: 'tavily' | 'none' }
+export interface WebSearchStatus { configured: boolean; provider: 'tavily' | 'searxng' | 'none' }
 
 export function webSearchStatusFromEnv(env: NodeJS.ProcessEnv = process.env): WebSearchStatus {
   const p = webSearchProviderFromEnv(env);

@@ -237,6 +237,7 @@ import { createFactoryService, type FactoryService } from '@factory/service-kit'
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerTasksRoutes } from './routes/tasks.js';
 import { registerAgentJobsRoutes } from './routes/agent-jobs.js';
+import { registerJarvisRoutes } from './routes/jarvis.js';
 import { registerCapabilitiesRoutes } from './routes/capabilities.js';
 import { registerGovernanceRoutes } from './routes/governance.js';
 import { registerSecurityRoutes } from './routes/security.js';
@@ -1871,6 +1872,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       registerVoiceRoutes(app, deps);
       registerPersonalRoutes(app, deps);
       registerOperatorRoutes(app, deps);
+      registerJarvisRoutes(app, deps); // K2 D-177 — persistent Jarvis on the shared agent loop
       registerSystemRoutes(app, deps);
     },
   });

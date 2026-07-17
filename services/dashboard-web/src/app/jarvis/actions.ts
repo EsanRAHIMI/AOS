@@ -51,3 +51,53 @@ export async function getBriefingAction(): Promise<JarvisBriefingView | null> {
     language: r.language,
   };
 }
+
+/* ============================ K2 Persistent Jarvis (D-177) ================ */
+
+export interface JarvisSessionView { sessionId: string; title: string; turnCount: number; lastTurnAt: string | null; totalCostUsd: number }
+export interface JarvisTurnView { turnId: string; userText: string; replyText: string; status: string; reasoningMode: string; provider: string; costUsd: number; pendingApprovalId: string | null; runId: string | null; createdAt: string }
+export interface JarvisTurnResult { turnId: string; runId: string | null; status: string; replyText: string; pendingApprovalId: string | null; reasoningMode: string }
+
+export async function listSessionsAction(): Promise<JarvisSessionView[]> {
+  return (await gateway.jarvisSessions()) ?? [];
+}
+
+export async function createSessionAction(title?: string): Promise<string | null> {
+  const r = await gateway.createJarvisSession(title);
+  return r?.sessionId ?? null;
+}
+
+export async function getSessionAction(sessionId: string): Promise<{ session: JarvisSessionView | null; turns: JarvisTurnView[] }> {
+  const r = await gateway.jarvisSession(sessionId);
+  if (!r) return { session: null, turns: [] };
+  return { session: r.session as unknown as JarvisSessionView, turns: (r.turns as unknown as JarvisTurnView[]) ?? [] };
+}
+
+export async function sendTurnAction(sessionId: string, text: string): Promise<JarvisTurnResult | null> {
+  return gateway.jarvisTurn(sessionId, text);
+}
+
+export async function decideApprovalAction(approvalId: string, runId: string, action: 'approve' | 'reject', reason?: string): Promise<{ status: string; replyText: string; pendingApprovalId: string | null } | null> {
+  return gateway.jarvisApprovalDecision(approvalId, runId, action, reason);
+}
+
+export async function intelligenceStatusAction() {
+  return gateway.jarvisIntelligenceStatus();
+}
+
+export async function listMemoriesAction() {
+  return (await gateway.jarvisMemories()) ?? [];
+}
+
+export async function correctMemoryAction(id: string, newContent: string) {
+  return gateway.jarvisMemoryCorrect(id, newContent);
+}
+export async function pinMemoryAction(id: string, pinned: boolean) {
+  return gateway.jarvisMemoryPin(id, pinned);
+}
+export async function deleteMemoryAction(id: string) {
+  return gateway.jarvisMemoryDelete(id);
+}
+export async function listToolsAction() {
+  return gateway.jarvisTools();
+}

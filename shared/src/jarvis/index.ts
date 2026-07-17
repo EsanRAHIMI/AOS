@@ -133,20 +133,21 @@ export function decideJarvisMode(intent: JarvisIntent): JarvisMode {
  *  Update this alongside phase-log/decision-log — it is documentation, not
  *  a model guess. */
 export const AOS_SELF_KNOWLEDGE = {
-  updatedAt: '2026-07-09',
-  currentPhase: 'Phase AG.1 — Research Fabric Wired Into Jarvis/Operator',
+  updatedAt: '2026-07-17',
+  currentPhase: 'K2 Real Intelligence (D-177) — shared agent loop + persistent Jarvis + Memory v2 + missions + independent research',
   recentlyFixed: [
-    'The operator/Jarvis command path was pure English regex matching with zero LLM usage and no composed natural-language reply — Phase AD added real intent classification, a ranked context packet and a grounded response composer (bilingual, EN/FA).',
-    'internet-research-service gained a real Tavily-backed WebSearchProvider (Phase AG), but neither Jarvis tool that could reach it was actually calling it: find_opportunities carried a hardcoded "research provider is not_configured" string, and research_topic only fired a fire-and-forget kernel task with no grounded reply. Phase AG.1 wired both to a synchronous internet-research-service dispatch that returns real findings + sourceMode in the same turn, and broadened the goal→tool matcher so free-text topic questions (not just "research..." phrasing) reach it.',
+    'The deterministic "fake center" is replaced by ONE governed multi-turn agent loop (shared/src/agentcore): native provider tool calling, step budgets, wall-clock/token/cost limits, cancellation, explicit stop reasons, step-level traces, and — critically — approval PAUSE with EXACT resume from persisted state. Jarvis, the orchestrator and specialist roles all run on this one loop; raw model text still never mutates state (only governed tools do).',
+    'Jarvis is now a persistent operating interface: durable jarvis_sessions/turns with a rolling summary, pinned facts and active mission links that survive reloads and restarts. Memory v2 (memory_records) actually changes later answers — a fact stored in one session is retrieved (hybrid lexical + optional local vector, bilingual FA/EN) and grounds a NEW session\'s reply; owner can inspect/correct/pin/delete, with provenance and confirmed/inferred/temporary status.',
+    'A durable mission hierarchy (vision→objective→program→mission→plan→task→action) with parent-type integrity, a duplicate guard, and stall/overdue detection. Jarvis builds and updates it from natural language through governed tools.',
+    'Research is now local-first and self-hostable (SearXNG preferred; direct fetch/RSS/sitemap always work; robots.txt honored; provenance ledger with publication + retrieval dates). Tavily is demoted to an OPTIONAL adapter — never a runtime requirement.',
   ],
   knownGaps: [
-    'Live web search only happens when TAVILY_API_KEY is set on internet-research-service specifically (that service must be restarted after the key is added/changed); without it, research honestly degrades to LLM recall or curated text and says so via sourceMode — it is never fabricated.',
-    'Personal connectors (calendar, email, finance, presence/social) are honestly not_configured — no external data is ingested yet, only what the user tells AOS directly.',
-    'No CI pipeline enforces typecheck/build/smoke on every change — verification is still manual scripts.',
-    'Rate limiting, the safe-mode flag and the event bus are in-memory — they will not survive a multi-instance production deploy.',
-    'Memory is compact structured records, not a full conversational transcript — Jarvis remembers facts and decisions, not verbatim chat history.',
+    'The /jarvis dashboard workspace is code-complete and typecheck-clean but has not yet been click-verified in a logged-in browser (the build sandbox has no browser). The API tier IS runtime-verified end-to-end (scripts/jarvis-http-verify.mjs, 7/7, through the real gateway process).',
+    'Deep multi-source research synthesis and the full reviewer/QA self-development loop are code-complete with tested primitives; exercising them across many live web sources / a real merge needs a networked environment.',
+    'Cloud model keys are OPTIONAL: with none set, Jarvis runs in honest degraded mode (reasoningMode:none) — personal state, memory, missions and local research still work fully. A self-hosted local model (LLM_LOCAL_BASE_URL, e.g. Ollama) is the recommended independence default.',
+    'Personal connectors (calendar, email, finance) remain not_configured — only what the owner tells AOS directly, or self-hosted research, is ingested.',
   ],
-  highestLeverageNextStep: 'Set a real TAVILY_API_KEY on internet-research-service in a networked environment and confirm a live sourceMode: search_api response end-to-end (never exercised in the sandbox this was built in), then add CI so contract drift is caught automatically.',
+  highestLeverageNextStep: 'Point LLM_LOCAL_BASE_URL at a self-hosted model (or set a cloud key) and SEARXNG_BASE_URL at a self-hosted SearXNG (deployment/searxng.md), then use the /jarvis workspace daily; next engineering step is click-verifying the dashboard UI and running the self-development loop against a real branch merge in a networked environment.',
 } as const;
 
 /* ============================= context packet ============================= */
@@ -366,3 +367,6 @@ export const JarvisTurnSchema = z.object({
 export * from './memory.js';
 export * from './daily-brain.js';
 export * from './quality.js';
+// K2 D-177 — persistent sessions + the shared-loop turn runner
+export * from './session.js';
+export * from './turn-runner.js';

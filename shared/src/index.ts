@@ -69,3 +69,17 @@ export * from './redis/index.js';
 export * from './queue/index.js';
 // K1 BullMQ Producer Adoption (D-174)
 export * from './dispatch/index.js';
+// K2 Agent Core (D-177) — shared multi-turn agent loop + unified tool registry
+export * from './agentcore/index.js';
+// K2 native tool calling + configurable model registry (D-177)
+export * from './llm/toolcalling.js';
+// K2 Memory v2 (D-177)
+export * from './memory2/index.js';
+// K2 Mission hierarchy (D-177)
+export * from './missions/index.js';
+// K2 Independent research stack (D-177)
+export * from './research/providers.js';
+// K2 Proactive watches + owner briefing v2 (D-177)
+export * from './watches/index.js';
+// K2 Self-development pipeline record (D-177)
+export * from './selfdev/index.js';

@@ -55,6 +55,24 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
 }
 
 export const gateway = {
+  // --- K2 Persistent Jarvis (D-177) ---
+  jarvisSessions: () => call<Array<{ sessionId: string; title: string; turnCount: number; lastTurnAt: string | null; totalCostUsd: number }>>('/v1/jarvis/sessions'),
+  jarvisSession: (id: string) => call<{ session: Record<string, unknown>; turns: Array<Record<string, unknown>> }>(`/v1/jarvis/sessions/${id}`),
+  createJarvisSession: (title?: string) => call<{ sessionId: string }>('/v1/jarvis/sessions', { method: 'POST', body: JSON.stringify({ title: title ?? '' }) }),
+  jarvisTurn: (sessionId: string, text: string) =>
+    call<{ turnId: string; runId: string | null; status: string; replyText: string; pendingApprovalId: string | null; reasoningMode: string }>(
+      `/v1/jarvis/sessions/${sessionId}/turns`, { method: 'POST', body: JSON.stringify({ text }) }),
+  jarvisApprovalDecision: (approvalId: string, runId: string, action: 'approve' | 'reject', reason?: string) =>
+    call<{ status: string; replyText: string; pendingApprovalId: string | null }>(
+      `/v1/jarvis/loop-approvals/${approvalId}/decision`, { method: 'POST', body: JSON.stringify({ action, runId, reason }) }),
+  jarvisRun: (runId: string) => call<{ run: Record<string, unknown>; steps: Array<Record<string, unknown>> }>(`/v1/jarvis/runs/${runId}`),
+  jarvisTools: () => call<{ total: number; available: number; tools: Array<Record<string, unknown>> }>('/v1/jarvis/tools'),
+  jarvisMemories: () => call<Array<Record<string, unknown>>>('/v1/jarvis/memories'),
+  jarvisMemoryCorrect: (id: string, newContent: string) => call<Record<string, unknown>>(`/v1/jarvis/memories/${id}/correct`, { method: 'POST', body: JSON.stringify({ newContent }) }),
+  jarvisMemoryPin: (id: string, pinned: boolean) => call<Record<string, unknown>>(`/v1/jarvis/memories/${id}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }),
+  jarvisMemoryDelete: (id: string) => call<{ deleted: boolean }>(`/v1/jarvis/memories/${id}/delete`, { method: 'POST', body: '{}' }),
+  jarvisIntelligenceStatus: () => call<{ provider: string; isLocal: boolean; models: Record<string, string> | null; degraded: boolean; degradedDetail: string; research: { coverage: string; detail: string }; safeMode: boolean }>('/v1/jarvis/intelligence-status'),
+
   tasks: () => call<unknown[]>('/v1/tasks'),
   task: (id: string) => call<unknown>(`/v1/tasks/${id}`),
   taskTimeline: (id: string) => call<unknown[]>(`/v1/tasks/${id}/timeline`),

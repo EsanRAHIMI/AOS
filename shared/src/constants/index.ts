@@ -278,6 +278,28 @@ export const COLLECTIONS = {
   // K1 BullMQ Task Queue (D-173) — job-level lifecycle tracking, separate
   // from the coarser `tasks` collection's status field (see shared/src/queue).
   AGENT_JOB_RUNS: 'agent_job_runs',
+  // K2 Agent Core (D-177) — the ONE shared multi-turn agent loop + unified
+  // governed tool ledger (see shared/src/agentcore).
+  AGENT_LOOP_RUNS: 'agent_loop_runs',
+  AGENT_LOOP_STEPS: 'agent_loop_steps',
+  TOOL_INVOCATIONS: 'tool_invocations',
+  AGENT_APPROVAL_CHECKPOINTS: 'agent_approval_checkpoints',
+  REFLECTION_LESSONS: 'reflection_lessons',
+  // K2 Persistent Jarvis (D-177) — durable sessions + turns (transcripts).
+  JARVIS_SESSIONS: 'jarvis_sessions',
+  JARVIS_SESSION_TURNS: 'jarvis_session_turns',
+  // K2 Memory v2 (D-177) — layered memory records with provenance + status.
+  MEMORY_RECORDS: 'memory_records',
+  MEMORY_EMBEDDINGS: 'memory_embeddings',
+  // K2 Mission hierarchy (D-177) — vision→objective→program→mission→plan.
+  MISSION_NODES: 'mission_nodes',
+  // K2 Research v2 (D-177) — independent research provenance ledger.
+  // (RESEARCH_SOURCES already exists above — reused, one collection.)
+  // K2 Proactive watches (D-177) — durable scheduler/watch definitions + firings.
+  WATCHES: 'watches',
+  WATCH_FIRINGS: 'watch_firings',
+  // K2 Self-development pipeline (D-177) — global software-evolution runs.
+  SELF_DEV_RUNS: 'self_dev_runs',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
@@ -456,6 +478,27 @@ export const EVENT_TYPES = {
   // dispatch could not use the queue and fell back to HTTP, so this is never
   // a SILENT fallback (see decision-log D-174, requirement 3).
   AGENT_DISPATCH_DEGRADED: 'agent.dispatch.degraded',
+  // K2 Agent Core (D-177) — step-level lifecycle of the shared agent loop.
+  AGENT_LOOP_STARTED: 'agent.loop.started',
+  AGENT_LOOP_STEP: 'agent.loop.step',
+  AGENT_LOOP_TOOL: 'agent.loop.tool',
+  AGENT_LOOP_WAITING_APPROVAL: 'agent.loop.waiting_approval',
+  AGENT_LOOP_RESUMED: 'agent.loop.resumed',
+  AGENT_LOOP_COMPLETED: 'agent.loop.completed',
+  AGENT_LOOP_FAILED: 'agent.loop.failed',
+  // K2 Persistent Jarvis (D-177).
+  JARVIS_SESSION_STARTED: 'jarvis.session.started',
+  JARVIS_TURN_STARTED: 'jarvis.turn.started',
+  JARVIS_TURN_COMPLETED: 'jarvis.turn.completed',
+  // K2 Memory v2 (D-177).
+  MEMORY_RECORDED: 'memory.recorded',
+  MEMORY_CORRECTED: 'memory.corrected',
+  MEMORY_DELETED: 'memory.deleted',
+  // K2 Missions (D-177).
+  MISSION_CREATED: 'mission.created',
+  MISSION_UPDATED: 'mission.updated',
+  // K2 Watches (D-177).
+  WATCH_FIRED: 'watch.fired',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

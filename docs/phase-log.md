@@ -3814,3 +3814,35 @@ decision-log D-176; summary:
 - K1 Queue is operationally complete at the queue tier and the service tier.
   Remaining production gate: re-run both verify scripts against Atlas + the
   production Redis from the owner's machine (commands in deployment-plan).
+
+## Phase K2 — Real Intelligence: shared agent loop + persistent Jarvis (2026-07-17, D-177)
+
+Replaced the deterministic center with ONE governed multi-turn agent runtime
+and made Jarvis a usable persistent personal-intelligence layer. Full detail
+in decision-log D-177 and docs/jarvis-spec.md. Summary:
+
+- **shared/src/agentcore** — unified governed tool registry + the ONE shared
+  agent loop (native tool calling, budgets, cancellation, step traces,
+  approval pause + EXACT resume, untrusted-content fencing).
+- **shared/src/llm/toolcalling** — native Anthropic + OpenAI-compatible
+  (Ollama/vLLM self-hosted) providers; configurable model registry with tiers.
+- **shared/src/jarvis/session + turn-runner** — durable sessions/turns,
+  context assembly, degraded-mode honesty.
+- **shared/src/memory2** — Memory v2: hybrid bilingual retrieval, provenance,
+  confirmed/inferred/temporary, correction/pin/delete, decay. Cross-session
+  recall proven.
+- **shared/src/missions** — vision→…→action hierarchy, duplicate guard, stall
+  detection, upward context.
+- **shared/src/research/providers** — independent research stack (SearXNG/
+  direct/RSS/sitemap, robots-aware, provenance ledger). Tavily now optional.
+- **shared/src/watches + selfdev** — dedup watches, grounded briefing v2,
+  gated self-development state machine.
+- **services/gateway-api/src/routes/jarvis.ts** — /v1/jarvis/* (sessions,
+  streaming turns, in-conversation approvals, tools, memory, status).
+- **dashboard-web /jarvis** — persistent workspace (threads, streaming, tool
+  steps, approval cards, memory) + SSE proxy.
+
+Verification (real infra this session): shared 219/219, gateway 254/254;
+scripts/jarvis-runtime-verify.mjs 8/8 (real Redis + real Mongo + real local
+OpenAI-compatible model); scripts/jarvis-http-verify.mjs 7/7 (real gateway
+process). No paid API used or required. Typechecks + scope-boundary clean.
