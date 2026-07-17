@@ -22,9 +22,12 @@ pnpm dev:all
 
 `dev:all` خودکار این کارها را انجام می‌دهد:
 
-1. `sync:env` — کپی `.env` روت به ۱۵ سرویس + پورت و URL لوکال
+1. `sync:env` — کپی `.env` روت به ۱۹ سرویس production + پورت و URL لوکال
 2. `build:deps` — build کردن `shared` و `service-kit`
 3. اجرای همزمان همه سرویس‌ها (ترتیب = ترتیب بخش ۲)
+
+منبع ترتیب/پورت: `scripts/local-services.mjs` (باید با این فایل هم‌خوان بماند).
+نقشهٔ کامل: `docs/service-map.md`.
 
 فقط env را عوض کردی؟ `pnpm sync:env` کافی است.
 
@@ -39,14 +42,20 @@ pnpm dev:all
 | 5 | architect-agent | 4103 |
 | 6 | builder-agent | 4104 |
 | 7 | devops-agent | 4105 |
-| 8 | memory-agent | 4109 |
-| 9 | documentation-service | 4110 |
-| 10 | internet-research-service | 4115 |
-| 11 | file-asset-service | 4112 |
-| 12 | monitor-agent | 4113 |
-| 13 | browser-testing-agent | 4116 |
-| 14 | code-operator-agent | 4122 |
-| 15 | dashboard-web | **4100** ← داشبورد |
+| 8 | reviewer-agent | 4106 |
+| 9 | qa-agent | 4107 |
+| 10 | memory-agent | 4109 |
+| 11 | documentation-service | 4110 |
+| 12 | internet-research-service | 4115 |
+| 13 | file-asset-service | 4112 |
+| 14 | monitor-agent | 4113 |
+| 15 | report-agent | 4114 |
+| 16 | browser-testing-agent | 4116 |
+| 17 | voice-operator-agent | 4121 |
+| 18 | code-operator-agent | 4122 |
+| 19 | dashboard-web | **4100** ← داشبورد |
+
+`aos-agent-runtime` کاندید consolidation است و در `dev:all` نیست — بخش ۲۰.
 
 - داشبورد: http://localhost:4100
 - API: http://localhost:4101
@@ -76,8 +85,9 @@ curl http://localhost:4101/v1/services
 | تنظیم | مقدار (همه سرویس‌ها) |
 |---|---|
 | Repository | monorepo روی GitHub |
-| Build context | روت repo |
-| Health check | `/health` |
+| Build context | **روت repo** (نه `services/<id>`) — `pnpm --filter` به workspace نیاز دارد |
+| Root directory | در جداول زیر: `services/<id>` (هویت Application) |
+| Health check | `/health` برای backendها؛ برای `dashboard-web` صفحهٔ `/` یا `/login` (مسیر `/health` UI است، JSON liveness نیست) |
 
 `FACTORY_INTERNAL_TOKEN` در **همه** سرویس‌ها باید **یکسان** باشد.
 
@@ -218,9 +228,22 @@ SERVICE_PORT=4101
 SERVICE_REGISTRY_URL=https://registry.simorx.com
 EVENT_BUS_URL=https://events.simorx.com
 ORCHESTRATOR_AGENT_URL=https://orchestrator.simorx.com
+# اختیاری — پین مستقیم به research (لوکال در sync:env ست می‌شود؛ در production
+# معمولاً از registry resolve می‌شود).
+# INTERNET_RESEARCH_SERVICE_URL=https://research.simorx.com
 
 MONGODB_URI=
 MONGODB_DB_NAME=autonomous_os_kernel
+
+# kill-switch اولیه؛ مقدار زنده در system_settings از داشبورد هم قابل تغییر است.
+AUTONOMY_SAFE_MODE=false
+
+# اختیاری — اجرای عملیات تأییدشده از طریق Dokploy API (Phase 16)
+DOKPLOY_BASE_URL=
+DOKPLOY_API_TOKEN=
+DOKPLOY_PROJECT_ID=
+DOKPLOY_ENVIRONMENT_ID=
+
 LOG_LEVEL=info
 
 # K1 Redis Backbone (D-167) — اختیاری. خالی = rate limit فقط داخل همین یک
@@ -230,6 +253,14 @@ LOG_LEVEL=info
 # REDIS_URL سرویس event-bus-service باشد (یک Redis مشترک برای کل backbone).
 REDIS_URL=
 REDIS_KEY_PREFIX=factory:
+
+# K1 BullMQ (D-173/D-174) — فقط وقتی REDIS_URL ست باشد اثر دارد.
+# AGENT_DISPATCH_MODE=http (پیش‌فرض) = همه dispatchها HTTP، بدون تغییر.
+AGENT_QUEUE_MAX_ATTEMPTS=3
+AGENT_QUEUE_BACKOFF_MS=2000
+AGENT_QUEUE_CONCURRENCY=4
+AGENT_QUEUE_TIMEOUT_MS=30000
+AGENT_DISPATCH_MODE=http
 ```
 
 **تست:** `curl https://api.simorx.com/health`
@@ -288,11 +319,23 @@ LLM_DEFAULT_PROVIDER=anthropic
 ARCHITECT_AGENT_URL=https://architect.simorx.com
 BUILDER_AGENT_URL=https://builder.simorx.com
 DEVOPS_AGENT_URL=https://devops.simorx.com
+REVIEWER_AGENT_URL=https://reviewer.simorx.com
+QA_AGENT_URL=https://qa.simorx.com
 MEMORY_AGENT_URL=https://memory.simorx.com
 DOCUMENTATION_SERVICE_URL=https://docs.simorx.com
+INTERNET_RESEARCH_SERVICE_URL=https://research.simorx.com
 MONITOR_AGENT_URL=https://monitor.simorx.com
+REPORT_AGENT_URL=https://reports.simorx.com
 BROWSER_TESTING_AGENT_URL=https://browser-testing.simorx.com
 FILE_ASSET_SERVICE_URL=https://assets.simorx.com
+
+# K1 BullMQ (D-173/D-174) — اختیاری. خالی REDIS_URL = فقط HTTP.
+REDIS_URL=
+AGENT_QUEUE_MAX_ATTEMPTS=3
+AGENT_QUEUE_BACKOFF_MS=2000
+AGENT_QUEUE_CONCURRENCY=4
+AGENT_QUEUE_TIMEOUT_MS=30000
+AGENT_DISPATCH_MODE=http
 
 LOG_LEVEL=info
 ```
@@ -445,7 +488,109 @@ LOG_LEVEL=info
 
 ---
 
-## ۸. memory-agent
+## ۸. reviewer-agent
+
+**کار:** بررسی مستقل کد/معماری/امنیت — قبل از QA در pipeline.
+
+| دامنه | پورت |
+|---|---|
+| reviewer.simorx.com | 4106 |
+
+**Dokploy**
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/reviewer-agent` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/reviewer-agent... run build` |
+| Start | `pnpm --filter @factory/reviewer-agent run start` |
+
+**Environment**
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=reviewer-agent
+SERVICE_NAME=Reviewer Agent
+SERVICE_DOMAIN=https://reviewer.simorx.com
+SERVICE_PORT=4106
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+LLM_DEFAULT_PROVIDER=anthropic
+LLM_ALLOWED_PROVIDERS=anthropic,openai
+LLM_MAX_COST_PER_TASK_USD=0.5
+LLM_MAX_TOKENS_PER_TASK=120000
+LLM_DAILY_COST_LIMIT_USD=20
+LLM_SAFE_MODE_FALLBACK=true
+
+LOG_LEVEL=info
+```
+
+**تست:** `curl https://reviewer.simorx.com/health`
+
+---
+
+## ۹. qa-agent
+
+**کار:** تأیید پذیرش در برابر goal و evidence.
+
+| دامنه | پورت |
+|---|---|
+| qa.simorx.com | 4107 |
+
+**Dokploy**
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/qa-agent` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/qa-agent... run build` |
+| Start | `pnpm --filter @factory/qa-agent run start` |
+
+**Environment**
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=qa-agent
+SERVICE_NAME=QA Agent
+SERVICE_DOMAIN=https://qa.simorx.com
+SERVICE_PORT=4107
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+LLM_DEFAULT_PROVIDER=anthropic
+LLM_ALLOWED_PROVIDERS=anthropic,openai
+LLM_MAX_COST_PER_TASK_USD=0.5
+LLM_MAX_TOKENS_PER_TASK=120000
+LLM_DAILY_COST_LIMIT_USD=20
+LLM_SAFE_MODE_FALLBACK=true
+
+LOG_LEVEL=info
+```
+
+**تست:** `curl https://qa.simorx.com/health`
+
+---
+
+## ۱۰. memory-agent
 
 **کار:** حافظه بلندمدت و نگهداری context بین taskها.
 
@@ -491,7 +636,7 @@ LOG_LEVEL=info
 
 ---
 
-## ۹. documentation-service
+## ۱۱. documentation-service
 
 **کار:** مستندسازی خودکار خروجی‌ها و تصمیم‌ها.
 
@@ -532,7 +677,7 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۰. internet-research-service
+## ۱۲. internet-research-service
 
 **کار:** تحقیق زنده روی اینترنت برای Jarvis/operator — جستجوی واقعی وب (Tavily) وقتی
 `TAVILY_API_KEY` روی همین سرویس تنظیم شده باشد؛ در غیر این صورت با `sourceMode: llm_only`
@@ -576,6 +721,12 @@ TAVILY_API_KEY=
 
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
+LLM_DEFAULT_PROVIDER=anthropic
+LLM_ALLOWED_PROVIDERS=anthropic,openai
+LLM_MAX_COST_PER_TASK_USD=0.5
+LLM_MAX_TOKENS_PER_TASK=120000
+LLM_DAILY_COST_LIMIT_USD=20
+LLM_SAFE_MODE_FALLBACK=true
 
 LOG_LEVEL=info
 ```
@@ -589,7 +740,7 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۱. file-asset-service
+## ۱۳. file-asset-service
 
 **کار:** آپلود و مدیریت فایل/asset روی S3.
 
@@ -636,7 +787,7 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۲. monitor-agent
+## ۱۴. monitor-agent
 
 **کار:** health scan دوره‌ای، ثبت incident، ساخت repair task.
 
@@ -680,7 +831,58 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۳. browser-testing-agent
+## ۱۵. report-agent
+
+**کار:** گزارش‌های اجرایی/هوش سیستم (executive / intelligence reports).
+
+| دامنه | پورت |
+|---|---|
+| reports.simorx.com | 4114 |
+
+**Dokploy**
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/report-agent` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/report-agent... run build` |
+| Start | `pnpm --filter @factory/report-agent run start` |
+
+**Environment**
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=report-agent
+SERVICE_NAME=Report Agent
+SERVICE_DOMAIN=https://reports.simorx.com
+SERVICE_PORT=4114
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+LLM_DEFAULT_PROVIDER=anthropic
+LLM_ALLOWED_PROVIDERS=anthropic,openai
+LLM_MAX_COST_PER_TASK_USD=0.5
+LLM_MAX_TOKENS_PER_TASK=120000
+LLM_DAILY_COST_LIMIT_USD=20
+LLM_SAFE_MODE_FALLBACK=true
+
+LOG_LEVEL=info
+```
+
+**تست:** `curl https://reports.simorx.com/health`
+
+---
+
+## ۱۶. browser-testing-agent
 
 **کار:** تست مرورگر/HTTP روی targetهای داخلی.
 
@@ -727,7 +929,64 @@ LOG_LEVEL=info
 
 ---
 
-## ۱۴. code-operator-agent
+## ۱۷. voice-operator-agent
+
+**کار:** orchestration نشست صدا (realtime) — خودش مستقیم mutate نمی‌کند؛ از طریق gateway.
+
+| دامنه | پورت |
+|---|---|
+| voice.simorx.com | 4121 |
+
+**Dokploy**
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/voice-operator-agent` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/voice-operator-agent... run build` |
+| Start | `pnpm --filter @factory/voice-operator-agent run start` |
+
+**Environment**
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=voice-operator-agent
+SERVICE_NAME=Voice Operator Agent
+SERVICE_DOMAIN=https://voice.simorx.com
+SERVICE_PORT=4121
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+LLM_DEFAULT_PROVIDER=anthropic
+
+# اختیاری — بدون این‌ها dock روی text + browser voice می‌ماند
+VOICE_PROVIDER=openai
+VOICE_MODEL=gpt-realtime
+VOICE_NAME=alloy
+VOICE_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+VOICE_SESSION_SECRET=
+VOICE_SESSION_MAX_SECONDS=600
+VOICE_REQUIRE_PUSH_TO_TALK=true
+
+LOG_LEVEL=info
+```
+
+**تست:** `curl https://voice.simorx.com/health`
+
+جزئیات بیشتر: `deployment/dokploy/voice-operator-agent.md`
+
+---
+
+## ۱۸. code-operator-agent
 
 **کار:** جستجو/ویرایش/typecheck/build/git/PR روی workspace کد (شاخه‌های ایزوله). جزئیات کامل:
 `deployment/dokploy/code-operator-agent.md` و `services/code-operator-agent/.env.example`.
@@ -744,11 +1003,54 @@ LOG_LEVEL=info
 | Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/code-operator-agent... run build` |
 | Start | `pnpm --filter @factory/code-operator-agent run start` |
 
+**Volume:** یک volume پایدار روی `/workspace` mount کن و یک‌بار repo را clone کن
+(`git clone … /workspace/autonomous-os-kernel`). Agent فقط داخل همین checkout، روی شاخهٔ ایزوله کار می‌کند — هرگز روی دایرکتوری live production.
+
+**Environment**
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=code-operator-agent
+SERVICE_NAME=Code Operator Agent
+SERVICE_DOMAIN=https://code.simorx.com
+SERVICE_PORT=4122
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+# الزامی برای ابزارهای کد — بدون آن همهٔ code tools با not_configured جواب می‌دهند.
+CODE_WORKSPACE_ROOT=/workspace/autonomous-os-kernel
+
+# اختیاری — commit/push/PR
+GITHUB_TOKEN=
+GITHUB_OWNER=
+GITHUB_REPO=autonomous-os-kernel
+GITHUB_DEFAULT_BRANCH=main
+
+# حدود workspace (Phase Y)
+WORKSPACE_MAX_ITERATIONS=10
+WORKSPACE_MAX_MINUTES=45
+WORKSPACE_MAX_FILES_CHANGED=80
+WORKSPACE_REQUIRE_APPROVAL_BEFORE_MIGRATION=true
+WORKSPACE_ALLOW_AUTOFIX=true
+WORKSPACE_ALLOW_NEW_SERVICE=true
+WORKSPACE_ALLOW_EXISTING_SERVICE_EVOLUTION=true
+
+LOG_LEVEL=info
+```
+
 **تست:** `curl https://code.simorx.com/health`
 
 ---
 
-## ۱۵. dashboard-web
+## ۱۹. dashboard-web
 
 **کار:** داشبورد Next.js — UI کنترل، مانیتورینگ، تأیید انسان.
 
@@ -805,9 +1107,88 @@ DASHBOARD_VIEWER_PASSWORD_HASH=
 
 ---
 
+## ۲۰. aos-agent-runtime (کاندید consolidation — هنوز production نیست)
+
+**وضعیت:** `BLOCKED_ON_MANUAL_DEPLOYMENT` (D-168/D-169/D-172). این یک Application جدا در Dokploy
+نیست که امروز ترافیک بگیرد؛ کاندید جایگزینی چند agent مستقل است.
+
+**جایگزین می‌کند (فقط بعد از cutover تأییدشده):**
+
+| Worker | serviceId | دامنه | پورت |
+|---|---|---|---:|
+| Architect | `architect-agent` | architect.simorx.com | 4103 |
+| Reviewer | `reviewer-agent` | reviewer.simorx.com | 4106 |
+| QA | `qa-agent` | qa.simorx.com | 4107 |
+| Report | `report-agent` | reports.simorx.com | 4114 |
+
+Batch 2A (کد، بدون cutover spec): Memory، Documentation، Internet Research.
+
+**مهم:** تا قبل از cutover، همان ۱۹ سرویس بالا (شماره ۱–۱۹) را جداگانه deploy کن.
+`aos-agent-runtime` را در `pnpm dev:all` هم اضافه نکن — با `architect-agent` روی پورت
+4103 تداخل دارد (`EADDRINUSE`).
+
+**Dokploy** (فقط وقتی آمادهٔ cutover هستی)
+
+| فیلد | مقدار |
+|---|---|
+| Root directory | `services/aos-agent-runtime` |
+| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/aos-agent-runtime... run build` |
+| Start | `pnpm --filter @factory/aos-agent-runtime run start` |
+| Ports | **هر چهار پورت** 4103, 4106, 4107, 4114 از یک container |
+| Health | `/health` روی یکی از همین پورت‌ها (مثلاً 4103) |
+
+**Environment** (اتحاد env سرویس‌های worker — secret جدید لازم نیست):
+
+```env
+NODE_ENV=production
+FACTORY_ENV=production
+FACTORY_INTERNAL_TOKEN=
+FACTORY_ADMIN_TOKEN=
+
+SERVICE_ID=aos-agent-runtime
+SERVICE_NAME=AOS Agent Runtime
+SERVICE_PORT=4199
+
+SERVICE_REGISTRY_URL=https://registry.simorx.com
+EVENT_BUS_URL=https://events.simorx.com
+
+MONGODB_URI=
+MONGODB_DB_NAME=autonomous_os_kernel
+
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+LLM_DEFAULT_PROVIDER=anthropic
+
+# Batch 2A — فقط اگر worker تحقیق داخل همین process روشن باشد
+TAVILY_API_KEY=
+
+# اختیاری — صف BullMQ برای workerها (D-173)
+REDIS_URL=
+REDIS_KEY_PREFIX=factory:
+AGENT_QUEUE_MAX_ATTEMPTS=3
+AGENT_QUEUE_BACKOFF_MS=2000
+AGENT_QUEUE_CONCURRENCY=4
+AGENT_QUEUE_TIMEOUT_MS=30000
+
+LOG_LEVEL=info
+```
+
+**لوکال (آزمایشی):** اول `architect-agent` / `reviewer-agent` / `qa-agent` / `report-agent`
+را متوقف کن، env را از `services/aos-agent-runtime/.env.example` بساز (این سرویس در
+`pnpm sync:env` / `dev:all` نیست)، بعد:
+
+```bash
+cd services/aos-agent-runtime && pnpm dev
+```
+
+**Cutover / verify / rollback:** `deployment/dokploy/aos-agent-runtime.md` و
+`scripts/aos-agent-runtime-cutover-verify.mjs`
+
+---
+
 ## خلاصه — دامنه‌ها، health و کار هر سرویس
 
-ترتیب deploy و health check (کپی‌پیست):
+ترتیب deploy و health check (کپی‌پیست) — ۱۹ سرویس production:
 
 ```bash
 # ۱ — service-registry — ثبت و کشف سرویس‌ها
@@ -831,29 +1212,42 @@ curl https://builder.simorx.com/health
 # ۷ — devops-agent — deploy و CI/CD
 curl https://devops.simorx.com/health
 
-# ۸ — memory-agent — حافظه بلندمدت
+# ۸ — reviewer-agent — review مستقل
+curl https://reviewer.simorx.com/health
+
+# ۹ — qa-agent — پذیرش و evidence
+curl https://qa.simorx.com/health
+
+# ۱۰ — memory-agent — حافظه بلندمدت
 curl https://memory.simorx.com/health
 
-# ۹ — documentation-service — مستندسازی خودکار
+# ۱۱ — documentation-service — مستندسازی خودکار
 curl https://docs.simorx.com/health
 
-# ۱۰ — internet-research-service — تحقیق زنده (Tavily وقتی کلید ست شده)
+# ۱۲ — internet-research-service — تحقیق زنده (Tavily وقتی کلید ست شده)
 curl https://research.simorx.com/health
 
-# ۱۱ — file-asset-service — فایل و asset روی S3
+# ۱۳ — file-asset-service — فایل و asset روی S3
 curl https://assets.simorx.com/health
 
-# ۱۲ — monitor-agent — health scan و incident
+# ۱۴ — monitor-agent — health scan و incident
 curl https://monitor.simorx.com/health
 
-# ۱۳ — browser-testing-agent — تست مرورگر/HTTP
+# ۱۵ — report-agent — گزارش اجرایی/هوش
+curl https://reports.simorx.com/health
+
+# ۱۶ — browser-testing-agent — تست مرورگر/HTTP
 curl https://browser-testing.simorx.com/health
 
-# ۱۴ — code-operator-agent — عملیات روی کد (workspace ایزوله)
+# ۱۷ — voice-operator-agent — نشست صدا
+curl https://voice.simorx.com/health
+
+# ۱۸ — code-operator-agent — عملیات روی کد (workspace ایزوله)
 curl https://code.simorx.com/health
 
-# ۱۵ — dashboard-web — داشبورد کنترل (UI)
-curl https://factory.simorx.com/health
+# ۱۹ — dashboard-web — داشبورد کنترل (UI)
+# مسیر /health در dashboard صفحهٔ UI است، نه JSON liveness — صفحهٔ اصلی را باز کن:
+# https://factory.simorx.com   یا   https://factory.simorx.com/login
 ```
 
 | # | سرویس | دامنه | پورت | کار |
@@ -865,22 +1259,26 @@ curl https://factory.simorx.com/health
 | 5 | architect-agent | architect.simorx.com | 4103 | طراحی فنی |
 | 6 | builder-agent | builder.simorx.com | 4104 | ساخت کد |
 | 7 | devops-agent | devops.simorx.com | 4105 | deploy |
-| 8 | memory-agent | memory.simorx.com | 4109 | حافظه |
-| 9 | documentation-service | docs.simorx.com | 4110 | مستندات |
-| 10 | internet-research-service | research.simorx.com | 4115 | تحقیق زنده |
-| 11 | file-asset-service | assets.simorx.com | 4112 | فایل/S3 |
-| 12 | monitor-agent | monitor.simorx.com | 4113 | مانیتورینگ |
-| 13 | browser-testing-agent | browser-testing.simorx.com | 4116 | تست UI |
-| 14 | code-operator-agent | code.simorx.com | 4122 | عملیات کد |
-| 15 | dashboard-web | factory.simorx.com | 4100 | داشبورد |
+| 8 | reviewer-agent | reviewer.simorx.com | 4106 | review |
+| 9 | qa-agent | qa.simorx.com | 4107 | QA |
+| 10 | memory-agent | memory.simorx.com | 4109 | حافظه |
+| 11 | documentation-service | docs.simorx.com | 4110 | مستندات |
+| 12 | internet-research-service | research.simorx.com | 4115 | تحقیق زنده |
+| 13 | file-asset-service | assets.simorx.com | 4112 | فایل/S3 |
+| 14 | monitor-agent | monitor.simorx.com | 4113 | مانیتورینگ |
+| 15 | report-agent | reports.simorx.com | 4114 | گزارش |
+| 16 | browser-testing-agent | browser-testing.simorx.com | 4116 | تست UI |
+| 17 | voice-operator-agent | voice.simorx.com | 4121 | صدا |
+| 18 | code-operator-agent | code.simorx.com | 4122 | عملیات کد |
+| 19 | dashboard-web | factory.simorx.com | 4100 | داشبورد |
 
-پاسخ سالم: `{"status":"ok"}`
+پاسخ سالم backendها: `{"status":"ok"}` — برای dashboard صفحهٔ لاگین/خانه کافی است.
 
 **بررسی کل سیستم:**
 ```bash
 curl https://api.simorx.com/v1/services
 ```
-باید همه ۱۵ سرویس در لیست باشند.
+باید همه ۱۹ سرویس production در لیست باشند (`aos-agent-runtime` تا قبل از cutover جدا حساب نمی‌شود).
 
 ---
 
@@ -888,7 +1286,7 @@ curl https://api.simorx.com/v1/services
 
 **لوکال**
 ```bash
-cp .env.example .env && pnpm dev:all
+cp .env.example .env && pnpm sync:env && pnpm dev:all
 # داشبورد: http://localhost:4100
 ```
 
@@ -897,6 +1295,7 @@ cp .env.example .env && pnpm dev:all
 - `SERVICE_ID` در env هر Application
 - `nixpacks.toml` در روت → build/start خودکار با pnpm
 - `FACTORY_INTERNAL_TOKEN` یکسان در همه سرویس‌ها
+- نقشه سرویس‌ها: `docs/service-map.md`
 
 **Phase 10** — env جدید لازم نیست؛ فقط redeploy: `dashboard-web`، `gateway-api`، `orchestrator-agent`
 

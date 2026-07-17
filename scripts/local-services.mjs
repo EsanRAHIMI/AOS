@@ -2,36 +2,40 @@
  * Single source of truth for local dev: ports, order, and per-service env extras.
  * Used by sync-local-env.mjs and dev-all.mjs — keep in sync with README-SETUP.md.
  *
- * K1 Consolidation Prep (D-168): services/aos-agent-runtime is a
- * transitional CANDIDATE that hosts architect-agent/qa-agent/reviewer-
- * agent/report-agent's logic on the exact same historical ports (4103,
- * 4107, 4106, 4114). It is deliberately NOT added to LOCAL_SERVICES below —
- * doing so would make it start automatically, which would misrepresent
- * cutover as already decided when it is not (production still runs the 4
- * original services; see docs/deployment-plan.md). It also CANNOT run
- * alongside `architect-agent` (entry #5 below) in local dev: both bind port
- * 4103, so the second one to start fails with EADDRINUSE.
+ * Production truth: 19 independently deployable services (see docs/service-map.md).
+ * `LOCAL_SERVICES` below matches those 19.
+ *
+ * K1 Consolidation Prep (D-168/D-172): services/aos-agent-runtime is a
+ * transitional CANDIDATE that can host architect/reviewer/qa/report (and later
+ * memory/documentation/research) on the same historical ports. It is
+ * deliberately NOT added to LOCAL_SERVICES — doing so would make it start
+ * automatically, which would misrepresent cutover as already decided
+ * (production still runs the standalone services). It also CANNOT run
+ * alongside `architect-agent` (entry #5) in local dev: both bind port 4103,
+ * so the second one to start fails with EADDRINUSE.
  *
  * To try aos-agent-runtime locally instead of the standalone agents: stop
- * `architect-agent` (and, if you also run them, qa-agent/reviewer-agent/
- * report-agent — none of the three are in LOCAL_SERVICES today, they
- * predate this file's automation), then run
- * `cd services/aos-agent-runtime && pnpm dev` on its own. It reads the same
- * env keys (FACTORY_INTERNAL_TOKEN, MONGODB_URI, etc.) as any other service
- * via `pnpm sync:env`.
+ * architect-agent / reviewer-agent / qa-agent / report-agent, then copy
+ * `services/aos-agent-runtime/.env.example` → `.env` (it is NOT written by
+ * `pnpm sync:env`), then `cd services/aos-agent-runtime && pnpm dev`.
+ * Full cutover: deployment/dokploy/aos-agent-runtime.md.
  */
 
 export const PEER_BLOCK = `# --- Local peer URLs (orchestrator) ---
 ARCHITECT_AGENT_URL=http://localhost:4103
 BUILDER_AGENT_URL=http://localhost:4104
 DEVOPS_AGENT_URL=http://localhost:4105
+REVIEWER_AGENT_URL=http://localhost:4106
+QA_AGENT_URL=http://localhost:4107
 MEMORY_AGENT_URL=http://localhost:4109
 DOCUMENTATION_SERVICE_URL=http://localhost:4110
+INTERNET_RESEARCH_SERVICE_URL=http://localhost:4115
 MONITOR_AGENT_URL=http://localhost:4113
+REPORT_AGENT_URL=http://localhost:4114
 BROWSER_TESTING_AGENT_URL=http://localhost:4116
 FILE_ASSET_SERVICE_URL=http://localhost:4112`;
 
-/** Deploy / dev:start order (matches README-SETUP.md sections 1–14). */
+/** Deploy / dev:start order (matches README-SETUP.md sections 1–19). */
 export const LOCAL_SERVICES = [
   {
     num: 1,
@@ -119,6 +123,28 @@ export const LOCAL_SERVICES = [
   },
   {
     num: 8,
+    dir: 'reviewer-agent',
+    id: 'reviewer-agent',
+    name: 'Reviewer Agent',
+    port: 4106,
+    pkg: '@factory/reviewer-agent',
+    alias: 'review',
+    color: 'redBright',
+    extra: '',
+  },
+  {
+    num: 9,
+    dir: 'qa-agent',
+    id: 'qa-agent',
+    name: 'QA Agent',
+    port: 4107,
+    pkg: '@factory/qa-agent',
+    alias: 'qa',
+    color: 'greenBright',
+    extra: '',
+  },
+  {
+    num: 10,
     dir: 'memory-agent',
     id: 'memory-agent',
     name: 'Memory Agent',
@@ -129,7 +155,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 9,
+    num: 11,
     dir: 'documentation-service',
     id: 'documentation-service',
     name: 'Documentation Service',
@@ -140,7 +166,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 10,
+    num: 12,
     dir: 'internet-research-service',
     id: 'internet-research-service',
     name: 'Internet Research Service',
@@ -151,7 +177,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 11,
+    num: 13,
     dir: 'file-asset-service',
     id: 'file-asset-service',
     name: 'File Asset Service',
@@ -162,7 +188,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 12,
+    num: 14,
     dir: 'monitor-agent',
     id: 'monitor-agent',
     name: 'Monitor Agent',
@@ -173,7 +199,18 @@ export const LOCAL_SERVICES = [
     extra: 'MONITOR_INTERVAL_MS=60000',
   },
   {
-    num: 13,
+    num: 15,
+    dir: 'report-agent',
+    id: 'report-agent',
+    name: 'Report Agent',
+    port: 4114,
+    pkg: '@factory/report-agent',
+    alias: 'report',
+    color: 'blue',
+    extra: '',
+  },
+  {
+    num: 16,
     dir: 'browser-testing-agent',
     id: 'browser-testing-agent',
     name: 'Browser Testing Agent',
@@ -184,7 +221,18 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 14,
+    num: 17,
+    dir: 'voice-operator-agent',
+    id: 'voice-operator-agent',
+    name: 'Voice Operator Agent',
+    port: 4121,
+    pkg: '@factory/voice-operator-agent',
+    alias: 'voice',
+    color: 'cyan',
+    extra: '',
+  },
+  {
+    num: 18,
     dir: 'code-operator-agent',
     id: 'code-operator-agent',
     name: 'Code Operator Agent',
@@ -195,7 +243,7 @@ export const LOCAL_SERVICES = [
     extra: '',
   },
   {
-    num: 15,
+    num: 19,
     dir: 'dashboard-web',
     id: 'dashboard-web',
     name: 'Dashboard Web',
