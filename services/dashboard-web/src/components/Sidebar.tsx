@@ -29,7 +29,7 @@ function isActive(pathname: string, href: string): boolean {
 export function Sidebar({ user }: { user?: { email: string; role: string } }) {
   const pathname = usePathname() ?? '/';
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" data-no-auto-dir="">
       <div className="brand">
         <span className="logo" />
         <span>

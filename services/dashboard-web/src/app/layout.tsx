@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { MobileTopBar, MobileTabBar } from '@/components/MobileChrome';
 import { SafeModeBanner } from '@/components/SafeModeBanner';
 import { OperatorConsole } from '@/components/OperatorConsole';
+import { RtlAutoDir } from '@/components/RtlAutoDir';
 import { getSession } from '@/lib/auth';
 import { gateway } from '@/lib/gateway';
 import { getBriefingAction } from '@/app/jarvis/actions';
@@ -39,7 +40,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   if (!session) {
     return (
       <html lang="en">
-        <body>{children}</body>
+        <body>
+          <RtlAutoDir />
+          {children}
+        </body>
       </html>
     );
   }
@@ -53,6 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <body>
+        <RtlAutoDir />
         <MobileTopBar user={user} />
         <div className="app-shell">
           <Sidebar user={user} />

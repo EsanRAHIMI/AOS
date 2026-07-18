@@ -15,6 +15,7 @@ import {
   correctMemoryAction, pinMemoryAction, deleteMemoryAction,
   type JarvisSessionView, type JarvisTurnView,
 } from './actions';
+import { dirProps } from '@/lib/rtl';
 
 type IntelStatus = Awaited<ReturnType<typeof intelligenceStatusAction>>;
 type Memory = Record<string, unknown>;
@@ -125,14 +126,17 @@ export default function JarvisWorkspace() {
       <aside className="card" style={{ overflowY: 'auto', padding: 12 }}>
         <button className="btn" style={{ width: '100%', marginBottom: 10 }} onClick={newSession}>+ New thread</button>
         {sessions.length === 0 && <p style={{ fontSize: 13, opacity: 0.6 }}>No threads yet.</p>}
-        {sessions.map((s) => (
+        {sessions.map((s) => {
+          const title = s.title || 'Untitled';
+          return (
           <button key={s.sessionId} onClick={() => { setTab('chat'); void loadSession(s.sessionId); }}
-            style={{ display: 'block', width: '100%', textAlign: 'right', padding: '8px 10px', marginBottom: 4, borderRadius: 8, border: '1px solid transparent',
-              background: s.sessionId === activeId ? 'rgba(89,194,255,0.12)' : 'transparent', color: 'inherit', cursor: 'pointer' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title || 'Untitled'}</div>
-            <div style={{ fontSize: 11, opacity: 0.55 }}>{s.turnCount} turns · ${s.totalCostUsd.toFixed(3)}</div>
+            style={{ display: 'block', width: '100%', padding: '8px 10px', marginBottom: 4, borderRadius: 8, border: '1px solid transparent',
+              background: s.sessionId === activeId ? 'rgba(89,194,255,0.12)' : 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'start' }}>
+            <div {...dirProps(title)} style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+            <div style={{ fontSize: 11, opacity: 0.55 }} data-no-auto-dir="">{s.turnCount} turns · ${s.totalCostUsd.toFixed(3)}</div>
           </button>
-        ))}
+          );
+        })}
         <button className="btn ghost" style={{ width: '100%', marginTop: 12 }} onClick={openMemory}>🧠 Memory</button>
       </aside>
 
@@ -157,11 +161,11 @@ export default function JarvisWorkspace() {
               )}
               {turns.map((t, i) => (
                 <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ alignSelf: 'flex-end', maxWidth: '80%', background: 'rgba(89,194,255,0.14)', padding: '9px 13px', borderRadius: 14, borderTopRightRadius: 4, whiteSpace: 'pre-wrap' }}>{t.userText}</div>
+                  <div {...dirProps(t.userText)} style={{ alignSelf: 'flex-end', maxWidth: '80%', background: 'rgba(89,194,255,0.14)', padding: '9px 13px', borderRadius: 14, borderTopRightRadius: 4, whiteSpace: 'pre-wrap' }}>{t.userText}</div>
                   {(t.replyText || t.status === 'completed') && (
-                    <div style={{ alignSelf: 'flex-start', maxWidth: '85%', background: 'rgba(255,255,255,0.045)', padding: '10px 14px', borderRadius: 14, borderTopLeftRadius: 4, whiteSpace: 'pre-wrap' }}>
+                    <div {...dirProps(t.replyText)} style={{ alignSelf: 'flex-start', maxWidth: '85%', background: 'rgba(255,255,255,0.045)', padding: '10px 14px', borderRadius: 14, borderTopLeftRadius: 4, whiteSpace: 'pre-wrap' }}>
                       {t.replyText}
-                      <div style={{ marginTop: 6, fontSize: 11, opacity: 0.5, display: 'flex', gap: 10 }}>
+                      <div style={{ marginTop: 6, fontSize: 11, opacity: 0.5, display: 'flex', gap: 10 }} data-no-auto-dir="">
                         {t.reasoningMode === 'none' ? <span>⚠︎ degraded (no model)</span> : <span>{t.provider || 'model'}</span>}
                         {t.costUsd > 0 && <span>${t.costUsd.toFixed(4)}</span>}
                         {t.status === 'waiting_approval' && <span style={{ color: '#ffb020' }}>awaiting approval</span>}
@@ -170,12 +174,15 @@ export default function JarvisWorkspace() {
                   )}
                 </div>
               ))}
-              {busy && steps.map((s, i) => (
+              {busy && steps.map((s, i) => {
+                const summary = `${s.toolName ? `${s.toolName}: ` : ''}${s.summary}`;
+                return (
                 <div key={`step-${i}`} style={{ alignSelf: 'flex-start', fontSize: 12, opacity: 0.7, display: 'flex', gap: 8, alignItems: 'center', padding: '2px 8px' }}>
                   <span style={{ color: s.ok ? '#4ade80' : '#ff6b81' }}>{s.kind === 'tool_execution' ? '⚙' : s.kind === 'approval_pause' ? '⏸' : '◆'}</span>
-                  <span>{s.toolName ? `${s.toolName}: ` : ''}{s.summary}</span>
+                  <span {...dirProps(summary)}>{summary}</span>
                 </div>
-              ))}
+                );
+              })}
               {busy && steps.length === 0 && <div style={{ alignSelf: 'flex-start', fontSize: 12, opacity: 0.6 }}>Jarvis is thinking…</div>}
             </div>
 
@@ -192,6 +199,7 @@ export default function JarvisWorkspace() {
 
             <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 8 }}>
               <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
+                {...dirProps(input || 'در مورد هدف‌ها')}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
                 placeholder="در مورد هدف‌ها، تحقیق یا توسعهٔ سیستم بپرس…  /  Ask about goals, research or self-development…"
                 style={{ flex: 1, resize: 'none', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 12px', color: 'inherit', fontFamily: 'inherit' }} />
@@ -216,8 +224,8 @@ export default function JarvisWorkspace() {
                       <button className="btn ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#ff6b81' }} onClick={async () => { if (confirm('Delete this memory?')) { await deleteMemoryAction(id); setMemories(await listMemoriesAction()); } }}>Delete</button>
                     </div>
                   </div>
-                  <div style={{ fontSize: 14 }}>{String(m.content)}</div>
-                  {Boolean(m.subject) && <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{String(m.subject)}</div>}
+                  <div {...dirProps(String(m.content))} style={{ fontSize: 14 }}>{String(m.content)}</div>
+                  {Boolean(m.subject) && <div {...dirProps(String(m.subject))} style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{String(m.subject)}</div>}
                 </div>
               );
             })}

@@ -2,6 +2,7 @@
 import { summonJarvis } from './UniverseZone';
 import { RelativeTime } from './RelativeTime';
 import type { JarvisBriefingView } from '@/app/jarvis/actions';
+import { dirProps } from '@/lib/rtl';
 
 /**
  * Phase AF.1 Step 2 — The Jarvis Presence Bar.
@@ -60,7 +61,7 @@ export function PresenceBar({ briefing, memoryInsights }: { briefing: JarvisBrie
       {/* Primary priority — the whole point of this bar. Never flattened
           into prose: this is what the owner explicitly said matters, or an
           honest statement that nothing is ranked yet. */}
-      <div style={{ fontSize: hasPriority ? 17 : 13, fontWeight: hasPriority ? 750 : 500, lineHeight: 1.35 }}>
+      <div {...dirProps(hasPriority ? briefing.primaryPriority : undefined)} style={{ fontSize: hasPriority ? 17 : 13, fontWeight: hasPriority ? 750 : 500, lineHeight: 1.35 }}>
         {hasPriority ? briefing.primaryPriority : 'No ranked priority yet — tell Jarvis what matters most, or build your baseline.'}
       </div>
 
@@ -69,7 +70,7 @@ export function PresenceBar({ briefing, memoryInsights }: { briefing: JarvisBrie
           <span className="label" style={{ fontSize: 10 }}>Active blockers — do not replace the priority above, just need attention alongside it</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {briefing.activeBlockers.slice(0, 4).map((b, i) => (
-              <span key={i} className="badge err" style={{ fontSize: 11 }}>{b.slice(0, 90)}</span>
+              <span key={i} {...dirProps(b)} className="badge err" style={{ fontSize: 11 }}>{b.slice(0, 90)}</span>
             ))}
           </div>
         </div>
@@ -78,7 +79,7 @@ export function PresenceBar({ briefing, memoryInsights }: { briefing: JarvisBrie
       {briefing.systemWarnings.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {briefing.systemWarnings.slice(0, 3).map((w, i) => (
-            <span key={i} className="chip" style={{ fontSize: 10.5, opacity: 0.75 }} title="System warning — informational, not your priority">{w.slice(0, 70)}</span>
+            <span key={i} {...dirProps(w)} className="chip" style={{ fontSize: 10.5, opacity: 0.75 }} title="System warning — informational, not your priority">{w.slice(0, 70)}</span>
           ))}
         </div>
       )}
@@ -88,14 +89,14 @@ export function PresenceBar({ briefing, memoryInsights }: { briefing: JarvisBrie
           <span className="label" style={{ fontSize: 10 }}>Jarvis recommends</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {briefing.recommendedNextActions.slice(0, 4).map((a, i) => (
-              <button key={i} type="button" className="chip" style={{ cursor: 'pointer', fontSize: 11.5 }} onClick={() => summonJarvis(a)}>◈ {a}</button>
+              <button key={i} type="button" {...dirProps(a)} className="chip" style={{ cursor: 'pointer', fontSize: 11.5 }} onClick={() => summonJarvis(a)}>◈ {a}</button>
             ))}
           </div>
         </div>
       )}
 
       {briefing.narrative && (
-        <div className="m" style={{ fontSize: 11.5, lineHeight: 1.5, opacity: 0.85 }}>{briefing.narrative}</div>
+        <div {...dirProps(briefing.narrative)} className="m" style={{ fontSize: 11.5, lineHeight: 1.5, opacity: 0.85 }}>{briefing.narrative}</div>
       )}
 
       {briefing.memoryFactsUsed.length > 0 && (
@@ -108,7 +109,7 @@ export function PresenceBar({ briefing, memoryInsights }: { briefing: JarvisBrie
           notes) — distinct from the extracted Jarvis facts above. Real field
           on /v1/me/universe that had zero consumers before this phase. */}
       {memoryInsights && memoryInsights.length > 0 && (
-        <div className="m" style={{ fontSize: 10, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+        <div {...dirProps(memoryInsights[0])} className="m" style={{ fontSize: 10, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
           Recent memory: {memoryInsights[0].slice(0, 140)}
         </div>
       )}

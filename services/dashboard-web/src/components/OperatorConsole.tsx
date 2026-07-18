@@ -9,6 +9,7 @@ import { UtteranceGate } from '@/lib/utteranceGate';
 import { domainLinkFor, type DomainLink } from '@/lib/domainLinks';
 import { invalidateBlocks } from '@/components/UniverseProvider';
 import { blocksForApprovalDecision } from '@/lib/realtimeBlocks';
+import { dirProps } from '@/lib/rtl';
 
 /**
  * Phase X — Operator Console; Phase AF.1 — promoted to the persistent Jarvis
@@ -447,15 +448,15 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
           display: 'flex', alignItems: 'center', gap: 9, maxWidth: 'min(380px, calc(100vw - 32px))',
           padding: '10px 16px', borderRadius: 16, border: '1px solid var(--border-2)',
           background: 'var(--glass-strong)', backdropFilter: 'blur(var(--blur))', WebkitBackdropFilter: 'blur(var(--blur))',
-          cursor: 'pointer', textAlign: 'left', boxShadow: '0 12px 34px -12px rgba(0,0,0,0.55)',
+          cursor: 'pointer', textAlign: 'start', boxShadow: '0 12px 34px -12px rgba(0,0,0,0.55)',
         }}
       >
         <span className={hasActivity ? 'op-active-dot' : undefined} style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor, boxShadow: `0 0 8px ${dotColor}`, flexShrink: 0 }} />
         <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 9.5, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--muted, #7a8699)', textTransform: 'uppercase' }}>
+          <span style={{ fontSize: 9.5, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--muted, #7a8699)', textTransform: 'uppercase' }} data-no-auto-dir="">
             {hasActivity ? 'Jarvis · working' : 'Jarvis'}
           </span>
-          <span style={{ fontSize: 12.5, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text)' }}>
+          <span {...dirProps(headline)} style={{ fontSize: 12.5, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text)' }}>
             {headline}
           </span>
         </span>
@@ -465,7 +466,7 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
   }
 
   return (
-    <div style={{ position: 'fixed', right: 16, bottom: 'calc(16px + env(safe-area-inset-bottom))', zIndex: 60, width: 'min(420px, calc(100vw - 32px))', maxHeight: 'min(76vh, 640px)', display: 'flex', flexDirection: 'column' }} className="card">
+    <div data-rtl-root="" style={{ position: 'fixed', right: 16, bottom: 'calc(16px + env(safe-area-inset-bottom))', zIndex: 60, width: 'min(420px, calc(100vw - 32px))', maxHeight: 'min(76vh, 640px)', display: 'flex', flexDirection: 'column' }} className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor, boxShadow: `0 0 8px ${dotColor}`, flexShrink: 0 }} />
@@ -513,7 +514,7 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 2px', minHeight: 140 }}>
         {log.map((m, i) => (
           <div key={i} style={{ alignSelf: m.who === 'user' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
-            <div className={m.who === 'user' ? 'glass' : ''} style={{ padding: '8px 11px', borderRadius: 10, fontSize: 13, background: m.who === 'operator' ? 'var(--glass-2)' : undefined, border: m.who === 'operator' ? '1px solid var(--border)' : undefined }}>{m.text}</div>
+            <div {...dirProps(m.text)} className={m.who === 'user' ? 'glass' : ''} style={{ padding: '8px 11px', borderRadius: 10, fontSize: 13, background: m.who === 'operator' ? 'var(--glass-2)' : undefined, border: m.who === 'operator' ? '1px solid var(--border)' : undefined }}>{m.text}</div>
             {/* Phase AF.1 Step 7 / AF.3 — a small, real result block: which
                 domain this concerns and what Jarvis classified the goal as
                 (both the exact real intentCategory, never guessed — Phase
@@ -542,7 +543,7 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
         {followUps.length > 0 && (
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {followUps.map((f, i) => (
-              <button key={i} type="button" className="chip" style={{ cursor: 'pointer', fontSize: 11 }} onClick={() => { setFollowUps([]); void submitCommand(f, 'text'); }}>{f}</button>
+              <button key={i} type="button" className="chip" {...dirProps(f)} style={{ cursor: 'pointer', fontSize: 11 }} onClick={() => { setFollowUps([]); void submitCommand(f, 'text'); }}>{f}</button>
             ))}
           </div>
         )}
@@ -685,7 +686,7 @@ export function OperatorConsole({ role, initialBriefing = null }: { role: string
         ) : speechSupported ? (
           <button type="button" aria-label="Talk (browser speech)" onClick={toggleListen} className={`btn ${listening ? 'btn-err' : 'btn-ghost'}`} style={{ padding: '8px 12px', fontSize: 12.5 }}>{listening ? 'Live' : 'Talk'}</button>
         ) : null}
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Give the operator a goal…" style={{ flex: 1, fontSize: 13, padding: '9px 11px' }} />
+        <input value={input} onChange={(e) => setInput(e.target.value)} {...dirProps(input)} placeholder="Give the operator a goal…" style={{ flex: 1, fontSize: 13, padding: '9px 11px' }} />
         <button type="submit" className="btn btn-primary" style={{ padding: '8px 13px' }}>Send</button>
       </form>
     </div>
