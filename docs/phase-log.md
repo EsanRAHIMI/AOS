@@ -3846,3 +3846,27 @@ Verification (real infra this session): shared 219/219, gateway 254/254;
 scripts/jarvis-runtime-verify.mjs 8/8 (real Redis + real Mongo + real local
 OpenAI-compatible model); scripts/jarvis-http-verify.mjs 7/7 (real gateway
 process). No paid API used or required. Typechecks + scope-boundary clean.
+
+## Phase K2 Product Activation — real personal state + real self-dev run (2026-07-18, D-178)
+
+Turned the K2 core into usable product behavior verified through the REAL stack
+(live gateway + real Redis + real MongoDB), not mocks. Full detail: decision-log
+D-178, docs/jarvis-spec.md. Summary:
+
+- Personal operating state (shared/src/personal2) over Memory v2 + missions;
+  deterministic onboarding; 8 governed personal tools; /v1/jarvis/personal-state
+  + /onboarding routes.
+- scripts/jarvis-product-scenarios.mjs 12/12 through the live gateway (found +
+  fixed 2 real bugs). scripts/jarvis-runtime-verify.mjs 8/8, jarvis-http-verify
+  9/9 still green.
+- Real model wiring: OpenAI-compatible provider wire proven vs a real HTTP
+  server + skip-gated real-endpoint check + scripts/model-health-check.mjs.
+- Real self-development run (D-178b): branch selfdev/mission-next-action
+  (9e83de9, +165/-5), real typecheck (caught a bug), 5 new tests + suite green,
+  build green; durable ledger via scripts/selfdev-record-run.mjs (5/5) stopped
+  at awaiting_merge_approval — NOT merged.
+
+BLOCKED_EXTERNAL in this sandbox (probed, genuine): capable model reasoning (all
+weight hosts + inference endpoints except api.anthropic.com blocked, no key);
+real-browser launch (libXdamage.so.1 absent, arm64 mirrors 403, no root). Code
+paths real; enablement documented.

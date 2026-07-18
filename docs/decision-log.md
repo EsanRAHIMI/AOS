@@ -2,6 +2,53 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-18 — K2 Product Activation: personal state, real-model wiring, real self-development run (D-178)
+
+Follow-on to D-177 (K2 core). The core runtime existed but was proven with a
+scripted mock model and API-only checks. D-178 turns it into usable product
+behavior verified through the REAL stack, and honestly isolates what is a
+genuine external blocker in this build environment.
+
+**Delivered + verified (real Redis + real MongoDB + live gateway process):**
+- Personal operating state over the EXISTING stores (Memory v2 + missions), no
+  new architecture: `shared/src/personal2` snapshot + deterministic onboarding
+  (explicit owner answers -> confirmed, provenance-tagged records + seed vision;
+  nothing fabricated). 8 governed personal tools. Gateway routes
+  /v1/jarvis/{personal-state,onboarding}.
+- Real-HTTP product scenarios (`scripts/jarvis-product-scenarios.mjs`): 12/12
+  through the live gateway — onboarding persistence, reload continuity,
+  re-onboarding without duplicates, memory provenance + scope-stamping +
+  correction, grounded briefing. These scenarios FOUND AND FIXED two real bugs
+  (listMemories leaked superseded records into current state; briefing route
+  passed empty openDecisions).
+- Real model integration made production-correct: `OpenAICompatibleToolsProvider`
+  wire proven against a real HTTP server (`toolcalling.integration.test.ts`) +
+  a skip-gated real-endpoint check + `scripts/model-health-check.mjs`. No
+  hardcoded model IDs; local (Ollama/vLLM) is the resolution default.
+- Real self-development run (D-178b): a genuine owner-visible improvement —
+  `computeNextAction` (single next action across the mission hierarchy) surfaced
+  in the owner briefing with a Continue-in-Jarvis deep link — implemented on a
+  REAL git branch `selfdev/mission-next-action` (commit 9e83de9, +165/-5), real
+  typecheck (which caught a real undefined-index bug), 5 new tests + full suite
+  green, real build. Driven through the durable self-dev state machine
+  (`scripts/selfdev-record-run.mjs`, 5/5) which enforced approval-before-implement
+  and verify-before-merge and STOPPED at awaiting_merge_approval. NOT merged.
+  A reflection lesson was recorded because verification succeeded.
+
+**Honest BLOCKED_EXTERNAL in this build sandbox (genuine, probed):**
+- Real capable model reasoning: every model-weight host (HuggingFace, Ollama
+  registry, jsdelivr, GitHub LFS/release-assets) and every inference endpoint
+  except api.anthropic.com is blocked by the sandbox allowlist; no
+  ANTHROPIC_API_KEY is set. The code path is real + health-checked; enable with
+  LLM_LOCAL_BASE_URL (Ollama) or ANTHROPIC_API_KEY.
+- Real-browser /jarvis (Playwright): chromium downloads, but launch needs
+  libXdamage.so.1 which is absent and unobtainable (arm64 mirrors 403, no root
+  for apt). Spec `e2e/jarvis.spec.ts` is real and runnable with
+  `playwright install --with-deps chromium`.
+- The AOS research module's own Node fetch cannot reach arbitrary public
+  sources from this sandbox (allowlist); the module is correct + tested and
+  works in a normal deployment.
+
 ## 2026-07-17 — K2 Real Intelligence: the shared agent loop, persistent Jarvis, Memory v2, missions, independent research (D-177)
 
 The K2 mandate: replace the deterministic "fake center" with ONE governed,
