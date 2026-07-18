@@ -78,7 +78,8 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
 | **AOS-native research (its own tools fetch the web)** | **BLOCKED_EXTERNAL** | the sandbox allowlist blocks the research module's own outbound `fetch`; SearXNG not deployed. Needs a networked env / SearXNG. |
 | Personal onboarding UI in `/jarvis` | CODE_COMPLETE | first-run panel wired to `/onboarding` + `/personal-state`; **not** browser-verified |
 | **Real model REASONING (quality)** | **BLOCKED_EXTERNAL** | no reachable model in the sandbox; only `api.anthropic.com` host reachable, no key. See §5. |
-| **Real-browser `/jarvis` (login→session→stream→approval→resume→cancel)** | **BLOCKED_EXTERNAL** | chromium can't launch (missing `libXdamage.so.1`, no root); `e2e/jarvis.spec.ts` ready |
+| Browser LAUNCH (real Chromium headless) | RUNTIME_VERIFIED | D-178d — real Chromium 149 launches + renders + screenshots via `e2e/sandbox-libs/build-xdamage-stub.sh` (stubs the one missing lib, no root). |
+| **Real-browser `/jarvis` full E2E (login→session→stream→approval→resume→cancel)** | **BLOCKED_EXTERNAL** | Browser now launches; blocked by (a) no real model, and (b) THIS sandbox can't build/serve the Next.js dashboard within its 45s process-lifetime limit. `e2e/jarvis.spec.ts` + `playwright.config.ts` run with one command on a normal machine. |
 | Deployment to a real domain | not attempted | no owner infra changes made |
 
 ### Runtime/HTTP verification is NOT browser verification — explicit separation
@@ -112,8 +113,14 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
   inference endpoint EXCEPT `api.anthropic.com` is blocked by the sandbox
   allowlist; no `ANTHROPIC_API_KEY` is set. So autonomous reasoning was not run
   here. The provider code path is real and health-checked.
-- **Browser can't launch in the sandbox** — chromium downloads but needs
-  `libXdamage.so.1`, absent with no root/apt and arm64 mirrors blocked.
+- **Browser LAUNCH is now solved (D-178d)** — real Chromium 149 runs headless
+  via the `libXdamage.so.1` stub (`e2e/sandbox-libs/build-xdamage-stub.sh`). The
+  remaining browser gap is that THIS sandbox cannot build/serve the Next.js
+  dashboard within its 45s per-call process-lifetime limit (builds don't resume,
+  processes die between calls). Not a code defect; a non-issue on a normal
+  machine. Chromium's SWC-for-Next detail: the linux-arm64 `@next/swc` binary
+  must be present (node_modules installed on macOS lacks it) —
+  `npm i @next/swc-linux-arm64-gnu@<nextver>` fixes it.
 - **Injected tools report `available:false` when their dep isn't bound:**
   `system_service_health`, `task_create`, `code_*`, `personal_snapshot`
   (legacy) require the hosting process to bind them; a bare gateway boot shows
@@ -129,13 +136,25 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
 - The full self-development loop *initiated through Jarvis by a model* (the
   engineering pipeline is real; the model-driven decision step needs a model).
 
-## 7. Next milestone
+## 7. Next milestone — the exact external blocker (stop condition)
 
-**K2 Product Activation completion** — with a real local model (Ollama) and a
-working browser, drive the owner scenarios end-to-end in `/jarvis`:
-conversation, streaming, tool steps, approval/resume, personal state,
-cross-session memory, research, briefing, and one Jarvis-initiated
-self-development run. No architecture redesign.
+To reach PRODUCT_VERIFIED, exactly one owner action is required:
+
+**BLOCKER:** no reachable LLM in the build sandbox (every model host + weight
+CDN blocked; only `api.anthropic.com` reachable, no key).
+
+**ONE VALUE TO PROVIDE (either):**
+- `LLM_LOCAL_BASE_URL=http://127.0.0.1:11434/v1` (+ `ollama pull qwen2.5:7b`), or
+- `ANTHROPIC_API_KEY=sk-ant-…`
+
+**VERIFIED IMMEDIATELY AFTER (already scripted, will run without further code):**
+`node scripts/model-health-check.mjs` → a genuine generated response; then on a
+machine that can serve the dashboard (any normal Linux/macOS), the
+`e2e/jarvis.spec.ts` suite drives the real browser through: login → `/jarvis` →
+Persian turn → **real streaming + real tool call + observation + second
+reasoning turn** → reload continuity → approval card → approve+resume →
+reject (no mutation) → cancel. The browser itself already launches here
+(D-178d); only the model + a servable dashboard remain.
 
 ## 8. Exact commands to run and verify
 
