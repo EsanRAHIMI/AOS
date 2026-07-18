@@ -84,6 +84,12 @@ async function main() {
 
     const mem = await (await fetch(`${GW}/v1/jarvis/memories`, { headers: H })).json();
     rec('GET /v1/jarvis/memories serves the owner memory list', Array.isArray(mem.data));
+
+    const brief = await (await fetch(`${GW}/v1/jarvis/owner-briefing`, { headers: H })).json();
+    rec('GET /v1/jarvis/owner-briefing is grounded and honestly empty on a fresh DB', brief.data?.empty === true && /موردی برای گزارش نیست|Nothing to report/.test(brief.data?.headline ?? ''), `headline="${(brief.data?.headline ?? '').slice(0, 60)}"`);
+
+    const roles = await (await fetch(`${GW}/v1/jarvis/roles`, { headers: H })).json();
+    rec('GET /v1/jarvis/roles serves versioned specialist role definitions (no prompt leakage)', Array.isArray(roles.data) && roles.data.length >= 6 && roles.data.every((r) => r.promptVersion && !r.systemPrompt), `${roles.data?.length} roles`);
   } catch (e) {
     rec('HTTP scenario', false, e?.message ?? String(e));
   }

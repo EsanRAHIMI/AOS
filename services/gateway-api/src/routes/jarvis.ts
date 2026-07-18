@@ -33,6 +33,7 @@ import {
   listMemories, correctMemory, pinMemory, deleteMemory,
   modelRegistryFromEnv, probeModelProvider,
   researchCoverageStatus,
+  buildOwnerBriefing, listSelfDevRuns, listRoles,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req } from './deps.js';
@@ -269,6 +270,41 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
     const actor = actorFor(req);
     const ok = await deleteMemory({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null }, req.params.id, publish);
     return ok ? success({ deleted: true }) : reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'memory not found in scope'));
+  });
+
+  /* --------------------------- owner briefing v2 ------------------------- */
+
+  // Grounded in REAL stored state: mission health + pending approvals +
+  // self-development proposals. Honestly empty when nothing exists
+  // (buildOwnerBriefing never manufactures content). The K2 mandate §7
+  // briefing — distinct from the legacy /v1/jarvis/briefing daily-brain.
+  app.get('/v1/jarvis/owner-briefing', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const actor = actorFor(req);
+    const lang = String((req.query as Record<string, unknown>)?.lang ?? 'fa') === 'en' ? 'en' as const : 'fa' as const;
+    const [pendingApprovals, selfDev] = await Promise.all([
+      deps.approvals.find({ status: 'pending' }, { projection: { _id: 0, summary: 1 } }).sort({ createdAt: -1 }).limit(10).toArray(),
+      listSelfDevRuns(10),
+    ]);
+    const briefing = await buildOwnerBriefing(
+      { actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null },
+      {
+        overdueTasks: [],
+        pendingApprovals: pendingApprovals.map((a) => String((a as { summary?: string }).summary ?? '')),
+        openDecisions: [],
+        recentResearch: [],
+        selfDevProposals: selfDev.filter((s) => s.stage === 'proposed' || s.stage === 'awaiting_merge_approval').map((s) => `${s.title} (${s.stage})`),
+      },
+      lang,
+    );
+    return success(briefing);
+  });
+
+  /* ------------------------------- roles --------------------------------- */
+
+  app.get('/v1/jarvis/roles', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    return success(listRoles().map(({ systemPrompt: _sp, ...meta }) => meta));
   });
 
   /* -------------------------- intelligence status ------------------------ */
