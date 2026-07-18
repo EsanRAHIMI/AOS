@@ -309,21 +309,28 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
     if (!guard(req)) return deny(reply);
     const actor = actorFor(req);
     const lang = String((req.query as Record<string, unknown>)?.lang ?? 'fa') === 'en' ? 'en' as const : 'fa' as const;
-    const [pendingApprovals, selfDev] = await Promise.all([
+    const memActor = { actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null };
+    const [pendingApprovals, selfDev, openDecisionMems, oppMems] = await Promise.all([
       deps.approvals.find({ status: 'pending' }, { projection: { _id: 0, summary: 1 } }).sort({ createdAt: -1 }).limit(10).toArray(),
       listSelfDevRuns(10),
+      // Open decisions the owner recorded (real state → real briefing item).
+      listMemories(memActor, { kinds: ['decision'], limit: 10 }),
+      listMemories(memActor, { kinds: ['opportunity'], limit: 10 }),
     ]);
     const briefing = await buildOwnerBriefing(
-      { actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null },
+      memActor,
       {
         overdueTasks: [],
         pendingApprovals: pendingApprovals.map((a) => String((a as { summary?: string }).summary ?? '')),
-        openDecisions: [],
+        openDecisions: openDecisionMems.map((m) => m.content),
         recentResearch: [],
         selfDevProposals: selfDev.filter((s) => s.stage === 'proposed' || s.stage === 'awaiting_merge_approval').map((s) => `${s.title} (${s.stage})`),
       },
       lang,
     );
+    // Opportunities from real owner state (buildOwnerBriefing leaves the field
+    // for the caller to fill from scoped repos).
+    briefing.opportunities = oppMems.map((m) => m.content);
     return success(briefing);
   });
 

@@ -427,9 +427,14 @@ export async function buildMemoryContext(actor: MemoryActor, query: string, opts
   return { lines, text: lines.join('\n'), usedMemoryIds: used, tokenEstimate: tokens };
 }
 
-export async function listMemories(actor: MemoryActor, opts: { kinds?: MemoryKind[]; limit?: number; includeDeleted?: boolean } = {}): Promise<MemoryRecord[]> {
+export async function listMemories(actor: MemoryActor, opts: { kinds?: MemoryKind[]; limit?: number; includeDeleted?: boolean; includeSuperseded?: boolean } = {}): Promise<MemoryRecord[]> {
   const filter: Record<string, unknown> = { ...scopeFilter(actor) };
   if (!opts.includeDeleted) filter.deletedAt = null;
+  // Current-state list: a record superseded by a newer one (contradiction
+  // chain) is NOT part of the live state, so it is excluded by default —
+  // otherwise a corrected/superseded fact double-counts (found by the D-178
+  // real-HTTP re-onboarding scenario). Pass includeSuperseded for history.
+  if (!opts.includeSuperseded) filter.supersededBy = null;
   if (opts.kinds?.length) filter.kind = { $in: opts.kinds };
   return records().find(filter as never, { projection: { _id: 0 } as never }).sort({ pinned: -1, updatedAt: -1 }).limit(opts.limit ?? 100).toArray();
 }
