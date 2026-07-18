@@ -1,10 +1,30 @@
 # Architecture
 
-AOS is a TypeScript monorepo of **19 independently deployable HTTP services**.
-It is designed as a governed multi-agent factory today, and as a multi-user,
-role-aware operating layer next. Esan is the primary owner and first operator;
-future users and roles must share the same software kernel while keeping their
-data isolated.
+> **K2 as-built addendum (D-177/D-178).** The K2 intelligence layer does NOT
+> add services. Jarvis, the agent loop, and all specialist roles run **inside
+> `gateway-api`** as logical actors; roles are prompted actors (`shared/src/
+> agentcore/roles.ts`), never new deployables. The authoritative live snapshot
+> is `docs/current-state.md`. The "19 services" framing below is historical;
+> the master-direction target is a smaller deployable set, and K2 was
+> implemented consistently with that (no new service). Key K2 module homes:
+> `shared/src/agentcore/` (loop + registry + roles), `shared/src/jarvis/`
+> (session + turn-runner), `shared/src/memory2/`, `shared/src/missions/`,
+> `shared/src/personal2/`, `shared/src/research/`, `shared/src/watches/`,
+> `shared/src/selfdev/`; gateway routes in
+> `services/gateway-api/src/routes/jarvis.ts`; UI in
+> `services/dashboard-web/src/app/jarvis/`.
+>
+> **The one agent loop:** goal → context assembly (transcript + Memory v2 +
+> missions + honest status) → model planning (native tool calling) → governed
+> tool request (policy gate, fail-closed) → execution OR approval PAUSE →
+> observation → replan → exact RESUME after approval → grounded answer. Raw
+> model text never mutates state; tools are the only mutation path and every
+> call is ledgered in `tool_invocations`.
+
+AOS is a TypeScript monorepo. It is designed as a governed multi-agent factory
+today, and as a multi-user, role-aware operating layer next. Esan is the
+primary owner and first operator; future users and roles must share the same
+software kernel while keeping their data isolated.
 
 ## Current Shape
 

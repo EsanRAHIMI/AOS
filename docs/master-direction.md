@@ -6,6 +6,26 @@
 
 ---
 
+> **⟶ CURRENT STATE (read this first): `docs/current-state.md`.** This master
+> direction is the strategic arbiter; for the exact as-built state, commit,
+> verification statuses, and run/verify commands, the current-state snapshot is
+> authoritative and kept up to date every session.
+>
+> **Progress vs this plan (as of commit `58a189e`, 2026-07-18):**
+> - **K1** (trust substrate / reliable dispatch): the BullMQ queue backbone is
+>   RUNTIME_VERIFIED against real Redis+Mongo (D-173/D-174/D-176).
+> - **K2** (real intelligence): the shared agent loop, unified governed tool
+>   registry, persistent Jarvis, Memory v2, missions, independent research,
+>   watches/briefing, self-development pipeline, and specialist roles are
+>   implemented and RUNTIME_VERIFIED against real Redis+Mongo+a real local
+>   OpenAI-compatible server (D-177/D-178). **K2 is NOT declared complete:**
+>   real-model reasoning quality and real-browser `/jarvis` are
+>   BLOCKED_EXTERNAL in the build sandbox (no reachable model / no browser
+>   libs). See current-state §5.
+> - **K3/K4/K5** not started.
+
+---
+
 ## A. Executive Diagnosis
 
 ### What AOS actually is today

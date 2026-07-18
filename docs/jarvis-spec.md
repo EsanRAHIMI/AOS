@@ -89,20 +89,44 @@ reason (`completed`, `max_steps`, `timeout`, `budget_cost`, `budget_tokens`,
   always work; Tavily is optional, never required. See domain-framework.md §
   Research.
 
-## 6. HTTP surface (`/v1/jarvis/*`)
+## 6. HTTP surface (`/v1/jarvis/*`) — as built (17 routes)
 
 Sessions: `POST/GET /sessions`, `GET /sessions/:id`. Turns:
 `POST /sessions/:id/turns` (`?stream=1` for SSE). Runs: `GET /runs/:runId`,
 `POST /runs/:runId/cancel`. Approvals: `POST /loop-approvals/:id/decision`
 (resumes the exact run). Registry: `GET /tools`. Memory:
 `GET /memories`, `POST /memories/:id/{correct,pin,delete}`. Status:
-`GET /intelligence-status`.
+`GET /intelligence-status`. Roles: `GET /roles`.
 
-## 7. Verification (D-177)
+**D-178 additions (Product Activation):**
+- `GET /personal-state` — owner operating-state snapshot (Memory v2 + missions).
+- `GET /onboarding/questions`, `POST /onboarding` — deterministic onboarding
+  (explicit answers → confirmed records + seed vision; nothing fabricated).
+- `GET /owner-briefing?lang=fa|en` — grounded in real mission health + recorded
+  decisions/opportunities + pending approvals + self-dev proposals.
 
-- Contract: `shared/test/agentcore.contract.test.ts` (loop/governance/resume/
-  injection/budgets), `memory2.contract.test.ts` (cross-session recall),
-  `missions.contract.test.ts`, `research-stack.contract.test.ts`,
-  `watches-selfdev.contract.test.ts`.
-- Runtime (real Redis + real Mongo + real local model): `scripts/jarvis-runtime-verify.mjs` (8/8).
-- HTTP product tier (real gateway process): `scripts/jarvis-http-verify.mjs` (7/7).
+## 7. Verification (D-177 + D-178) — current
+
+- Contract tests: `agentcore` (loop/governance/resume/injection/budgets),
+  `memory2` (cross-session recall), `missions`, `research-stack`,
+  `watches-selfdev`, `personal2`, `toolcalling.integration` (real HTTP wire).
+  Shared **233 pass / 1 skipped**; gateway **254 pass**.
+- Runtime (real Redis + real Mongo + a real local OpenAI-compatible server):
+  `scripts/jarvis-runtime-verify.mjs` **8/8**.
+- HTTP product tier (real gateway process): `scripts/jarvis-http-verify.mjs`
+  **9/9**; `scripts/jarvis-product-scenarios.mjs` **12/12**.
+- Self-development durable ledger: `scripts/selfdev-record-run.mjs` **5/5**
+  (real branch `selfdev/mission-next-action`, gates enforced, not merged).
+- **Model reasoning quality** and **real-browser `/jarvis`** are
+  **BLOCKED_EXTERNAL** in the build sandbox — see `docs/current-state.md` §5.
+  The mock model in the runtime verifier proves the *wire/mechanism only*, never
+  reasoning.
+
+## 8. Model provider (independence)
+
+`modelRegistryFromEnv` (`shared/src/llm/toolcalling.ts`) resolves, in order:
+`LLM_LOCAL_BASE_URL` (Ollama/vLLM/LM Studio) → `ANTHROPIC_API_KEY` →
+`OPENAI_API_KEY` → `none` (honest degraded). Tiers `reasoning/standard/fast`
+via `LLM_MODEL_*`; no hardcoded model IDs. Health check:
+`node scripts/model-health-check.mjs`. Missing cloud keys never disable
+personal state, memory, missions, or local tools.

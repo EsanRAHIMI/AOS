@@ -249,3 +249,57 @@ produced them.
 - Redis-backed cross-instance session invalidation (revoke-everywhere) — not yet built.
 - OpenTelemetry traces and metrics.
 - Backup drills, secret rotation drills, rollback rehearsal.
+
+---
+
+## K2 Jarvis — deployment additions (D-177/D-178)
+
+K2 adds **no new deployable**. It runs inside the existing `gateway-api` +
+`dashboard-web` + Mongo + Redis. New/optional infrastructure and env:
+
+### New collections (created on first write; add compound indexes led by scope)
+`agent_loop_runs`, `agent_loop_steps`, `tool_invocations`,
+`agent_approval_checkpoints`, `reflection_lessons`, `jarvis_sessions`,
+`jarvis_session_turns`, `memory_records`, `memory_embeddings`, `mission_nodes`,
+`research_sources`, `watches`, `watch_firings`, `self_dev_runs`.
+Recommended indexes: `{createdBy:1, updatedAt:-1}` on user-scoped collections;
+`{runId:1}` on `agent_loop_steps`/`tool_invocations`; `{subject:1, createdBy:1}`
+on `memory_records`; `{parentId:1}` on `mission_nodes`.
+
+### New environment variables (all optional; missing → honest degraded)
+```
+# Model (independence: local first). See scripts/model-health-check.mjs.
+LLM_LOCAL_BASE_URL=      # e.g. http://127.0.0.1:11434/v1 (Ollama) — preferred
+LLM_LOCAL_MODEL=         # e.g. qwen2.5:7b (tool-capable)
+LLM_LOCAL_MODEL_FAST=
+LLM_LOCAL_API_KEY=       # usually "local"
+LLM_MODEL_REASONING=     # tier overrides (optional)
+LLM_MODEL_STANDARD=
+LLM_MODEL_FAST=
+ANTHROPIC_API_KEY=       # optional cloud (host api.anthropic.com)
+OPENAI_API_KEY=          # optional cloud
+LLM_TOOLCALL_MODE=native # native | structured (compat)
+# Memory v2 embeddings (optional, self-hostable; lexical works without it)
+EMBEDDINGS_BASE_URL=     # defaults to LLM_LOCAL_BASE_URL
+EMBEDDINGS_MODEL=        # default nomic-embed-text
+EMBEDDINGS_API_KEY=
+# Independent research (optional; direct/RSS work without it)
+SEARXNG_BASE_URL=        # self-hosted SearXNG (deployment/searxng.md)
+# Agent loop worker execution budget (distinct from producer wait)
+AGENT_JOB_TIMEOUT_MS=120000
+```
+
+### Runtime dependencies
+- Required: MongoDB (Atlas or self-hosted), Redis.
+- Optional/self-hosted: Ollama or vLLM (model), SearXNG (search), a local
+  OpenAI-compatible `/embeddings` endpoint.
+- Chromium + system libs only for the Playwright e2e suite (not production).
+
+### Migrations / rollback
+- No migration needed: all K2 collections are new; legacy paths untouched.
+- Rollback: revert the K2 commits; new collections can be dropped safely (no
+  legacy data depends on them).
+
+### Verify after deploy
+`node scripts/model-health-check.mjs`; the four Jarvis verify scripts against
+the deployed Mongo/Redis; then `/jarvis` in the browser.

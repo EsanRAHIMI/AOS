@@ -71,3 +71,25 @@ each is a **versioned prompt + tool grants + scope rules + output contract** on
 the ONE shared agent loop (`startAgentLoop({ role, systemPrompt, grants, ... })`).
 The Jarvis role (`jarvisSystemPrompt`, `JARVIS_ROLE_PROMPT_VERSION`) is the
 reference implementation.
+
+---
+
+## Personal operating state as-built (D-178)
+
+Personal domains do NOT get a new architecture. `shared/src/personal2/index.ts`
+is a thin owner-facing layer over the two existing stores:
+
+- **Memory v2** (`memory_records`) carries commitments, decisions, people,
+  notes, deadlines, opportunities, risks, preferences — with
+  confirmed/inferred status + provenance + last-confirmed timestamp.
+- **Missions** (`mission_nodes`) carry goals/objectives → programs → missions →
+  plans → tasks → actions.
+
+`buildPersonalStateSnapshot(actor)` aggregates both into one owner-scoped read;
+`applyOnboardingAnswers(actor, answers)` deterministically turns a small set of
+explicit owner answers into confirmed, provenance-tagged records + a seed
+vision (nothing fabricated — empty answers are skipped). Governed tools:
+`personal_state` + typed writers (`personal_add_commitment/decision/person/
+note/opportunity/risk`). HTTP: `/v1/jarvis/personal-state`,
+`/v1/jarvis/onboarding`. Adding a new domain still = data + policy + prompts +
+tools + one room; no new deployable.
