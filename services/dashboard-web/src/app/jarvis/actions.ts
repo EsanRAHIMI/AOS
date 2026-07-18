@@ -101,3 +101,20 @@ export async function deleteMemoryAction(id: string) {
 export async function listToolsAction() {
   return gateway.jarvisTools();
 }
+
+/* ===================== K2 Product Activation (D-178) ====================== */
+
+export interface OnboardingQuestion { id: string; fa: string; en: string; kind: string }
+
+export async function onboardingQuestionsAction(): Promise<OnboardingQuestion[]> {
+  const r = await gateway.jarvisOnboardingQuestions();
+  return (r?.questions as unknown as OnboardingQuestion[]) ?? [];
+}
+
+export async function submitOnboardingAction(answers: Record<string, string>): Promise<{ created: string[]; visionId: string | null } | null> {
+  return gateway.jarvisOnboarding(answers);
+}
+
+export async function personalStateAction() {
+  return gateway.jarvisPersonalState();
+}

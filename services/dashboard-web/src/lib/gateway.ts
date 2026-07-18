@@ -72,6 +72,9 @@ export const gateway = {
   jarvisMemoryPin: (id: string, pinned: boolean) => call<Record<string, unknown>>(`/v1/jarvis/memories/${id}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }),
   jarvisMemoryDelete: (id: string) => call<{ deleted: boolean }>(`/v1/jarvis/memories/${id}/delete`, { method: 'POST', body: '{}' }),
   jarvisIntelligenceStatus: () => call<{ provider: string; isLocal: boolean; models: Record<string, string> | null; degraded: boolean; degradedDetail: string; research: { coverage: string; detail: string }; safeMode: boolean }>('/v1/jarvis/intelligence-status'),
+  jarvisOnboardingQuestions: () => call<{ questions: Array<{ id: string; fa: string; en: string; kind: string }> }>('/v1/jarvis/onboarding/questions'),
+  jarvisOnboarding: (answers: Record<string, string>) => call<{ created: string[]; visionId: string | null }>('/v1/jarvis/onboarding', { method: 'POST', body: JSON.stringify({ answers }) }),
+  jarvisPersonalState: () => call<{ empty: boolean; counts: Record<string, number>; byKind: Record<string, unknown>; health: Record<string, number> }>('/v1/jarvis/personal-state'),
 
   tasks: () => call<unknown[]>('/v1/tasks'),
   task: (id: string) => call<unknown>(`/v1/tasks/${id}`),

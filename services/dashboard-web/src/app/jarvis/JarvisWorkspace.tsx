@@ -13,7 +13,8 @@ import {
   listSessionsAction, createSessionAction, getSessionAction, sendTurnAction,
   decideApprovalAction, intelligenceStatusAction, listMemoriesAction,
   correctMemoryAction, pinMemoryAction, deleteMemoryAction,
-  type JarvisSessionView, type JarvisTurnView,
+  onboardingQuestionsAction, submitOnboardingAction, personalStateAction,
+  type JarvisSessionView, type JarvisTurnView, type OnboardingQuestion,
 } from './actions';
 import { dirProps } from '@/lib/rtl';
 
@@ -44,6 +45,11 @@ export default function JarvisWorkspace() {
   const [intel, setIntel] = useState<IntelStatus | null>(null);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [tab, setTab] = useState<'chat' | 'memory'>('chat');
+  // D-178 Product Activation: onboarding when the owner has no personal state yet.
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [questions, setQuestions] = useState<OnboardingQuestion[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [onboardingDone, setOnboardingDone] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const refreshSessions = useCallback(async () => setSessions(await listSessionsAction()), []);
@@ -58,6 +64,21 @@ export default function JarvisWorkspace() {
   useEffect(() => { void refreshSessions(); void intelligenceStatusAction().then(setIntel); }, [refreshSessions]);
   useEffect(() => { if (!activeId && sessions.length) void loadSession(sessions[0].sessionId); }, [sessions, activeId, loadSession]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, steps]);
+  // Offer onboarding on first load when the owner has no personal state yet.
+  useEffect(() => {
+    void personalStateAction().then((s) => { if (s && s.empty) setOnboardingDone(false); else setOnboardingDone(true); });
+  }, []);
+
+  async function startOnboarding() {
+    setQuestions(await onboardingQuestionsAction());
+    setShowOnboarding(true);
+  }
+  async function submitOnboarding() {
+    setBusy(true);
+    const res = await submitOnboardingAction(answers);
+    setBusy(false);
+    if (res) { setShowOnboarding(false); setOnboardingDone(true); setAnswers({}); await openMemory(); }
+  }
 
   async function newSession() {
     const id = await createSessionAction();
@@ -153,10 +174,33 @@ export default function JarvisWorkspace() {
         {tab === 'chat' ? (
           <>
             <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {turns.length === 0 && (
-                <div style={{ margin: 'auto', textAlign: 'center', opacity: 0.6, maxWidth: 420 }}>
-                  <div style={{ fontSize: 40, marginBottom: 8 }}>◍</div>
-                  <p style={{ fontSize: 14 }}>Jarvis remembers your goals, missions and decisions across sessions. Ask in Persian or English — it reads your real stored state and uses governed tools.</p>
+              {turns.length === 0 && !showOnboarding && (
+                <div style={{ margin: 'auto', textAlign: 'center', opacity: 0.85, maxWidth: 460 }}>
+                  <div style={{ fontSize: 40, marginBottom: 8, opacity: 0.6 }}>◍</div>
+                  <p style={{ fontSize: 14, opacity: 0.7 }}>Jarvis remembers your goals, missions and decisions across sessions. Ask in Persian or English — it reads your real stored state and uses governed tools.</p>
+                  {!onboardingDone && (
+                    <div style={{ marginTop: 16 }}>
+                      <button className="btn" onClick={startOnboarding}>راه‌اندازی زمینهٔ شخصی من · Set up my personal context</button>
+                      <p style={{ fontSize: 11, opacity: 0.5, marginTop: 6 }}>A few quick questions; your answers become real, editable owner state.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {showOnboarding && (
+                <div style={{ margin: 'auto', width: '100%', maxWidth: 560 }}>
+                  <h3 style={{ fontSize: 16, marginBottom: 4 }}>راه‌اندازی زمینهٔ شخصی · Personal context setup</h3>
+                  <p style={{ fontSize: 12, opacity: 0.6, marginBottom: 14 }}>Answer what you like; blanks are skipped. Nothing is invented.</p>
+                  {questions.map((q) => (
+                    <div key={q.id} style={{ marginBottom: 10 }}>
+                      <label {...dirProps(q.fa)} style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>{q.fa}<span style={{ opacity: 0.5 }}> · {q.en}</span></label>
+                      <input value={answers[q.id] ?? ''} onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px', color: 'inherit' }} />
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <button className="btn" disabled={busy} onClick={submitOnboarding}>ذخیره · Save</button>
+                    <button className="btn ghost" disabled={busy} onClick={() => setShowOnboarding(false)}>بعداً · Later</button>
+                  </div>
                 </div>
               )}
               {turns.map((t, i) => (
