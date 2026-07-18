@@ -34,6 +34,7 @@ import {
   modelRegistryFromEnv, probeModelProvider,
   researchCoverageStatus,
   buildOwnerBriefing, listSelfDevRuns, listRoles,
+  buildPersonalStateSnapshot, applyOnboardingAnswers, ONBOARDING_QUESTIONS,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, Req } from './deps.js';
@@ -270,6 +271,32 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
     const actor = actorFor(req);
     const ok = await deleteMemory({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null }, req.params.id, publish);
     return ok ? success({ deleted: true }) : reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'memory not found in scope'));
+  });
+
+  /* --------------------- personal operating state ------------------------ */
+
+  app.get('/v1/jarvis/personal-state', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const actor = actorFor(req);
+    const snap = await buildPersonalStateSnapshot({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null });
+    return success(snap);
+  });
+
+  // The onboarding questions (bilingual) — the UI renders these.
+  app.get('/v1/jarvis/onboarding/questions', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    return success({ questions: ONBOARDING_QUESTIONS });
+  });
+
+  // Deterministic onboarding: explicit owner answers → structured, confirmed,
+  // provenance-tagged records + a seed vision. No model, nothing fabricated.
+  app.post<{ Body: { answers?: Record<string, string>; sessionId?: string } }>('/v1/jarvis/onboarding', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const actor = actorFor(req);
+    const answers = req.body?.answers ?? {};
+    if (!answers || typeof answers !== 'object') return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'answers object required'));
+    const res = await applyOnboardingAnswers({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null }, answers, req.body?.sessionId ?? null, publish);
+    return success(res);
   });
 
   /* --------------------------- owner briefing v2 ------------------------- */

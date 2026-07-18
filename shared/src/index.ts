@@ -83,3 +83,5 @@ export * from './research/providers.js';
 export * from './watches/index.js';
 // K2 Self-development pipeline record (D-177)
 export * from './selfdev/index.js';
+// K2 Product Activation — personal operating state over memory2 + missions (D-178)
+export * from './personal2/index.js';

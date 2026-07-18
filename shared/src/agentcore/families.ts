@@ -23,6 +23,7 @@ import {
 import { webSearchProviderFromEnv } from '../research/index.js';
 import { fetchAndExtract, fetchFeed, researchCoverageStatus, searxngConfigFromEnv } from '../research/providers.js';
 import { pinFactToSession } from '../jarvis/session.js';
+import { buildPersonalStateSnapshot } from '../personal2/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -351,6 +352,59 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
       return { ok, summary: ok ? 'pinned' : 'session not found' };
     },
   });
+
+  /* ------------------------- personal operating state -------------------- */
+
+  registry.register({
+    definition: {
+      name: 'personal_state', version: '1.0.0', purpose: 'Read the owner\'s personal operating state (goals, projects, commitments, decisions, people, notes, deadlines, opportunities, risks) plus mission health from real stored records.',
+      family: 'personal', ownerModule: 'shared/src/personal2', inputFields: {}, outputFields: {},
+      requiredActorScope: 'user', permission: '', riskLevel: 'low', policyCategory: 'read_only', requiresApproval: false,
+      ownerOnly: false, timeoutMs: 10000, maxRetries: 1, idempotent: true, sideEffect: 'none', evidenceRequired: false,
+      rollbackAvailable: false, outputTrust: 'trusted_internal', available: true, unavailableReason: '',
+    },
+    inputSchema: z.object({}),
+    executor: async (_args, ctx): Promise<ToolResult> => {
+      const snap = await buildPersonalStateSnapshot(memActor(ctx));
+      if (snap.empty) return { ok: true, summary: 'No personal operating state recorded yet. Offer the owner the onboarding: "Help me set up my personal operating context."' };
+      const parts: string[] = [];
+      for (const [kind, rows] of Object.entries(snap.byKind)) {
+        if (rows.length) parts.push(`${kind} (${rows.length}): ${rows.slice(0, 5).map((r) => `${r.content}${r.status !== 'confirmed' ? ` [${r.status}]` : ''} (id:${r.memoryId})`).join('; ')}`);
+      }
+      parts.push(`missions=${snap.counts.missions}; overdue=${snap.health.overdue}, blocked=${snap.health.blocked}, stalled=${snap.health.stalled}, reviewDue=${snap.health.reviewDue}`);
+      return { ok: true, summary: parts.join('\n'), data: snap };
+    },
+  });
+
+  // Convenience typed writers for the common personal kinds. All map onto the
+  // ONE governed memory_record path (dedup + provenance + confirmed/inferred).
+  const personalWriter = (name: string, kind: string, purpose: string) => registry.register({
+    definition: {
+      name, version: '1.0.0', purpose, family: 'personal', ownerModule: 'shared/src/personal2', inputFields: {}, outputFields: {},
+      requiredActorScope: 'user', permission: '', riskLevel: 'low', policyCategory: 'internal_reversible', requiresApproval: false,
+      ownerOnly: false, timeoutMs: 8000, maxRetries: 0, idempotent: false, sideEffect: 'internal_write', evidenceRequired: false,
+      rollbackAvailable: true, outputTrust: 'trusted_internal', available: true, unavailableReason: '',
+    },
+    inputSchema: z.object({
+      content: z.string().min(3).describe('the item text, exactly as the owner stated it'),
+      subject: z.string().optional().describe('stable dedup key (e.g. a person name or short slug)'),
+      confirmed: z.boolean().optional().describe('true only if the owner explicitly stated it; false = your inference'),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const { memory, action } = await recordMemory(memActor(ctx), {
+        kind: kind as never, status: args.confirmed === false ? 'inferred' : 'confirmed', content: String(args.content),
+        subject: (args.subject as string) ?? '', importance: 0.65,
+        provenance: { sourceType: args.confirmed === false ? 'jarvis_inferred' : 'user_stated', sessionId: ctx.sessionId ?? null, turnId: null, runId: ctx.runId, refIds: [], sourceUrl: '' },
+      }, publish);
+      return { ok: true, summary: `${action}: ${kind} "${memory.content.slice(0, 60)}" (id:${memory.memoryId})`, data: memory };
+    },
+  });
+  personalWriter('personal_add_commitment', 'commitment', 'Record an owner commitment or promise that must be followed up.');
+  personalWriter('personal_add_decision', 'decision', 'Record an open decision the owner needs to make (or has made).');
+  personalWriter('personal_add_person', 'person', 'Record an important person and why they matter to the owner.');
+  personalWriter('personal_add_note', 'note', 'Record a general owner note.');
+  personalWriter('personal_add_opportunity', 'opportunity', 'Record an opportunity the owner is considering.');
+  personalWriter('personal_add_risk', 'risk', 'Record a risk the owner is exposed to.');
 
   /* ----------------------- injected (service) families ------------------- */
 

@@ -30,8 +30,14 @@ import { ScopeFieldsSchema } from '../schemas/scope.js';
 export const MemoryKind = z.enum([
   'fact', 'preference', 'commitment', 'decision', 'goal', 'person', 'project',
   'research', 'lesson', 'skill', 'context',
+  // K2 Product Activation (D-178): personal operating state managed
+  // conversationally through the ONE memory store — no new architecture.
+  'note', 'opportunity', 'risk', 'deadline',
 ]);
 export type MemoryKind = z.infer<typeof MemoryKind>;
+
+/** The kinds that make up the owner's personal operating state (mandate §4). */
+export const PERSONAL_STATE_KINDS = ['goal', 'project', 'commitment', 'decision', 'person', 'note', 'deadline', 'opportunity', 'risk', 'preference'] as const;
 
 /** confirmed = owner said/approved it; inferred = model concluded it;
  *  temporary = conversation-local context that decays fast. */
