@@ -3,7 +3,7 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-18 · covers commits `ad8aa69` (D-177) → `58a189e`._
+_Last updated: 2026-07-18 · covers commits `ad8aa69` (D-177) → `7235630`._
 
 ---
 
@@ -65,7 +65,8 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
 | Unified tool registry + availability truth | RUNTIME_VERIFIED | `jarvis-http-verify.mjs` (9/9), product-scenarios F1 |
 | Model provider wire (OpenAI-compatible/Anthropic) | CODE_COMPLETE | `toolcalling.integration.test.ts` (real HTTP wire) + skip-gated real-endpoint check |
 | Real self-development run (branch/diff/tests/build) | RUNTIME_VERIFIED | branch `9e83de9` (+165/−5), typecheck (caught a bug), 5 tests + suite, build; `selfdev-record-run.mjs` 5/5 |
-| Independent research stack (fetch/extract/provenance) | CODE_COMPLETE | `research-stack.contract.test.ts` |
+| Independent research stack (fetch/extract/provenance) | RUNTIME_VERIFIED (real sources) | `research-real-sources-verify.mjs` 8/8 vs real Mongo, using REAL primary sources (LangGraph + AutoGen READMEs) through the production pipeline — real URLs, retrieval+publication dates, dedup, reusable knowledge, converted to a mission. Sandbox blocks the module's OWN egress (bridged via the agent's web tools); autonomous in-product fetch is BLOCKED_EXTERNAL. |
+| Personal onboarding UI in `/jarvis` | CODE_COMPLETE | first-run panel wired to `/onboarding` + `/personal-state`; browser-verified only after §5 unblock |
 | **Real model REASONING (quality)** | **BLOCKED_EXTERNAL** | no reachable model in the build sandbox; see §5 |
 | **Real-browser `/jarvis` (Playwright)** | **BLOCKED_EXTERNAL** | chromium lib missing in sandbox; `e2e/jarvis.spec.ts` ready |
 | Live multi-source research synthesis | BLOCKED_EXTERNAL | sandbox blocks the module's outbound fetch |
@@ -73,8 +74,9 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
 
 **Verified against real Mongo + real Redis (not FakeDB):**
 `scripts/jarvis-runtime-verify.mjs` (8/8), `scripts/jarvis-http-verify.mjs`
-(9/9), `scripts/jarvis-product-scenarios.mjs` (12/12), `scripts/selfdev-record-run.mjs` (5/5),
-plus the K1 queue verifiers (16/16).
+(9/9), `scripts/jarvis-product-scenarios.mjs` (12/12),
+`scripts/research-real-sources-verify.mjs` (8/8, real primary sources),
+`scripts/selfdev-record-run.mjs` (5/5), plus the K1 queue verifiers (16/16).
 
 **Used a scripted mock model (test transport only, NOT product proof):** the
 local OpenAI-compatible server inside `jarvis-runtime-verify.mjs` and the HTTP

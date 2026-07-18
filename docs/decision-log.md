@@ -2,6 +2,27 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-18 — K2 Product Activation continued: docs snapshot, real-source research, onboarding UI (D-178c)
+
+- Documentation fully refreshed to the exact current state and a new
+  authoritative `docs/current-state.md` created (commit `9c81639`), so future
+  agents need no re-audit. Stale "COMPLETE" framing removed; statuses use the
+  exact vocabulary.
+- Real-source research proof (`scripts/research-real-sources-verify.mjs`, 8/8
+  vs real Mongo): the PRODUCTION research pipeline (extract → provenance ledger
+  → reusable knowledge → mission) run over REAL current primary sources
+  (LangGraph + AutoGen READMEs, fetched live). Real URLs, retrieval+publication
+  dates, dedup, injection-safe storage, finding → mission. No paid API, no
+  fabricated sources. Elevates research from CODE_COMPLETE to RUNTIME_VERIFIED
+  with real sources. (The AOS module's own Node fetch remains sandbox-blocked;
+  autonomous in-product web research is BLOCKED_EXTERNAL here.)
+- `/jarvis` onboarding UI wired (first-run "Set up my personal context" →
+  `/onboarding` → real provenance-tagged owner state).
+- Re-probed reachability: still no reachable capable model (only
+  api.anthropic.com host, no key) and no browser system lib — reasoning quality
+  and real-browser `/jarvis` remain BLOCKED_EXTERNAL. K2 is NOT declared
+  complete.
+
 ## 2026-07-18 — K2 Product Activation: personal state, real-model wiring, real self-development run (D-178)
 
 Follow-on to D-177 (K2 core). The core runtime existed but was proven with a
