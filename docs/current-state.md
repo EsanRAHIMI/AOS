@@ -3,7 +3,16 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-18 · covers commits `ad8aa69` (D-177) → `7235630`._
+_Last updated: 2026-07-18 · covers commits `ad8aa69` (D-177) → `d538549`._
+
+> **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
+> completed through the real dashboard browser with a real model yet. The build
+> sandbox has **no reachable LLM** and **cannot launch a browser** (both
+> BLOCKED_EXTERNAL — see §5). Everything below marked RUNTIME_VERIFIED was
+> proven over **real Redis + real Mongo via HTTP/Node**, which is NOT the same
+> as browser + real-model product proof. "RUNTIME_VERIFIED_EXTERNAL_INPUT"
+> means real data was processed but supplied by the agent's external tools, not
+> fetched by AOS itself.
 
 ---
 
@@ -63,25 +72,34 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
 | Owner briefing grounded in real state | RUNTIME_VERIFIED | product-scenarios E1–E2 |
 | Approval pause + EXACT resume (mechanism) | RUNTIME_VERIFIED | runtime-verify check 5 (real infra) |
 | Unified tool registry + availability truth | RUNTIME_VERIFIED | `jarvis-http-verify.mjs` (9/9), product-scenarios F1 |
-| Model provider wire (OpenAI-compatible/Anthropic) | CODE_COMPLETE | `toolcalling.integration.test.ts` (real HTTP wire) + skip-gated real-endpoint check |
+| Model provider WIRE (OpenAI-compatible/Anthropic) | CODE_COMPLETE | `toolcalling.integration.test.ts` (real HTTP wire, mock server) + skip-gated real-endpoint check. Wire only — NOT reasoning. |
 | Real self-development run (branch/diff/tests/build) | RUNTIME_VERIFIED | branch `9e83de9` (+165/−5), typecheck (caught a bug), 5 tests + suite, build; `selfdev-record-run.mjs` 5/5 |
-| Independent research stack (fetch/extract/provenance) | RUNTIME_VERIFIED (real sources) | `research-real-sources-verify.mjs` 8/8 vs real Mongo, using REAL primary sources (LangGraph + AutoGen READMEs) through the production pipeline — real URLs, retrieval+publication dates, dedup, reusable knowledge, converted to a mission. Sandbox blocks the module's OWN egress (bridged via the agent's web tools); autonomous in-product fetch is BLOCKED_EXTERNAL. |
-| Personal onboarding UI in `/jarvis` | CODE_COMPLETE | first-run panel wired to `/onboarding` + `/personal-state`; browser-verified only after §5 unblock |
-| **Real model REASONING (quality)** | **BLOCKED_EXTERNAL** | no reachable model in the build sandbox; see §5 |
-| **Real-browser `/jarvis` (Playwright)** | **BLOCKED_EXTERNAL** | chromium lib missing in sandbox; `e2e/jarvis.spec.ts` ready |
-| Live multi-source research synthesis | BLOCKED_EXTERNAL | sandbox blocks the module's outbound fetch |
+| Independent research **pipeline** (extract/provenance/dedup/→mission) | RUNTIME_VERIFIED_EXTERNAL_INPUT | `research-real-sources-verify.mjs` 8/8 vs real Mongo. **Honesty:** the source CONTENT was fetched by the AGENT'S OWN external web tools (not AOS's own SearXNG/fetch tools) and injected into the production pipeline. This proves extract→provenance→dedup→memory→mission on REAL sources, but does **NOT** prove AOS can research independently. See below. |
+| **AOS-native research (its own tools fetch the web)** | **BLOCKED_EXTERNAL** | the sandbox allowlist blocks the research module's own outbound `fetch`; SearXNG not deployed. Needs a networked env / SearXNG. |
+| Personal onboarding UI in `/jarvis` | CODE_COMPLETE | first-run panel wired to `/onboarding` + `/personal-state`; **not** browser-verified |
+| **Real model REASONING (quality)** | **BLOCKED_EXTERNAL** | no reachable model in the sandbox; only `api.anthropic.com` host reachable, no key. See §5. |
+| **Real-browser `/jarvis` (login→session→stream→approval→resume→cancel)** | **BLOCKED_EXTERNAL** | chromium can't launch (missing `libXdamage.so.1`, no root); `e2e/jarvis.spec.ts` ready |
 | Deployment to a real domain | not attempted | no owner infra changes made |
 
-**Verified against real Mongo + real Redis (not FakeDB):**
+### Runtime/HTTP verification is NOT browser verification — explicit separation
+
+- **RUNTIME_VERIFIED here means:** exercised against **real Redis + real
+  MongoDB via HTTP/Node** (the four verify scripts + contract suites). It does
+  **NOT** mean the flow was driven through the dashboard UI in a real browser.
+- **PRODUCT_VERIFIED count is currently ZERO.** No scenario has been completed
+  through the real browser with a real model. Any earlier wording implying
+  otherwise is corrected here.
+- **The mock/scripted OpenAI-compatible server** inside `jarvis-runtime-verify.mjs`
+  and `toolcalling.integration.test.ts` proves only the **wire + mechanism**
+  (tool-call serialization, observation threading, pause/resume). It is
+  explicitly **NOT** evidence of reasoning quality and is never counted as
+  product proof.
+
+**Verified against real Mongo + real Redis via HTTP/Node (not browser, not FakeDB):**
 `scripts/jarvis-runtime-verify.mjs` (8/8), `scripts/jarvis-http-verify.mjs`
 (9/9), `scripts/jarvis-product-scenarios.mjs` (12/12),
-`scripts/research-real-sources-verify.mjs` (8/8, real primary sources),
+`scripts/research-real-sources-verify.mjs` (8/8, externally-fetched sources),
 `scripts/selfdev-record-run.mjs` (5/5), plus the K1 queue verifiers (16/16).
-
-**Used a scripted mock model (test transport only, NOT product proof):** the
-local OpenAI-compatible server inside `jarvis-runtime-verify.mjs` and the HTTP
-server inside `toolcalling.integration.test.ts`. These prove the *wire and
-mechanism*; they are explicitly NOT evidence of reasoning quality.
 
 **Automated test counts (current main):** shared **233 passed / 1 skipped**
 (the skipped one is the `LLM_VERIFY_BASE_URL` real-endpoint gate); gateway-api

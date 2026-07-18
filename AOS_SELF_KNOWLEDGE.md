@@ -20,18 +20,26 @@ Redis + real MongoDB.
 
 ## What is real vs still blocked
 
-- **RUNTIME_VERIFIED (real Redis+Mongo):** agent loop, sessions/turns +
-  reload continuity, Memory v2 + cross-session recall, personal state +
-  onboarding, missions, owner briefing, approval pause/exact-resume, tool
-  registry, one real self-development code change (branch `selfdev/
+**PRODUCT_VERIFIED = 0.** No flow has run through the real browser with a real
+model. RUNTIME_VERIFIED below = real Redis+Mongo over HTTP/Node, NOT browser.
+
+- **RUNTIME_VERIFIED (real Redis+Mongo, HTTP/Node — not browser):** agent loop,
+  sessions/turns + reload continuity, Memory v2 + cross-session recall, personal
+  state + onboarding, missions, owner briefing, approval pause/exact-resume,
+  tool registry, one real self-development code change (branch `selfdev/
   mission-next-action`, +165/−5, tests+build green, not merged).
-- **CODE_COMPLETE:** model provider wire (Anthropic + OpenAI-compatible),
-  independent research stack, `/jarvis` UI.
-- **BLOCKED_EXTERNAL (build sandbox only):** real model **reasoning quality**
-  (no reachable model/weights), real-**browser** `/jarvis` (chromium system
-  lib missing). Enable a model with `LLM_LOCAL_BASE_URL` (Ollama) or
-  `ANTHROPIC_API_KEY`; run the browser suite with
-  `playwright install --with-deps chromium`.
+- **RUNTIME_VERIFIED_EXTERNAL_INPUT:** the research pipeline processed REAL
+  sources, but the SOURCES were fetched by the agent's external web tools, not
+  by AOS's own research tools — so this does NOT prove AOS researches
+  independently.
+- **CODE_COMPLETE:** model provider wire (mock-server tested), `/jarvis` UI.
+- **BLOCKED_EXTERNAL (build sandbox):** real model **reasoning quality** (no
+  reachable model/weights/endpoint; only `api.anthropic.com` host, no key),
+  real-**browser** `/jarvis` (chromium `libXdamage.so.1` missing, no root),
+  **AOS-native web research** (module's own fetch is allowlist-blocked). Enable
+  a model with `LLM_LOCAL_BASE_URL` (Ollama) or `ANTHROPIC_API_KEY`; run the
+  browser suite with `playwright install --with-deps chromium`; deploy SearXNG
+  for AOS-native search.
 
 ## Honest gaps
 
