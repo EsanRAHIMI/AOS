@@ -2,6 +2,43 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-19 — CIN-2b: the Autonomous Living Loop, RUNTIME_VERIFIED on real Mongo (D-181)
+
+Owner directive: no CIN-3 until Jarvis has a real autonomous loop — one
+end-to-end scenario fully operational. Spec + 11 acceptance gates (G1–G11):
+`docs/cin-v2/living-loop.md`.
+
+- **Engine** (`shared/src/livingloop/`, ~600 LOC): durable per-cycle state
+  machine (`loop_cycles` — `nextStage` is the restart checkpoint; every stage
+  persists before the next starts), idempotent inbox (`loop_inbox`, unique
+  eventKey), Owner State Snapshots with hash + changed-keys diff
+  (`owner_state_snapshots`), deterministic significance detection, model
+  reasoning hook with honest `usedModel/usedFallback`, plan steps bound to
+  the SAME governed tool registry Jarvis uses, low-risk auto-execution,
+  sensitive steps → real approval records + exact resume, outcome review,
+  memory + mission + **CIN ledger anchor** (`cycle.completed` record type)
+  per cycle. DLQ after maxAttempts, replay with `replayOf`, per-cycle budgets
+  (stage wall-clock + model calls), latency recorded per event.
+- **Gateway** (`routes/loop.ts`): `/v1/loop/events|tick|cycles|cycles/:id|
+  cycles/:id/decision|inbox|inbox/:id/replay|inbox/:id/requeue`; background
+  tick `LIVING_LOOP_INTERVAL_MS` (default 60s) — resumes stale cycles,
+  bridges heartbeat proactive events into the inbox (idempotent), processes
+  pending. Model wiring via jarvisRouter.generateStructured (fallback → null
+  → engine's deterministic path; never fake reasoning).
+- **Dashboard** `/loop`: live console (5s auto-refresh) — full
+  saw→mattered→decided→did→result timeline per cycle, DLQ panel, latency
+  p50/p95, manual tick, inline approve/reject.
+- **Verification:** `shared/test/livingloop.contract.test.ts` (10 tests) AND
+  `scripts/living-loop-verify.mjs` **13/13 against a REAL mongod** (in-sandbox
+  aarch64 mongod 4.4): G3 latency, G4 idempotency (+ heartbeat bridge), G5
+  replay, G6 DLQ + requeue, G7 fallback/budget, G8 approve/reject exact
+  resume, G9 stale-cycle restart recovery, G11 memory+ledger with chain still
+  verifying. G1 (24h), G2 (real-model rationale), G10 (live UI) are the
+  owner-machine demo gates — checklist printed by the script.
+- Also committed (owner's own fixes, `ad65027`): `ScopeFieldsSchema.tenantId`
+  → `nullish` (real Atlas state), genesis seed tenant stamp; K1 auth seeded
+  on Atlas with `FACTORY_OWNER_*`; genesis entities live on Atlas.
+
 ## 2026-07-19 — CIN-1 completed in-kernel + CIN-2 first slice: the living pulse (D-180)
 
 Researched current standards before building (sources recorded in

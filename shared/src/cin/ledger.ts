@@ -46,6 +46,8 @@ export const CIN_LEDGER_RECORD_TYPES = [
   'claim.issued',
   'claim.revoked',
   'key.created',
+  // CIN-2b (D-181): every completed Living Loop cycle is anchored in the chain.
+  'cycle.completed',
 ] as const;
 
 export const CinLedgerRecordSchema = z.object({

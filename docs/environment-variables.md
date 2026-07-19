@@ -85,3 +85,4 @@ fail fast with a readable error. Real secrets are never committed.
 |---|---|---|---|
 | `CIN_PQC_SIGNING` | gateway-api (shared/cin) | unset | `1` = new entity keys use post-quantum `ml-dsa-65` when the runtime supports it (Node ≥ 24.7 + OpenSSL 3.5); otherwise `ed25519`. Detection is automatic — this only opts in. |
 | `JARVIS_HEARTBEAT_INTERVAL_MS` | gateway-api | `300000` | Background heartbeat pulse cadence (proactive events). `0` disables the in-process pulse. |
+| `LIVING_LOOP_INTERVAL_MS` | gateway-api | `60000` | Autonomous Living Loop background tick cadence. `0` disables. |

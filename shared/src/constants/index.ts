@@ -310,6 +310,10 @@ export const COLLECTIONS = {
   // CIN-2 Living Personal OS (D-180) — proactive heartbeat + owner stream.
   PROACTIVE_EVENTS: 'proactive_events',
   HEARTBEAT_RUNS: 'heartbeat_runs',
+  // CIN-2b Autonomous Living Loop (D-181) — durable observe→reason→act cycles.
+  LOOP_INBOX: 'loop_inbox',
+  LOOP_CYCLES: 'loop_cycles',
+  OWNER_STATE_SNAPSHOTS: 'owner_state_snapshots',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

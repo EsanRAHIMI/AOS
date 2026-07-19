@@ -89,3 +89,5 @@ export * from './personal2/index.js';
 export * from './cin/index.js';
 // CIN-2 Living Personal OS (D-180) — proactive heartbeat + owner stream primitives
 export * from './heartbeat/index.js';
+// CIN-2b Autonomous Living Loop (D-181) — durable observe→reason→act cycles
+export * from './livingloop/index.js';

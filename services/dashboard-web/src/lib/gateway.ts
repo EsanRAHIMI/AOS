@@ -345,4 +345,14 @@ export const gateway = {
   cinClaimVerify: (id: string) => call<{ claimId: string; valid: boolean; checks: Record<string, boolean>; reason: string | null }>(`/v1/cin/claims/${id}/verify`),
   cinLedger: (limit = 50) => call<{ records: Array<Record<string, unknown>> }>(`/v1/cin/ledger?limit=${limit}`),
   cinLedgerVerify: () => call<{ chainId: string; ok: boolean; length: number; headHash: string | null; brokenAtSeq: number | null; reason: string | null }>('/v1/cin/ledger/verify'),
+
+  // --- CIN-2b Autonomous Living Loop (D-181) ---
+  loopCycles: (limit = 30) => call<{ cycles: Array<Record<string, unknown>> }>(`/v1/loop/cycles?limit=${limit}`),
+  loopCycle: (id: string) => call<{ cycle: Record<string, unknown> }>(`/v1/loop/cycles/${id}`),
+  loopInbox: (status?: string) => call<{ events: Array<Record<string, unknown>>; latency: { count: number; p50: number | null; p95: number | null } }>(`/v1/loop/inbox${status ? `?status=${status}` : ''}`),
+  loopTick: () => call<{ resumed: number; ingested: number; processed: number }>('/v1/loop/tick', { method: 'POST', body: '{}' }),
+  loopDecision: (cycleId: string, action: 'approve' | 'reject') =>
+    call<{ cycleId: string; status: string }>(`/v1/loop/cycles/${cycleId}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  loopReplay: (inboxId: string) => call<{ inboxId: string }>(`/v1/loop/inbox/${inboxId}/replay`, { method: 'POST', body: '{}' }),
+  loopRequeue: (inboxId: string) => call<{ inboxId: string }>(`/v1/loop/inbox/${inboxId}/requeue`, { method: 'POST', body: '{}' }),
 };

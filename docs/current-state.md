@@ -19,6 +19,17 @@ _Last updated: 2026-07-19 · covers commits `ad8aa69` (D-177) → CIN-1 first sl
 > `OwnerPulse` live widget on `/me`; pulse interval
 > `JARVIS_HEARTBEAT_INTERVAL_MS` (default 5 min). 15 new tests (9 cin + 6
 > heartbeat) — all green with the existing suites.
+> **CIN-2b Autonomous Living Loop (D-181) — RUNTIME_VERIFIED:** durable
+> observe→reason→act cycles (`shared/src/livingloop/`), `/v1/loop/*`,
+> `/loop` live console. `scripts/living-loop-verify.mjs` **13/13 vs real
+> mongod**: idempotency, replay, DLQ+requeue, fallback+budget,
+> approve/reject exact resume, restart recovery, latency, memory+ledger
+> anchor with chain verifying. Owner-machine gates left: G1 (24h), G2
+> (real-model rationale), G10 (live browser) — see
+> `docs/cin-v2/living-loop.md`. **CIN-3 is blocked until G1/G2/G10 pass.**
+> Owner activation state (2026-07-19): K1 auth seeded on Atlas
+> (`FACTORY_OWNER_*`), genesis entities live on Atlas,
+> `ScopeFieldsSchema.tenantId` accepts explicit null.
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build

@@ -3918,3 +3918,22 @@ Recommendation with EdDSA cryptosuite). Delivered:
 Remaining for CIN-2 completion: BullMQ repeatable heartbeat job, model-driven
 proactive escalation (needs reachable LLM), voice/latency pass, real-browser
 product verification (owner machine).
+
+## Phase CIN-2b — Autonomous Living Loop, RUNTIME_VERIFIED (2026-07-19, D-181)
+
+The gate before CIN-3 (owner directive). One end-to-end autonomous scenario:
+observe → snapshot → assess → reason → plan → execute → review → update, with
+no initial user message. Spec + 11 acceptance gates: docs/cin-v2/living-loop.md.
+
+- shared/src/livingloop/: durable cycle state machine (nextStage checkpoint,
+  per-stage persistence), idempotent inbox + DLQ + replay, Owner State
+  Snapshots (hash+diff), significance detection, model hook w/ honest
+  fallback, governed-tool execution, approval pause/exact resume, budgets,
+  latency, memory+mission+ledger updates per cycle.
+- Gateway /v1/loop/* (9 endpoints) + background tick (LIVING_LOOP_INTERVAL_MS)
+  + heartbeat→inbox bridge. Dashboard /loop live console (auto-refresh,
+  timeline, DLQ, latency p50/p95, inline approvals).
+- Proof: 10 contract tests + scripts/living-loop-verify.mjs 13/13 vs REAL
+  mongod (in-sandbox aarch64). 116 shared tests green; 3 packages typecheck.
+- Remaining (owner machine): G1 24h run, G2 real-model rationale, G10 live
+  browser check — checklist printed by the verify script.
