@@ -87,3 +87,5 @@ export * from './selfdev/index.js';
 export * from './personal2/index.js';
 // CIN-1 Trust & Identity Core (D-179) — entity graph + verifiable claims + hash-chained ledger
 export * from './cin/index.js';
+// CIN-2 Living Personal OS (D-180) — proactive heartbeat + owner stream primitives
+export * from './heartbeat/index.js';

@@ -22,10 +22,37 @@ import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { canonicalJson, sha256Hex, appendLedger } from './ledger.js';
 
+/** Signature algorithms. `ml-dsa-65` (FIPS 204, post-quantum) is natively
+ *  supported by Node >= 24.7 built against OpenSSL 3.5 — detected at runtime,
+ *  never assumed. Both algs are one-shot (digest=null) in node:crypto, so
+ *  sign/verify below are alg-agnostic. D-180 (verified against Node release
+ *  notes + nodejs/node#59259, 2026-07-19). */
+export const CinSignatureAlg = z.enum(['ed25519', 'ml-dsa-65']);
+export type CinSignatureAlg = z.infer<typeof CinSignatureAlg>;
+
+let mlDsaSupport: boolean | null = null;
+/** Runtime probe: does this Node/OpenSSL build support ML-DSA? Cached. */
+export function supportsMlDsa(): boolean {
+  if (mlDsaSupport !== null) return mlDsaSupport;
+  try {
+    generateKeyPairSync('ml-dsa-65' as never);
+    mlDsaSupport = true;
+  } catch {
+    mlDsaSupport = false;
+  }
+  return mlDsaSupport;
+}
+
+/** Pick the signing alg for new keys: post-quantum when the runtime supports
+ *  it AND the owner opted in (CIN_PQC_SIGNING=1); ed25519 otherwise. */
+export function preferredSignatureAlg(env: NodeJS.ProcessEnv = process.env): CinSignatureAlg {
+  return env.CIN_PQC_SIGNING === '1' && supportsMlDsa() ? 'ml-dsa-65' : 'ed25519';
+}
+
 export const CinKeySchema = z.object({
   keyId: z.string(),
   entityId: z.string(),
-  alg: z.literal('ed25519').default('ed25519'),
+  alg: CinSignatureAlg.default('ed25519'),
   publicKeyPem: z.string(),
   /** Encrypt at rest / move to KMS before multi-node (architecture §2.3). */
   privateKeyPem: z.string(),
@@ -43,7 +70,7 @@ export const CinClaimSchema = z.object({
   claimType: z.string().min(1),
   payload: z.record(z.string(), z.unknown()).default({}),
   payloadHash: z.string(),
-  alg: z.literal('ed25519').default('ed25519'),
+  alg: CinSignatureAlg.default('ed25519'),
   keyId: z.string(),
   signature: z.string(), // base64
   issuedAt: z.string(),
@@ -70,11 +97,12 @@ function claimSigningBase(c: Pick<CinClaim, 'issuerEntityId' | 'subjectEntityId'
 }
 
 export async function createEntityKey(entityId: string): Promise<{ keyId: string; publicKeyPem: string }> {
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const alg = preferredSignatureAlg();
+  const { publicKey, privateKey } = generateKeyPairSync(alg as 'ed25519');
   const key: CinKey = {
     keyId: genId('cinkey'),
     entityId,
-    alg: 'ed25519',
+    alg,
     publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
     privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
     status: 'active',
@@ -118,7 +146,7 @@ export async function issueClaim(input: IssueClaimInput): Promise<CinClaim> {
     claimId: genId('claim'),
     ...base,
     payload,
-    alg: 'ed25519',
+    alg: key.alg,
     keyId: key.keyId,
     signature,
     revokedAt: null,
@@ -175,6 +203,44 @@ export async function verifyClaim(claimId: string, now = nowIso()): Promise<Clai
     : !checks.notRevoked ? `revoked: ${claim.revocationReason ?? 'no reason recorded'}`
     : 'expired';
   return { claimId, valid, checks, reason };
+}
+
+/**
+ * Export a CIN claim in W3C Verifiable Credentials 2.0 shape (VCDM 2.0 became
+ * a W3C Recommendation on 2025-05-15, with the Data Integrity EdDSA
+ * cryptosuite for Ed25519). This is an INTEROP EXPORT — the wire-canonical
+ * form inside CIN remains CinClaim; federation partners and external wallets
+ * consume this shape. Proof here is our detached signature re-expressed with
+ * standard vocabulary; full eddsa-rdfc-2022 RDF canonicalization is a CIN-6
+ * federation work item (documented, not faked).
+ */
+export function claimToW3cVc(claim: CinClaim, issuerPublicKeyPem: string): Record<string, unknown> {
+  return {
+    '@context': ['https://www.w3.org/ns/credentials/v2'],
+    type: ['VerifiableCredential', 'CinClaim'],
+    id: `urn:cin:claim:${claim.claimId}`,
+    issuer: `urn:cin:entity:${claim.issuerEntityId}`,
+    validFrom: claim.issuedAt,
+    ...(claim.expiresAt ? { validUntil: claim.expiresAt } : {}),
+    credentialSubject: {
+      id: `urn:cin:entity:${claim.subjectEntityId}`,
+      claimType: claim.claimType,
+      ...claim.payload,
+    },
+    credentialStatus: claim.revokedAt
+      ? { type: 'CinRevocation', revokedAt: claim.revokedAt, reason: claim.revocationReason }
+      : { type: 'CinRevocation', revokedAt: null },
+    proof: {
+      type: 'DataIntegrityProof',
+      cryptosuite: claim.alg === 'ed25519' ? 'eddsa-cin-2026' : 'mldsa-cin-2026',
+      created: claim.issuedAt,
+      verificationMethod: { id: `urn:cin:key:${claim.keyId}`, publicKeyPem: issuerPublicKeyPem },
+      proofPurpose: 'assertionMethod',
+      proofValue: claim.signature,
+      signedFields: ['issuerEntityId', 'subjectEntityId', 'claimType', 'payloadHash', 'issuedAt', 'expiresAt'],
+      payloadHash: claim.payloadHash,
+    },
+  };
 }
 
 export async function revokeClaim(claimId: string, reason: string, actorEntityId?: string): Promise<CinClaim> {

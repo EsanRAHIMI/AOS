@@ -2,6 +2,45 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-19 — CIN-1 completed in-kernel + CIN-2 first slice: the living pulse (D-180)
+
+Researched current standards before building (sources recorded in
+docs/cin-v2/master-plan.md §3): W3C **Verifiable Credentials 2.0** became a
+Recommendation 2025-05-15 (with Data Integrity EdDSA cryptosuite — our
+Ed25519 claim design aligns); **Node ≥ 24.7 + OpenSSL 3.5 natively supports
+ML-DSA** (FIPS 204 post-quantum signatures, nodejs/node#59259).
+
+- **PQC readiness made real, not theoretical:** `CinSignatureAlg` is now
+  `ed25519 | ml-dsa-65`; `supportsMlDsa()` probes the runtime (cached),
+  `preferredSignatureAlg()` picks ML-DSA when `CIN_PQC_SIGNING=1` AND the
+  runtime supports it. Both algs are one-shot in node:crypto so sign/verify
+  are alg-agnostic. Never assumed — detected.
+- **W3C VC 2.0 interop export:** `claimToW3cVc()` +
+  `GET /v1/cin/claims/:id/vc` exports any claim in VCDM 2.0 shape
+  (@context/credentialSubject/DataIntegrityProof vocabulary). Wire-canonical
+  form stays CinClaim; full RDF canonicalization is a CIN-6 federation item.
+- **Jarvis `cin` tool family (8 governed tools):** entity search/get/create,
+  section update, relation create, claim issue (approval-gated — a trust-level
+  act), claim verify, ledger verify. Jarvis now manages identity conversationally.
+- **Dashboard CIN surface:** `/cin` (trust-chain status, entities, claims,
+  live ledger), `/cin/entities` (+ filter), `/cin/entities/[id]` (living
+  profile, key, relations, claims). Sidebar group "CIN".
+- **CIN-2 first slice — Jarvis leaves chatbot mode:**
+  `shared/src/heartbeat/` — a deterministic background pulse
+  (`runHeartbeatOnce`): mission health (overdue/stalled/blocked/review-due),
+  actionable watch firings, and **trust-chain verification** become durable,
+  deduped, grounded `proactive_events`. Gateway: `GET /v1/stream/owner`
+  (persistent SSE: presence + live proactive events + pings, Mongo-as-truth
+  poll fan-out, multi-instance safe), `POST /v1/heartbeat/run`,
+  `GET /v1/proactive`, ack/dismiss. In-process pulse every
+  `JARVIS_HEARTBEAT_INTERVAL_MS` (default 5 min; BullMQ repeatable is the
+  CIN-2 completion step). Dashboard: `OwnerPulse` live widget on `/me` +
+  `/api/owner-stream` SSE proxy.
+- Verification: shared/gateway/dashboard typecheck clean; 62 tests green
+  including 6 new heartbeat proofs (grounding, dedup-by-construction, ack
+  lifecycle, watch surfacing, broken-chain → critical event, cursor
+  streaming) and the agentcore suite with the new family registered.
+
 ## 2026-07-19 — CIN v2 adopted as the north star; CIN-1 Trust & Identity Core first slice (D-179)
 
 - **The founder's CIN v2 proposal (`docs/CIN v2.pdf`, 20 pages) is adopted as

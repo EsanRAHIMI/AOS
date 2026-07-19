@@ -3,6 +3,7 @@ import { gateway } from '@/lib/gateway';
 import { PageHeader, MetricCard, EmptyState } from '@/components/ui';
 import { DecisionButtons, RunReviewButton } from './controls';
 import { IntakePanel } from './intake-panel';
+import { OwnerPulse } from '@/components/OwnerPulse';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +32,7 @@ export default async function MePage() {
         actions={<RunReviewButton type="daily" label="Run daily briefing" />}
       />
       <IntakePanel />
+      <OwnerPulse />
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <MetricCard label="Top priority" value={acts[0] ? String(acts[0].title).slice(0, 40) : '—'} hint={acts[0] ? `score ${acts[0].priorityScore}` : 'no rankable actions yet'} tone={acts[0] ? 'ok' : undefined} />
         <MetricCard label="Opportunity radar" value={opps.length} hint={opps[0] ? `top: ${String(opps[0].title).slice(0, 32)}` : 'none recorded'} />

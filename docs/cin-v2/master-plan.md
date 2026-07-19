@@ -76,10 +76,20 @@ genuinely demands a split. This is a deliberate anti-sprawl decision (D-179).
   swappable (local Ollama/vLLM first-class; Anthropic/OpenAI optional).
 - **Stack:** TypeScript strict, Zod v3 contracts, Fastify, Next.js, MongoDB,
   Redis, SSE (WebSocket when bidirectional realtime is needed in CIN-2).
-- **Quantum path:** all signing goes through one `cin/trust` abstraction with a
-  declared `alg` field (`ed25519` today). When Node ships NIST PQC (ML-DSA),
-  we add it as a new `alg` and dual-sign during migration. No design change
-  needed later — this satisfies proposal §19 without betting on immature libs.
+- **Quantum path (VERIFIED 2026-07-19, D-180):** Node ≥ 24.7 built with
+  OpenSSL 3.5 natively supports **ML-DSA** (FIPS 204) in `crypto.sign/verify`
+  ([Node 24.7.0 release](https://nodejs.org/en/blog/release/v24.7.0),
+  [nodejs/node#59259](https://github.com/nodejs/node/pull/59259)). The trust
+  layer runtime-detects support (`supportsMlDsa()`) and switches new keys to
+  `ml-dsa-65` when `CIN_PQC_SIGNING=1`. On older runtimes it stays `ed25519`.
+  Detection, never assumption.
+- **Standards alignment (VERIFIED 2026-07-19):** W3C **Verifiable Credentials
+  2.0** + Data Integrity EdDSA cryptosuite are W3C Recommendations
+  (2025-05-15; [W3C announcement](https://www.w3.org/news/2025/the-verifiable-credentials-2-0-family-of-specifications-is-now-a-w3c-recommendation/),
+  [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/)). CIN claims export in
+  VCDM 2.0 shape via `claimToW3cVc()` / `GET /v1/cin/claims/:id/vc` for
+  wallet/institution interop; full RDF canonicalization lands with CIN-6
+  federation.
 - **Verification discipline:** every phase lands with contract tests + a
   runtime-verify script; status vocabulary (`RUNTIME_VERIFIED`, `CODE_COMPLETE`,
   `BLOCKED_EXTERNAL`, `PRODUCT_VERIFIED`) is unchanged.
@@ -172,8 +182,8 @@ claim signed by A verifies and fails after revocation; docs updated.
 
 | Phase | Status | Evidence |
 |---|---|---|
-| CIN-1 Trust & Identity Core | **IN PROGRESS** (first slice landed) | `shared/src/cin/*`, `shared/test/cin.contract.test.ts`, `/v1/cin/*` |
-| CIN-2 Living Personal OS | PLANNED | — |
+| CIN-1 Trust & Identity Core | **COMPLETE (in-kernel; real-Mongo genesis run = owner step)** | `shared/src/cin/*` (+PQC detect, W3C VC export), `cin` tool family, `/cin` dashboard, 9+ tests |
+| CIN-2 Living Personal OS | **IN PROGRESS** (heartbeat + owner stream landed) | `shared/src/heartbeat/*`, `/v1/stream/owner`, `OwnerPulse` on `/me`, 6 tests |
 | CIN-3 Org/Legal/Financial | PLANNED | — |
 | CIN-4 Decisions + World Model | PLANNED | — |
 | CIN-5 External + Robots | PLANNED | — |

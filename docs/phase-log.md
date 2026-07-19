@@ -3896,3 +3896,25 @@ CIN v2 (`docs/CIN v2.pdf`) adopted as the post-K2 north star; plan in
 Next (CIN-1 completion → CIN-2): dashboard `/cin` surface, Jarvis `cin` tool
 family, real-Mongo genesis run, then the Living Personal OS phase (heartbeat
 loop + persistent owner stream — Jarvis leaves chatbot mode).
+
+## Phase CIN-1 complete (in-kernel) + CIN-2 first slice — the living pulse (2026-07-19, D-180)
+
+Standards verified first (Node ML-DSA in ≥24.7/OpenSSL 3.5; W3C VC 2.0
+Recommendation with EdDSA cryptosuite). Delivered:
+
+- Trust layer upgraded: runtime-detected post-quantum signing option
+  (`ml-dsa-65` via CIN_PQC_SIGNING=1 on supporting runtimes), W3C VC 2.0
+  export (`claimToW3cVc`, `GET /v1/cin/claims/:id/vc`).
+- Jarvis `cin` tool family: 8 governed tools (claim issue approval-gated).
+- Dashboard: `/cin`, `/cin/entities`, `/cin/entities/[id]` + sidebar group.
+- CIN-2 heartbeat: `shared/src/heartbeat/` deterministic pulse →
+  `proactive_events` (grounded + deduped); collections proactive_events,
+  heartbeat_runs.
+- Persistent owner stream: `GET /v1/stream/owner` SSE (presence/proactive/
+  ping), heartbeat trigger + proactive ack routes; in-process pulse interval.
+- Dashboard live presence: `OwnerPulse` on `/me` via `/api/owner-stream`.
+- Tests: +6 heartbeat proofs; 62 green across 7 suites; 3 packages typecheck.
+
+Remaining for CIN-2 completion: BullMQ repeatable heartbeat job, model-driven
+proactive escalation (needs reachable LLM), voice/latency pass, real-browser
+product verification (owner machine).

@@ -24,6 +24,12 @@ import { webSearchProviderFromEnv } from '../research/index.js';
 import { fetchAndExtract, fetchFeed, researchCoverageStatus, searxngConfigFromEnv } from '../research/providers.js';
 import { pinFactToSession } from '../jarvis/session.js';
 import { buildPersonalStateSnapshot } from '../personal2/index.js';
+import {
+  CinEntityType, CinRelationType, CinSectionVisibility,
+  createEntity, createRelation, getEntityGraph, listEntities, updateEntitySection,
+} from '../cin/entities.js';
+import { issueClaim, verifyClaim } from '../cin/trust.js';
+import { verifyChain } from '../cin/ledger.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -481,6 +487,111 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
     },
     inputSchema: z.object({}),
     executor: async (_args, ctx): Promise<ToolResult> => deps.personalSnapshot ? deps.personalSnapshot(ctx) : { ok: false, summary: 'not bound' },
+  });
+
+  /* -------------------------------- cin ---------------------------------- */
+  // CIN-1 (D-179/D-180): governed access to the Collective Intelligence
+  // Network layer — living entity graph, verifiable claims, tamper-evident
+  // ledger. Jarvis manages identity conversationally through these.
+
+  const cinDef = (name: string, purpose: string, opts: { risk?: 'low' | 'medium'; write?: boolean; approval?: boolean } = {}) => ({
+    name, version: '1.0.0', purpose, family: 'cin', ownerModule: 'shared/src/cin', inputFields: {}, outputFields: {},
+    requiredActorScope: 'user' as const, permission: '', riskLevel: opts.risk ?? 'low',
+    policyCategory: opts.approval ? ('internal_sensitive' as const) : opts.write ? ('internal_reversible' as const) : ('read_only' as const),
+    requiresApproval: Boolean(opts.approval), ownerOnly: Boolean(opts.approval), timeoutMs: 10000, maxRetries: opts.write ? 0 : 1,
+    idempotent: !opts.write, sideEffect: opts.write ? ('internal_write' as const) : ('none' as const), evidenceRequired: false,
+    rollbackAvailable: false, outputTrust: 'trusted_internal' as const, available: true, unavailableReason: '',
+  });
+
+  registry.register({
+    definition: cinDef('cin_entity_search', 'Search living entities in the CIN graph (people, organizations, cities, governments, agents, robots, devices, services).'),
+    inputSchema: z.object({ q: z.string().optional(), entityType: CinEntityType.optional() }),
+    executor: async (args): Promise<ToolResult> => {
+      const entities = await listEntities({ entityType: args.entityType as never, q: args.q as string | undefined });
+      if (!entities.length) return { ok: true, summary: 'No entities found.' };
+      return { ok: true, summary: entities.map((e) => `[${e.entityType}] ${e.displayName || e.name} (${e.entityId}, ${e.status})`).join('\n'), data: entities.map((e) => ({ entityId: e.entityId, entityType: e.entityType, name: e.name, status: e.status })) };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_entity_get', 'Read one entity with its profile sections, active relations and 1-hop neighbors.'),
+    inputSchema: z.object({ entityId: z.string() }),
+    executor: async (args): Promise<ToolResult> => {
+      const graph = await getEntityGraph(String(args.entityId), { includePrivate: true });
+      if (!graph) return { ok: false, summary: `entity ${args.entityId} not found` };
+      const sections = Object.entries(graph.entity.sections).map(([n, s]) => `${n} v${s.version} (${s.visibility})`).join(', ') || 'none';
+      const rels = graph.relations.map((r) => `${r.fromEntityId === graph.entity.entityId ? '→' : '←'} ${r.relationType} ${r.fromEntityId === graph.entity.entityId ? r.toEntityId : r.fromEntityId}`).join('; ') || 'none';
+      return { ok: true, summary: `${graph.entity.displayName || graph.entity.name} [${graph.entity.entityType}/${graph.entity.status}] sections: ${sections}; relations: ${rels}`, data: graph };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_entity_create', 'Create a new living entity in the CIN graph (generates its signing key and ledger record).', { write: true, risk: 'medium' }),
+    inputSchema: z.object({
+      entityType: CinEntityType,
+      name: z.string().min(1),
+      displayName: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const { entity } = await createEntity({ actorId: ctx.actorId, scope: 'user', tenantId: ctx.tenantId ?? null }, { entityType: args.entityType as never, name: String(args.name), displayName: args.displayName as string | undefined, tags: (args.tags as string[]) ?? [] });
+      return { ok: true, summary: `created ${entity.entityType} "${entity.name}" (${entity.entityId}) with signing key`, data: { entityId: entity.entityId } };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_section_update', 'Replace a profile section of an entity (versioned; visibility private|restricted|network|public).', { write: true }),
+    inputSchema: z.object({
+      entityId: z.string(), section: z.string().min(1),
+      data: z.record(z.string(), z.unknown()),
+      visibility: CinSectionVisibility.optional(),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const updated = await updateEntitySection({ actorId: ctx.actorId, scope: 'user', tenantId: ctx.tenantId ?? null }, String(args.entityId), String(args.section), args.data as Record<string, unknown>, args.visibility as never);
+      const s = updated.sections[String(args.section)];
+      return { ok: true, summary: `section "${args.section}" of ${args.entityId} → v${s?.version}` };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_relation_create', 'Create a typed relation between two entities (member_of, owns, operates, governs, represents, delegates_to, located_in, contracts_with, parent_of, connected_to).', { write: true }),
+    inputSchema: z.object({ fromEntityId: z.string(), toEntityId: z.string(), relationType: CinRelationType, role: z.string().optional() }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const rel = await createRelation({ actorId: ctx.actorId, scope: 'user', tenantId: ctx.tenantId ?? null }, { fromEntityId: String(args.fromEntityId), toEntityId: String(args.toEntityId), relationType: args.relationType as never, role: args.role as string | undefined });
+      return { ok: true, summary: `relation ${rel.relationId}: ${rel.fromEntityId} —${rel.relationType}→ ${rel.toEntityId}` };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_claim_issue', 'Issue a cryptographically signed verifiable claim from one entity about another (education, employment, membership, authorization…). A trust-level act.', { write: true, risk: 'medium', approval: true }),
+    inputSchema: z.object({
+      issuerEntityId: z.string(), subjectEntityId: z.string(),
+      claimType: z.string().min(1).describe('dot-namespaced, e.g. employment.role'),
+      payload: z.record(z.string(), z.unknown()).optional(),
+      expiresAt: z.string().nullable().optional(),
+    }),
+    executor: async (args): Promise<ToolResult> => {
+      const claim = await issueClaim({ issuerEntityId: String(args.issuerEntityId), subjectEntityId: String(args.subjectEntityId), claimType: String(args.claimType), payload: args.payload as Record<string, unknown> | undefined, expiresAt: (args.expiresAt as string | null) ?? null });
+      return { ok: true, summary: `claim ${claim.claimId} issued (${claim.claimType}, alg=${claim.alg})`, data: { claimId: claim.claimId } };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_claim_verify', 'Verify a claim: signature, expiry, revocation, payload-hash integrity.'),
+    inputSchema: z.object({ claimId: z.string() }),
+    executor: async (args): Promise<ToolResult> => {
+      const v = await verifyClaim(String(args.claimId));
+      return { ok: v.valid, summary: v.valid ? `claim ${args.claimId} VALID (signature+expiry+revocation+payload all pass)` : `claim ${args.claimId} INVALID: ${v.reason}`, data: v };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_ledger_verify', 'Verify the full tamper-evident CIN ledger chain and report its head hash.'),
+    inputSchema: z.object({}),
+    executor: async (): Promise<ToolResult> => {
+      const check = await verifyChain();
+      return { ok: check.ok, summary: check.ok ? `ledger intact: ${check.length} records, head ${check.headHash?.slice(0, 16) ?? 'empty'}` : `LEDGER BROKEN at seq ${check.brokenAtSeq}: ${check.reason}`, data: check };
+    },
   });
 
   return registry;

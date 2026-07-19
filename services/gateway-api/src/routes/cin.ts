@@ -14,7 +14,7 @@ import {
   CinCreateRelationBody, CinIssueClaimBody, CinRevokeClaimBody, zodIssuesMessage,
   createEntity, getEntity, listEntities, updateEntitySection, setEntityStatus,
   createRelation, endRelation, getEntityGraph,
-  issueClaim, getClaim, listClaims, verifyClaim, revokeClaim, getPublicKey,
+  issueClaim, getClaim, listClaims, verifyClaim, revokeClaim, getPublicKey, claimToW3cVc,
   listLedger, verifyChain,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
@@ -119,6 +119,16 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
     const claim = await getClaim(id);
     if (!claim) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `claim ${id} not found`));
     return success({ claim });
+  });
+
+  app.get('/v1/cin/claims/:id/vc', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const { id } = req.params as { id: string };
+    const claim = await getClaim(id);
+    if (!claim) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `claim ${id} not found`));
+    const pub = await getPublicKey(claim.issuerEntityId);
+    if (!pub) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'issuer public key not found'));
+    return success({ verifiableCredential: claimToW3cVc(claim, pub.publicKeyPem) });
   });
 
   app.get('/v1/cin/claims/:id/verify', async (req, reply) => {

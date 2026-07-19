@@ -324,4 +324,25 @@ export const gateway = {
     prioritizedItems: Array<{ label: string; detail: string; type: 'task' | 'project' | 'action'; weight: number }>;
     generatedAt: string;
   }>('/v1/jarvis/briefing'),
+
+  // --- CIN-1 Trust & Identity Core (D-179/D-180) ---
+  cinEntities: (q?: { entityType?: string; q?: string }) => {
+    const params = new URLSearchParams();
+    if (q?.entityType) params.set('entityType', q.entityType);
+    if (q?.q) params.set('q', q.q);
+    const qs = params.toString();
+    return call<{ entities: Array<Record<string, unknown>> }>(`/v1/cin/entities${qs ? `?${qs}` : ''}`);
+  },
+  cinEntity: (id: string) => call<{ entity: Record<string, unknown>; publicKey: { keyId: string; alg: string; publicKeyPem: string } | null }>(`/v1/cin/entities/${id}`),
+  cinEntityGraph: (id: string) => call<{ entity: Record<string, unknown>; relations: Array<Record<string, unknown>>; neighbors: Array<Record<string, unknown>> }>(`/v1/cin/entities/${id}/graph`),
+  cinClaims: (q?: { subjectEntityId?: string; issuerEntityId?: string }) => {
+    const params = new URLSearchParams();
+    if (q?.subjectEntityId) params.set('subjectEntityId', q.subjectEntityId);
+    if (q?.issuerEntityId) params.set('issuerEntityId', q.issuerEntityId);
+    const qs = params.toString();
+    return call<{ claims: Array<Record<string, unknown>> }>(`/v1/cin/claims${qs ? `?${qs}` : ''}`);
+  },
+  cinClaimVerify: (id: string) => call<{ claimId: string; valid: boolean; checks: Record<string, boolean>; reason: string | null }>(`/v1/cin/claims/${id}/verify`),
+  cinLedger: (limit = 50) => call<{ records: Array<Record<string, unknown>> }>(`/v1/cin/ledger?limit=${limit}`),
+  cinLedgerVerify: () => call<{ chainId: string; ok: boolean; length: number; headHash: string | null; brokenAtSeq: number | null; reason: string | null }>('/v1/cin/ledger/verify'),
 };

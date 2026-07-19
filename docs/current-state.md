@@ -8,10 +8,17 @@ _Last updated: 2026-07-19 · covers commits `ad8aa69` (D-177) → CIN-1 first sl
 > **NEW NORTH STAR (2026-07-19):** the founder's **CIN v2** proposal
 > (`docs/CIN v2.pdf`) is the adopted post-K2 direction — see
 > `docs/cin-v2/master-plan.md` (phases CIN-1…CIN-6) and
-> `docs/cin-v2/architecture.md`. CIN-1 (Trust & Identity Core) first slice is
-> landed: `shared/src/cin/*` (entity graph + Ed25519 verifiable claims +
-> hash-chained ledger), `/v1/cin/*` gateway routes,
-> `scripts/cin-genesis-seed.mjs`, `shared/test/cin.contract.test.ts` (9 tests).
+> `docs/cin-v2/architecture.md`.
+> **CIN-1 is COMPLETE in-kernel (D-179/D-180):** entity graph + verifiable
+> claims (ed25519, runtime-detected ml-dsa-65 PQC option, W3C VC 2.0 export)
+> + hash-chained ledger; `/v1/cin/*` routes; Jarvis `cin` tool family (8
+> tools); dashboard `/cin` pages; `scripts/cin-genesis-seed.mjs` (real-Mongo
+> run = owner step).
+> **CIN-2 first slice landed:** `shared/src/heartbeat/` deterministic pulse →
+> deduped grounded `proactive_events`; persistent `GET /v1/stream/owner` SSE;
+> `OwnerPulse` live widget on `/me`; pulse interval
+> `JARVIS_HEARTBEAT_INTERVAL_MS` (default 5 min). 15 new tests (9 cin + 6
+> heartbeat) — all green with the existing suites.
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build
