@@ -85,3 +85,5 @@ export * from './watches/index.js';
 export * from './selfdev/index.js';
 // K2 Product Activation — personal operating state over memory2 + missions (D-178)
 export * from './personal2/index.js';
+// CIN-1 Trust & Identity Core (D-179) — entity graph + verifiable claims + hash-chained ledger
+export * from './cin/index.js';

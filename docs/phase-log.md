@@ -3870,3 +3870,29 @@ BLOCKED_EXTERNAL in this sandbox (probed, genuine): capable model reasoning (all
 weight hosts + inference endpoints except api.anthropic.com blocked, no key);
 real-browser launch (libXdamage.so.1 absent, arm64 mirrors 403, no root). Code
 paths real; enablement documented.
+
+## Phase CIN-1 — Trust & Identity Core: first slice (2026-07-19, D-179)
+
+CIN v2 (`docs/CIN v2.pdf`) adopted as the post-K2 north star; plan in
+`docs/cin-v2/`. First slice delivered:
+
+- `shared/src/cin/` — entity graph (10 entity types, versioned profile
+  sections with per-section visibility, typed relations with duplicate
+  guard), trust layer (per-entity Ed25519 keys, verifiable claims with
+  sign/verify/expiry/revocation + payload-hash selective disclosure), and the
+  append-only SHA-256 hash-chained ledger (`verifyChain()` tamper detection).
+- 5 new collections: cin_entities, cin_relations, cin_keys, cin_claims,
+  cin_ledger. Every trust-relevant mutation appends a chained ledger record.
+- Gateway: `routes/cin.ts` — 15 `/v1/cin/*` endpoints (entities, sections,
+  status, graph, relations, claims issue/verify/revoke, ledger list/verify);
+  body contracts in `shared/src/cin/api.ts` per kernel convention.
+- `scripts/cin-genesis-seed.mjs` — seeds the first three living entities
+  (owner Ehsan Rahimi, Jarvis ai_agent, AOS Kernel service) + genesis
+  relations + first verifiable claims; verifies claims + full chain.
+- Tests: `shared/test/cin.contract.test.ts` (9 tests: graph, visibility,
+  claims lifecycle, tamper detection, canonical hashing). Typecheck clean
+  (shared + gateway); 101 core shared tests green in-sandbox.
+
+Next (CIN-1 completion → CIN-2): dashboard `/cin` surface, Jarvis `cin` tool
+family, real-Mongo genesis run, then the Living Personal OS phase (heartbeat
+loop + persistent owner stream — Jarvis leaves chatbot mode).

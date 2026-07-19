@@ -3,7 +3,15 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-18 · covers commits `ad8aa69` (D-177) → `d538549`._
+_Last updated: 2026-07-19 · covers commits `ad8aa69` (D-177) → CIN-1 first slice (D-179)._
+
+> **NEW NORTH STAR (2026-07-19):** the founder's **CIN v2** proposal
+> (`docs/CIN v2.pdf`) is the adopted post-K2 direction — see
+> `docs/cin-v2/master-plan.md` (phases CIN-1…CIN-6) and
+> `docs/cin-v2/architecture.md`. CIN-1 (Trust & Identity Core) first slice is
+> landed: `shared/src/cin/*` (entity graph + Ed25519 verifiable claims +
+> hash-chained ledger), `/v1/cin/*` gateway routes,
+> `scripts/cin-genesis-seed.mjs`, `shared/test/cin.contract.test.ts` (9 tests).
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build
@@ -60,6 +68,7 @@ No new deployable was added for K2 (agents/roles are logical actors, not service
 | Owner briefing v2 + watches | `shared/src/watches/index.ts` | grounded in real mission health + decisions/opportunities; dedup watches; honest-empty. |
 | Self-development pipeline | `shared/src/selfdev/index.ts` | durable state machine with approval-before-implement + verify-before-merge gates. |
 | Streaming + approval UI | `services/dashboard-web/src/app/jarvis/` + `api/jarvis-stream` | SSE turn stream, tool steps, inline approval cards, memory tab, RTL. |
+| CIN-1 Trust & Identity Core (D-179) | `shared/src/cin/` + `routes/cin.ts` | living entity graph (10 types, versioned/visibility-scoped sections, typed relations), Ed25519 verifiable claims (issue/verify/expire/revoke, selective-disclosure hash), tamper-evident hash-chained ledger; genesis seed script. CODE_COMPLETE + contract-tested (fake-db); real-Mongo genesis run pending on owner infra. |
 
 ## 4. Verification status (status vocabulary is exact)
 

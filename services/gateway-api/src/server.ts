@@ -247,6 +247,7 @@ import { registerVoiceRoutes } from './routes/voice.js';
 import { registerPersonalRoutes } from './routes/personal.js';
 import { registerOperatorRoutes } from './routes/operator.js';
 import { registerSystemRoutes } from './routes/system.js';
+import { registerCinRoutes } from './routes/cin.js';
 import type { GatewayDeps } from './routes/deps.js';
 import { manifest } from './factory/manifest.js';
 
@@ -1873,6 +1874,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       registerPersonalRoutes(app, deps);
       registerOperatorRoutes(app, deps);
       registerJarvisRoutes(app, deps); // K2 D-177 — persistent Jarvis on the shared agent loop
+      registerCinRoutes(app, deps); // CIN-1 D-179 — entity graph + claims + ledger
       registerSystemRoutes(app, deps);
     },
   });

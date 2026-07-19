@@ -300,6 +300,13 @@ export const COLLECTIONS = {
   WATCH_FIRINGS: 'watch_firings',
   // K2 Self-development pipeline (D-177) — global software-evolution runs.
   SELF_DEV_RUNS: 'self_dev_runs',
+  // CIN-1 Trust & Identity Core (D-179) — living entity graph + verifiable
+  // claims + tamper-evident hash-chained ledger (see shared/src/cin).
+  CIN_ENTITIES: 'cin_entities',
+  CIN_RELATIONS: 'cin_relations',
+  CIN_KEYS: 'cin_keys',
+  CIN_CLAIMS: 'cin_claims',
+  CIN_LEDGER: 'cin_ledger',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

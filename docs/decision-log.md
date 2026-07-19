@@ -2,6 +2,33 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-19 — CIN v2 adopted as the north star; CIN-1 Trust & Identity Core first slice (D-179)
+
+- **The founder's CIN v2 proposal (`docs/CIN v2.pdf`, 20 pages) is adopted as
+  the strategic direction after K2.** Full mapping of its 13 components to
+  kernel realizations, the 6-phase roadmap (CIN-1…CIN-6) and the technical
+  architecture live in `docs/cin-v2/master-plan.md` + `docs/cin-v2/architecture.md`.
+- **Anti-sprawl decision:** CIN pillars are domain modules in `shared/src/cin/*`
+  exposed via gateway `/v1/cin/*` — NO new deployable services (per
+  master-direction's "distributed monolith" diagnosis). Splitting happens only
+  when scale demands it.
+- **Self-source trust decision:** the trust layer is built in-house on Node's
+  `crypto` — Ed25519 signatures + SHA-256 hash-chained ledger, no external
+  blockchain/API. Every key/claim/ledger record carries an `alg` field as the
+  post-quantum migration seam (add ML-DSA when Node ships it; dual-sign during
+  migration).
+- **CIN-1 first slice landed:** entity graph (`cin_entities`/`cin_relations`,
+  10 entity types, versioned per-section profiles with visibility), verifiable
+  claims (`cin_keys`/`cin_claims`, sign/verify/expire/revoke, payload-hash
+  selective disclosure), tamper-evident ledger (`cin_ledger`,
+  `verifyChain()` detects any mutation), 15 gateway routes, genesis seed
+  script (`scripts/cin-genesis-seed.mjs`: owner + Jarvis + kernel as the first
+  three entities). 9 new contract tests; shared+gateway typecheck clean;
+  101 core shared tests green. Private keys never leave the trust module.
+- Verification note: full shared suite (Redis-dependent parts) not re-run in
+  this sandbox (fresh sandbox, no Redis binary); CIN tests are Redis-free and
+  the change is additive. Real-Mongo genesis run is the owner-machine step.
+
 ## 2026-07-18 — K2 Product Activation continued: docs snapshot, real-source research, onboarding UI (D-178c)
 
 - Documentation fully refreshed to the exact current state and a new
