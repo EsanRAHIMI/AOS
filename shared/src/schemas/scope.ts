@@ -23,16 +23,18 @@ export type Visibility = z.infer<typeof Visibility>;
  *  stamp these fields — helpers in shared/src/scope enforce fail-closed. */
 export const ScopeFieldsSchema = z.object({
   scope: Scope.optional(),
-  tenantId: z.string().optional(),
-  userId: z.string().optional(),
-  projectId: z.string().optional(),
-  caseId: z.string().optional(),
+  // nullish: Mongo writers often persist explicit null for unused scope keys
+  // (e.g. CIN genesis entities with scope:'user' and tenantId:null).
+  tenantId: z.string().nullish(),
+  userId: z.string().nullish(),
+  projectId: z.string().nullish(),
+  caseId: z.string().nullish(),
   visibility: Visibility.optional(),
   source: z.string().optional(),
   confidence: z.number().optional(),
   consentGrantId: z.string().optional(),
   createdBy: z.string().optional(),
-  updatedBy: z.string().optional(),
+  updatedBy: z.string().nullish(),
   auditContext: z.record(z.string(), z.unknown()).optional(),
   migrationNote: z.string().optional(),
 });

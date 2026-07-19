@@ -21,7 +21,14 @@ const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) { console.error('FAIL: MONGODB_URI required'); process.exit(1); }
 const DB = process.env.MONGODB_DB_NAME ?? 'autonomous_os_kernel';
 
-const actor = { actorId: 'owner', scope: 'user', tenantId: null };
+// Prefer the personal Esan tenant when present; otherwise leave tenant unset.
+// Avoid writing tenantId:null into Mongo — ScopeFieldsSchema accepts nullish,
+// but a real tenant stamp keeps dashboard /cin lists aligned with owner scope.
+const actor = {
+  actorId: 'owner',
+  scope: 'user',
+  tenantId: process.env.CIN_GENESIS_TENANT_ID || 'tenant_esan_personal',
+};
 
 async function ensureEntity(input) {
   const existing = (await listEntities({ entityType: input.entityType })).find((e) => e.name === input.name);
