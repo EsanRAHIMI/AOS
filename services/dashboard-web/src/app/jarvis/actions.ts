@@ -118,3 +118,74 @@ export async function submitOnboardingAction(answers: Record<string, string>): P
 export async function personalStateAction() {
   return gateway.jarvisPersonalState();
 }
+
+/* ===================== Jarvis live HUD telemetry ========================== */
+
+export type TelemetryTone = 'ok' | 'warn' | 'err' | 'muted';
+
+export interface JarvisTelemetryView {
+  mode: { value: string; detail: string; tone: TelemetryTone };
+  loop: { value: string; detail: string; tone: TelemetryTone };
+  cost: { value: string; detail: string; tone: TelemetryTone };
+  trust: { value: string; detail: string; tone: TelemetryTone };
+  fetchedAt: string;
+}
+
+/** Real kernel reads for the four HUD corner panels — never invented numbers. */
+export async function jarvisTelemetryAction(sessionId?: string | null): Promise<JarvisTelemetryView> {
+  const [intel, inbox, cycles, sessions, approvals] = await Promise.all([
+    gateway.jarvisIntelligenceStatus(),
+    gateway.loopInbox(),
+    gateway.loopCycles(5),
+    gateway.jarvisSessions(),
+    gateway.approvals(),
+  ]);
+
+  const modeValue = !intel
+    ? '—'
+    : intel.degraded
+      ? 'DEGRADED'
+      : intel.isLocal
+        ? 'LOCAL'
+        : (intel.provider || 'CLOUD').toUpperCase();
+  const modeDetail = !intel
+    ? 'unreachable'
+    : intel.degraded
+      ? (intel.degradedDetail || 'model offline')
+      : (intel.models?.standard ?? intel.provider);
+  const modeTone: TelemetryTone = !intel ? 'muted' : intel.degraded ? 'warn' : intel.safeMode ? 'warn' : 'ok';
+
+  const events = inbox?.events ?? [];
+  const openCount = events.filter((e) => {
+    const s = String((e as { status?: string }).status ?? 'pending');
+    return s === 'pending' || s === 'processing';
+  }).length;
+  const latest = (cycles?.cycles?.[0] ?? null) as { status?: string; triggerSummary?: string } | null;
+  const p50 = inbox?.latency?.p50;
+  const loopValue = latest?.status ? String(latest.status).replace(/_/g, ' ') : (openCount > 0 ? `${openCount} open` : 'idle');
+  const loopDetail = p50 != null ? `p50 ${Math.round(p50)}ms · ${openCount} inbox` : (openCount ? `${openCount} inbox` : 'no cycles yet');
+  const loopTone: TelemetryTone = !inbox && !cycles ? 'muted' : String(latest?.status) === 'awaiting_approval' ? 'warn' : openCount > 5 ? 'warn' : 'ok';
+
+  const session = sessionId
+    ? (sessions ?? []).find((s) => s.sessionId === sessionId) ?? (sessions ?? [])[0]
+    : (sessions ?? [])[0];
+  const usd = session?.totalCostUsd ?? 0;
+  const turns = session?.turnCount ?? 0;
+  const costValue = session ? `$${usd.toFixed(usd >= 1 ? 2 : 3)}` : '—';
+  const costDetail = session ? `${turns} turn${turns === 1 ? '' : 's'}` : 'no session';
+  const costTone: TelemetryTone = session ? 'ok' : 'muted';
+
+  const pending = Array.isArray(approvals) ? approvals.length : 0;
+  const safe = Boolean(intel?.safeMode);
+  const trustValue = safe ? 'SAFE ON' : pending > 0 ? `${pending} HOLD` : 'CLEAR';
+  const trustDetail = safe ? 'execution blocked' : pending > 0 ? 'awaiting approval' : 'governed';
+  const trustTone: TelemetryTone = safe || pending > 0 ? 'warn' : intel ? 'ok' : 'muted';
+
+  return {
+    mode: { value: modeValue, detail: modeDetail, tone: modeTone },
+    loop: { value: loopValue, detail: loopDetail, tone: loopTone },
+    cost: { value: costValue, detail: costDetail, tone: costTone },
+    trust: { value: trustValue, detail: trustDetail, tone: trustTone },
+    fetchedAt: new Date().toISOString(),
+  };
+}
