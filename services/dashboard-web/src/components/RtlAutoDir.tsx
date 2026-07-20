@@ -1,11 +1,18 @@
 'use client';
 
 /**
- * App-wide RTL enhancer: after React hydration, any text block that contains
- * Persian/Arabic (or other RTL scripts) gets `dir="rtl"` so it right-aligns.
+ * App-wide RTL enhancer for opt-in surfaces and form fields.
  *
- * Must NOT mutate the DOM during hydration — that causes React mismatch errors.
- * Opt out with `data-no-auto-dir` on an ancestor (chrome, nav, monospace logs).
+ * IMPORTANT: never mutate React-managed DOM during Next.js concurrent
+ * hydration. Scanning `.main`/`.card` while Suspense islands still hydrate
+ * caused systematic `dir="rtl"` hydration mismatches (server DOM mutated
+ * before client fibers finished). Direction for page content must come from
+ * React via `dirProps` / `<AutoDir>` so SSR HTML matches the client VDOM.
+ *
+ * This enhancer only:
+ *   1. Handles inputs/textareas (user typing after hydrate)
+ *   2. Enhances subtrees marked `[data-rtl-root]` (explicit opt-in)
+ * and only after `window` `load` + idle — well past hydration.
  */
 import { useEffect } from 'react';
 import { containsRtl } from '@/lib/rtl';
@@ -24,12 +31,10 @@ function isSkippable(el: HTMLElement): boolean {
   if (SKIP_TAGS.has(el.tagName)) return true;
   if (el.closest('[data-no-auto-dir]')) return true;
   if (el.isContentEditable) return true;
-  // Never override an explicit React-managed dir.
   if (el.hasAttribute('data-auto-dir')) return true;
   return false;
 }
 
-/** Element whose meaningful content is text / phrasing — safe for dir=. */
 function isTextContainer(el: HTMLElement): boolean {
   if (isSkippable(el)) return false;
   let hasText = false;
@@ -47,11 +52,6 @@ function isTextContainer(el: HTMLElement): boolean {
   return hasText;
 }
 
-/**
- * Only add `dir="rtl"` when RTL script is present. Never write `dir="ltr"` —
- * LTR is the document default and mutating it before/after hydrate causes noise
- * and hydration mismatches.
- */
 function applyDir(el: HTMLElement): void {
   if (isSkippable(el)) return;
 
@@ -59,14 +59,13 @@ function applyDir(el: HTMLElement): void {
     const value = el.value || el.placeholder || '';
     if (containsRtl(value)) {
       if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
-    } else if (el.getAttribute('dir') === 'rtl') {
+    } else if (el.getAttribute('dir') === 'rtl' && !el.hasAttribute('data-auto-dir')) {
       el.removeAttribute('dir');
     }
     return;
   }
 
   if (!isTextContainer(el)) return;
-
   const sample = (el.textContent ?? '').trim();
   if (!sample) return;
 
@@ -77,47 +76,54 @@ function applyDir(el: HTMLElement): void {
   }
 }
 
-function scan(root: ParentNode): void {
+function scanOptIn(root: ParentNode): void {
   const scope = root instanceof Document ? root.body : root;
   if (!scope || !('querySelectorAll' in scope)) return;
 
-  const nodes = scope.querySelectorAll<HTMLElement>(
-    'p, h1, h2, h3, h4, h5, h6, li, td, th, blockquote, label, textarea, input, pre, ' +
-      '.sub, .m, .ti .msg, .feed > div, [data-auto-dir]',
-  );
-  for (const el of nodes) applyDir(el);
+  for (const el of scope.querySelectorAll<HTMLElement>('input, textarea')) {
+    applyDir(el);
+  }
 
-  const surfaces = scope.querySelectorAll<HTMLElement>('.main, .card, .glass, [data-rtl-root]');
-  for (const surface of surfaces) {
+  for (const surface of scope.querySelectorAll<HTMLElement>('[data-rtl-root]')) {
+    applyDir(surface);
     for (const node of surface.querySelectorAll<HTMLElement>('*')) {
       if (isTextContainer(node)) applyDir(node);
     }
   }
 }
 
+function whenIdle(cb: () => void): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(() => cb(), { timeout: 2500 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const t = window.setTimeout(cb, 400);
+  return () => window.clearTimeout(t);
+}
+
 export function RtlAutoDir() {
   useEffect(() => {
     let cancelled = false;
     let mo: MutationObserver | null = null;
-    let raf2 = 0;
+    let cancelIdle: (() => void) | null = null;
 
-    const armObserver = () => {
+    const arm = () => {
       if (cancelled) return;
-      scan(document);
+      scanOptIn(document);
 
       mo = new MutationObserver((mutations) => {
         for (const m of mutations) {
           if (m.type === 'characterData' && m.target.parentElement) {
-            applyDir(m.target.parentElement);
+            const host = m.target.parentElement.closest('[data-rtl-root], input, textarea');
+            if (host instanceof HTMLElement) applyDir(m.target.parentElement);
             continue;
           }
           if (m.type === 'childList') {
             for (const n of m.addedNodes) {
-              if (n instanceof HTMLElement) {
+              if (!(n instanceof HTMLElement)) continue;
+              if (n.matches?.('input, textarea') || n.closest?.('[data-rtl-root]')) {
                 applyDir(n);
-                scan(n);
-              } else if (n.parentElement) {
-                applyDir(n.parentElement);
+                scanOptIn(n);
               }
             }
           }
@@ -136,11 +142,13 @@ export function RtlAutoDir() {
       });
     };
 
-    // Double-rAF: wait until after paint + nested client hydration passes.
-    // Mutating `dir` during hydration is what triggered the mismatch warning.
-    const raf1 = window.requestAnimationFrame(() => {
-      raf2 = window.requestAnimationFrame(armObserver);
-    });
+    const start = () => {
+      cancelIdle = whenIdle(arm);
+    };
+
+    // Past full load → concurrent hydration of streamed islands is done.
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
 
     const onInput = (e: Event) => {
       const t = e.target;
@@ -150,10 +158,10 @@ export function RtlAutoDir() {
 
     return () => {
       cancelled = true;
-      window.cancelAnimationFrame(raf1);
-      window.cancelAnimationFrame(raf2);
+      cancelIdle?.();
       mo?.disconnect();
       document.removeEventListener('input', onInput, true);
+      window.removeEventListener('load', start);
     };
   }, []);
 

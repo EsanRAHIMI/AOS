@@ -50,7 +50,10 @@ export default async function LoopPage() {
       <div className="card">
         <h2>Cycles ({cycles.length})</h2>
         {cycles.length === 0 ? (
-          <div className="empty">No cycles yet. The loop ticks every minute; events from the heartbeat and the event fabric start cycles automatically.</div>
+          <div className="empty">
+            No cycles yet — this usually means the stack is genuinely idle (no overdue missions, no findings), which is correct behavior, not a fault.
+            To see a first significant cycle on a fresh database run <code className="m">node --import tsx scripts/loop-demo-seed.mjs</code>, then press &ldquo;Run tick now&rdquo;.
+          </div>
         ) : (
           cycles.map((c) => {
             const stages = (c.stages as Array<{ stage: string; at: string; durationMs: number; ok: boolean; summary: string }>) ?? [];

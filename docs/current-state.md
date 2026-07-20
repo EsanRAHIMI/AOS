@@ -24,9 +24,12 @@ _Last updated: 2026-07-19 · covers commits `ad8aa69` (D-177) → CIN-1 first sl
 > `/loop` live console. `scripts/living-loop-verify.mjs` **13/13 vs real
 > mongod**: idempotency, replay, DLQ+requeue, fallback+budget,
 > approve/reject exact resume, restart recovery, latency, memory+ledger
-> anchor with chain verifying. Owner-machine gates left: G1 (24h), G2
-> (real-model rationale), G10 (live browser) — see
-> `docs/cin-v2/living-loop.md`. **CIN-3 is blocked until G1/G2/G10 pass.**
+> anchor with chain verifying. **G2 + G10 PASSED live on the owner machine
+> (2026-07-20, D-182):** real-model rationale (`cyc_1b21b2429e1e`), full live
+> timeline on `/loop`, real side effects (memory + ledger seq 11).
+> **CIN-3 is blocked on G1 only** (24h soak, ≥10 unprompted cycles) — see
+> the gate board in `docs/cin-v2/living-loop.md` §5. Fresh-db bootstrap:
+> `scripts/loop-demo-seed.mjs` (idle ⇒ 0/0/0 ticks is correct behavior).
 > Owner activation state (2026-07-19): K1 auth seeded on Atlas
 > (`FACTORY_OWNER_*`), genesis entities live on Atlas,
 > `ScopeFieldsSchema.tenantId` accepts explicit null.

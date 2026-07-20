@@ -88,7 +88,34 @@ messages**:
 `scripts/living-loop-verify.mjs` automates G3–G9 + G11 against real Mongo;
 G1/G2/G10 are the live-demo portion (checklist printed by the script).
 
-## 5. Honest boundaries
+## 5. Gate status board (update on every verified change)
+
+| Gate | Status | Evidence |
+|---|---|---|
+| G1 24h autonomous soak | **PENDING** | needs ≥24h, ≥10 unprompted cycles on owner machine |
+| G2 real-model reasoning | **PASS** (2026-07-20, owner machine) | `cyc_1b21b2429e1e` — SIGNIFICANT (0.35), `high · model`, non-template rationale, real model + Atlas |
+| G3 latency recorded | PASS (sandbox real-mongod 13/13) + observed live (p50/p95 ≈6322ms over 2 events) | `living-loop-verify.mjs`; owner /loop |
+| G4 idempotency | PASS (sandbox real-mongod) | verify script + contract tests |
+| G5 replay | PASS (sandbox real-mongod) | verify script + contract tests |
+| G6 DLQ + requeue | PASS (sandbox real-mongod) | verify script + contract tests |
+| G7 budget/fallback | PASS (sandbox real-mongod) | verify script + contract tests |
+| G8 approval exact-resume | PASS (sandbox real-mongod) | verify script + contract tests |
+| G9 restart recovery | PASS (sandbox real-mongod) | verify script + contract tests |
+| G10 live visibility | **PASS** (2026-07-20, owner machine) | full observe→…→update timeline on `/loop` with real cycle |
+| G11 memory+ledger updates | PASS (sandbox) + observed live | `mem_b7321f14555c`, CIN ledger anchor seq 11 |
+
+**Owner-machine G3–G9/G11 re-run (recommended, one command):**
+`node --import tsx scripts/living-loop-verify.mjs` with a throwaway
+`MONGODB_DB_NAME` — belt-and-braces on the exact production driver/Atlas path.
+
+**Known behavior (not bugs):** idle stack ⇒ tick `0/0/0` and empty `/loop`
+(significance gate working); `system_notice` alone stops at assess (score <
+0.25). To bootstrap a first significant cycle on a fresh database:
+`scripts/loop-demo-seed.mjs`.
+
+**CIN-3 unlock condition: G1 passes.** Everything else is green.
+
+## 6. Honest boundaries
 
 - The deterministic core runs without any LLM (kernel ethos); G2 is the only
   gate that REQUIRES a reachable model.

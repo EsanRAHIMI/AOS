@@ -2,6 +2,31 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-20 — CIN-2b live-demo gates G2/G10 PASS on owner machine; ops hardening (D-182)
+
+- **G2 + G10 verified live** (owner machine, real model + Atlas + Dokploy
+  Redis): cycle `cyc_1b21b2429e1e` — significant (0.35), real-model rationale
+  (`high · model`, non-template), full observe→…→update timeline on `/loop`;
+  side effects real (`mem_b7321f14555c`, ledger anchor seq 11); latency
+  recorded (p50/p95 ≈6322ms over 2 events). Gate board updated in
+  `docs/cin-v2/living-loop.md` §5. **Remaining before CIN-3: G1 only**
+  (24h soak, ≥10 unprompted cycles) + recommended owner re-run of
+  `living-loop-verify.mjs` against Atlas.
+- **dev-free-ports hardened** (owner-diagnosed EADDRINUSE recurrence):
+  `node --watch` parents survive SIGTERM of their listener children and
+  respawn them. The script now kills watch parents FIRST (SIGKILL), then
+  listeners, then verifies each port released and escalates stragglers;
+  exits 1 if a port stays busy.
+- **First-cycle bootstrap** (`scripts/loop-demo-seed.mjs`): idle ≠ broken —
+  the significance gate correctly produces 0/0/0 ticks on a quiet stack. The
+  idempotent seed creates a real overdue-critical mission chain (the G1 soak
+  itself, as a genuine mission), fires a heartbeat pulse, and ingests one
+  `external.signal`, so a fresh Atlas shows a first significant cycle within
+  one tick. `/loop` empty state now explains idle-by-design and points to it.
+- Owner runtime notes recorded: Redis via Dokploy host with `factory:`
+  prefix; hydration fix (RtlAutoDir), Redis subscribe race fix
+  (`duplicate().connect()` before subscribe) — landed by owner.
+
 ## 2026-07-19 — CIN-2b: the Autonomous Living Loop, RUNTIME_VERIFIED on real Mongo (D-181)
 
 Owner directive: no CIN-3 until Jarvis has a real autonomous loop — one

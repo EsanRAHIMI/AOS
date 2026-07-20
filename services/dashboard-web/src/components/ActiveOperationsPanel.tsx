@@ -3,6 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useUniverse } from './UniverseProvider';
 import { summonJarvis } from './UniverseZone';
+import { dirProps } from '@/lib/rtl';
 
 /**
  * Phase AF.4.1 — the Overview "Active Operations" module.
@@ -58,8 +59,8 @@ export function ActiveOperationsPanel() {
             <div key={s.runtimeSessionId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--glass-2)' }}>
               <span className="op-active-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 6px var(--accent)', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.goal}</div>
-                <div className="m" style={{ fontSize: 10.5 }}>{s.status.replace(/_/g, ' ')}{s.nextAction ? ` — ${s.nextAction.slice(0, 80)}` : ''}</div>
+                <div {...dirProps(s.goal)} style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.goal}</div>
+                <div {...dirProps(s.nextAction)} className="m" style={{ fontSize: 10.5 }}>{s.status.replace(/_/g, ' ')}{s.nextAction ? ` — ${s.nextAction.slice(0, 80)}` : ''}</div>
               </div>
               <button type="button" className="chip" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => summonJarvis('')}>Open Jarvis</button>
             </div>
@@ -78,7 +79,7 @@ export function ActiveOperationsPanel() {
           {pendingApprovals.slice(0, 3).map((p) => (
             <div key={p.permissionId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 6, border: `1px solid ${p.riskLevel === 'critical' || p.riskLevel === 'high' ? 'rgba(255,107,129,0.45)' : 'var(--border-2)'}`, background: 'var(--glass-2)' }}>
                 <span className={`badge ${p.riskLevel === 'critical' || p.riskLevel === 'high' ? 'err' : 'warn'}`} style={{ flexShrink: 0 }}>{p.riskLevel}</span>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.prompt}</div>
+                <div {...dirProps(p.prompt)} style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.prompt}</div>
                 <button type="button" className="chip" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => summonJarvis('')}>Review</button>
               </div>
           ))}
@@ -88,14 +89,14 @@ export function ActiveOperationsPanel() {
       {lastResult && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--glass-2)', marginBottom: 10 }}>
           <span className={`badge ${lastResult.status === 'completed' ? 'ok' : 'err'}`} style={{ flexShrink: 0 }}>{lastResult.status}</span>
-          <div style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lastResult.composedReply || lastResult.reportSummary || lastResult.goal}</div>
+          <div {...dirProps(lastResult.composedReply || lastResult.reportSummary || lastResult.goal)} style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lastResult.composedReply || lastResult.reportSummary || lastResult.goal}</div>
         </div>
       )}
 
       {recentTasks.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {recentTasks.slice(0, 3).map((t) => (
-            <Link key={t.taskId} href={`/tasks/${t.taskId}`} className="chip" style={{ fontSize: 10.5, textDecoration: 'none' }}>{t.status}: {t.goal.slice(0, 40)} →</Link>
+            <Link key={t.taskId} href={`/tasks/${t.taskId}`} className="chip" style={{ fontSize: 10.5, textDecoration: 'none' }} {...dirProps(`${t.status}: ${t.goal}`)}>{t.status}: {t.goal.slice(0, 40)} →</Link>
           ))}
         </div>
       )}

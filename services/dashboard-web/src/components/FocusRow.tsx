@@ -1,6 +1,7 @@
 'use client';
 import { summonJarvis } from './UniverseZone';
 import type { FocusItem } from '@/lib/focus';
+import { dirProps } from '@/lib/rtl';
 
 /**
  * Phase AF.1 Step 3 — Focus Row / Today Command Layer.
@@ -47,7 +48,7 @@ export function FocusRow({ items }: { items: FocusItem[] }) {
             }}
           >
             <span className={`badge ${meta.badge}`} style={{ alignSelf: 'flex-start', fontSize: 10 }}>{meta.label}</span>
-            <div style={{ fontSize: isPrimary ? 15.5 : 13, fontWeight: isPrimary ? 700 : 600, lineHeight: 1.4 }}>{item.detail}</div>
+            <div {...dirProps(item.detail)} style={{ fontSize: isPrimary ? 15.5 : 13, fontWeight: isPrimary ? 700 : 600, lineHeight: 1.4 }}>{item.detail}</div>
             <button
               type="button"
               className="chip"

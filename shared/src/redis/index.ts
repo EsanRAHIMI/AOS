@@ -206,8 +206,12 @@ function createIoredisClient(url: string): RedisLike {
       return cmd.publish(channel, message);
     },
     async subscribe(channel, onMessage) {
+      await ensureConnected();
       if (!sub) {
+        // duplicate() inherits lazyConnect — must connect before subscribe or
+        // ioredis throws "Stream isn't writeable" with enableOfflineQueue:false.
         sub = cmd.duplicate();
+        await sub.connect();
         sub.on('message', (ch: string, msg: string) => {
           handlers.get(ch)?.(msg);
         });

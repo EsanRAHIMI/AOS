@@ -24,7 +24,10 @@ pnpm dev:all
 
 1. `sync:env` — کپی `.env` روت به ۱۹ سرویس production + پورت و URL لوکال
 2. `build:deps` — build کردن `shared` و `service-kit`
-3. اجرای همزمان همه سرویس‌ها (ترتیب = ترتیب بخش ۲)
+3. `dev:free-ports` — آزاد کردن پورت‌های `LOCAL_SERVICES` (جلوگیری از `EADDRINUSE` بعد از استارت ناقص قبلی؛ با `DEV_FREE_PORTS=0` رد کن)
+4. اجرای همزمان همه سرویس‌ها (ترتیب = ترتیب بخش ۲)
+
+فقط یک ترمینال `pnpm dev:all` داشته باش — استارت تک‌سرویسی موازی باعث قفل پورت می‌شود.
 
 منبع ترتیب/پورت: `scripts/local-services.mjs` (باید با این فایل هم‌خوان بماند).
 نقشهٔ کامل: `docs/service-map.md`.
