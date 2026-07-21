@@ -11,7 +11,8 @@
  *
  * Motion is continuous — trailing glow, micro-pulses, resting heartbeat.
  * The command line is wired to the real turn pipeline; no fake replies.
- * Focus-state cadence may still be demo-timed until realtime events land.
+ * Voice presence: browser STT + TTS via Talk; transport marked 'voice' on turns.
+ * Focus-state cadence still demos when idle — paused while mic/busy/voice.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
@@ -19,10 +20,22 @@ import {
   jarvisTelemetryAction, type JarvisTelemetryView,
 } from './actions';
 import { drawGargantua, luxPaletteFromAccent } from './drawGargantua';
+import { UtteranceGate } from '@/lib/utteranceGate';
 import { dirProps } from '@/lib/rtl';
 
 type CoreState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting' | 'alert' | 'degraded';
 type RGB = [number, number, number];
+type SpeechRec = {
+  lang: string; continuous: boolean; interimResults: boolean;
+  onresult: (e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void;
+  onend: () => void; onerror: () => void; start: () => void; stop: () => void; abort: () => void;
+};
+
+function speechCtor(): (new () => SpeechRec) | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as unknown as { webkitSpeechRecognition?: new () => SpeechRec; SpeechRecognition?: new () => SpeechRec };
+  return w.webkitSpeechRecognition ?? w.SpeechRecognition ?? null;
+}
 
 /** Orbital gold family — warmer mesh, tracks the accretion spectrum. */
 const STATE_COLOR: Record<CoreState, { core: RGB; ring: RGB }> = {
@@ -150,12 +163,46 @@ export default function JarvisCoreHUD() {
    *  the canvas keeps burning and resume after minutes can wedge the loop. */
   const liveRef = useRef(true);
 
+  const gateRef = useRef(new UtteranceGate({ minCommandChars: 2, silenceMs: 900 }));
+  const recRef = useRef<{ stop?: () => void; abort?: () => void } | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalBufRef = useRef('');
+  const voiceActiveRef = useRef(false);
+  const voiceEnergyRef = useRef(0);
+  const [listening, setListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [interimHint, setInterimHint] = useState('');
+
   const setCoreState = useCallback((s: CoreState, note?: string) => {
     stateRef.current = s;
     targetColorRef.current = STATE_COLOR[s];
     setUiState(s);
     setCaption(note ?? STATE_LABEL_FA[s]);
   }, []);
+
+  useEffect(() => {
+    setSpeechSupported(Boolean(speechCtor()) && typeof window !== 'undefined' && 'speechSynthesis' in window);
+  }, []);
+
+  const stopListening = useCallback(() => {
+    try { recRef.current?.abort?.(); recRef.current?.stop?.(); } catch { /* ignore */ }
+    recRef.current = null;
+    setListening(false);
+    voiceActiveRef.current = false;
+    setInterimHint('');
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+  }, []);
+
+  const interruptSpeech = useCallback(() => {
+    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+    gateRef.current.markSpeaking(false);
+    gateRef.current.reset();
+  }, []);
+
+  useEffect(() => () => {
+    stopListening();
+    interruptSpeech();
+  }, [stopListening, interruptSpeech]);
 
   const pulseAnchor = useCallback((id: string, amount = 0.9) => {
     const a = anchorsRef.current.find((x) => x.id === id);
@@ -209,20 +256,20 @@ export default function JarvisCoreHUD() {
     return () => { clearInterval(hb); clearInterval(ambient); };
   }, [pulseAnchor]);
 
-  // Demo-driven focus cycle (honest placeholder cadence until real events wire in).
+  // Demo-driven focus cycle — paused while mic, busy, or voice turn is live.
   useEffect(() => {
     let alive = true;
     const cycle: CoreState[] = ['idle', 'thinking', 'acting', 'idle', 'listening', 'idle'];
     const anchorCycle = ['memory', 'loop', 'heartbeat', 'trust', 'missions', 'research'];
     let i = 0;
     const timer = setInterval(() => {
-      if (!alive || !liveRef.current || busyRef.current) return;
+      if (!alive || !liveRef.current || busyRef.current || voiceActiveRef.current || listening) return;
       setCoreState(cycle[i % cycle.length]);
       pulseAnchor(anchorCycle[i % anchorCycle.length], 0.55);
       i += 1;
     }, 7000);
     return () => { alive = false; clearInterval(timer); };
-  }, [setCoreState, pulseAnchor]);
+  }, [setCoreState, pulseAnchor, listening]);
 
   // Canvas render loop — tuned for crisp 60fps: hard clear (no smear trail),
   // no shadowBlur, capped DPR, lean mesh. Motion stays continuous without
@@ -256,6 +303,7 @@ export default function JarvisCoreHUD() {
     const ripples: Array<{ start: number; strength: number }> = [];
     let nextRippleAt = 0;
     let frozenAt = 0;
+    let voiceEnergy = 0;
 
     function isLive(): boolean {
       return document.visibilityState === 'visible' && document.hasFocus();
@@ -360,7 +408,14 @@ export default function JarvisCoreHUD() {
       cur.core = mixRgb(cur.core, tgt.core, ease);
       cur.ring = mixRgb(cur.ring, tgt.ring, ease);
 
-      const speedMul = stateRef.current === 'thinking' ? 1.8 : stateRef.current === 'acting' ? 1.4 : 1;
+      // Voice drives the singularity — not mesh spin-up.
+      voiceEnergy = Math.max(voiceEnergy * Math.pow(0.12, dt), voiceEnergyRef.current);
+      voiceEnergyRef.current *= Math.pow(0.45, dt);
+      const st = stateRef.current;
+      const listenE = st === 'listening' ? voiceEnergy : 0;
+      const speakE = st === 'speaking' ? voiceEnergy : 0;
+      // Mesh stays calm; only mild think agitation (never listen/speak spin).
+      const speedMul = st === 'thinking' ? 1.12 : 1;
 
       // Sparse starfield.
       for (let di = 0; di < dustCount; di += 1) {
@@ -376,10 +431,12 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      // Occasional ripple.
-      if (now >= nextRippleAt) {
-        ripples.push({ start: now, strength: 0.45 });
-        nextRippleAt = now + 2600 + Math.random() * 1000;
+      // Soft horizon ripples — only while the singularity is speaking (emit).
+      if (speakE > 0.15 && now >= nextRippleAt) {
+        ripples.push({ start: now, strength: 0.35 + speakE * 0.65 });
+        nextRippleAt = now + 900 + Math.random() * 500;
+      } else if (speakE <= 0.15 && now >= nextRippleAt) {
+        nextRippleAt = now + 4000;
       }
       for (let i = ripples.length - 1; i >= 0; i -= 1) {
         const age = (now - ripples[i].start) / 1200;
@@ -435,13 +492,15 @@ export default function JarvisCoreHUD() {
       }
       anchorPosRef.current = positions;
 
-      // Neural mesh core.
+      // Neural mesh — steady slow orbit; never spins up with voice.
       const meshRadius = coreRadius * 0.98;
-      const ry = t * (0.08 + (speedMul - 1) * 0.05);
+      const ry = t * 0.065;
       const rx = Math.sin(t * 0.05) * 0.16;
       const cosY = Math.cos(ry), sinY = Math.sin(ry);
       const cosX = Math.cos(rx), sinX = Math.sin(rx);
       const camDist = 2.6;
+      // Listening: mesh contracts slightly (attention inward). Speaking: slight expand (emit).
+      const meshScale = 1 - listenE * 0.06 + speakE * 0.04;
       for (let i = 0; i < mesh.nodes.length; i += 1) {
         const n = mesh.nodes[i];
         const wob = 1 + Math.sin(t * 0.7 + n.driftPhase) * 0.02;
@@ -452,11 +511,13 @@ export default function JarvisCoreHUD() {
         const z2 = py0 * sinX + z1 * cosX;
         const persp = camDist / (camDist - z2 * wob);
         const p = projected[i];
-        p.x = cx + x1 * wob * meshRadius * persp;
-        p.y = cy + y2 * wob * meshRadius * persp;
+        p.x = cx + x1 * wob * meshRadius * meshScale * persp;
+        p.y = cy + y2 * wob * meshRadius * meshScale * persp;
         p.z = z2;
         p.persp = persp;
         n.flash *= Math.pow(0.02, dt);
+        // Soft hear-flash while listening — not rotation.
+        if (listenE > 0.2 && Math.random() < listenE * 0.04) n.flash = Math.max(n.flash, 0.55 + listenE * 0.4);
       }
 
       // Mesh + singularity share orbital gold (hot / gold via lux aliases).
@@ -477,8 +538,8 @@ export default function JarvisCoreHUD() {
 
       if (now >= nextSignalAt && signals.length < signalCap) {
         const [ea, eb] = mesh.edges[Math.floor(Math.random() * mesh.edges.length)];
-        signals.push({ a: ea, b: eb, t: 0, speed: 1.1 + Math.random() * 0.5 });
-        nextSignalAt = now + (380 + Math.random() * 320) / speedMul;
+        signals.push({ a: ea, b: eb, t: 0, speed: 0.85 + Math.random() * 0.35 + speakE * 0.25 });
+        nextSignalAt = now + (listenE > 0.15 ? 1400 : speakE > 0.15 ? 520 : 700) + Math.random() * 400;
       }
       for (let i = signals.length - 1; i >= 0; i -= 1) {
         const s = signals[i];
@@ -504,7 +565,7 @@ export default function JarvisCoreHUD() {
       }
 
       // Nodes — keep clear of the singularity so the void reads cleanly.
-      const bhR = coreRadius * 0.44;
+      const bhR = coreRadius * 0.44 * (1 + listenE * 0.06 + speakE * 0.03);
       const bhKeepout = bhR * 1.55;
       for (let i = 0; i < projected.length; i += 1) {
         const p = projected[i];
@@ -520,7 +581,7 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      drawGargantua(ctx, cx, cy, bhR, t, cur.core);
+      drawGargantua(ctx, cx, cy, bhR, t, cur.core, { listen: listenE, speak: speakE });
 
       raf = requestAnimationFrame(frame);
     }
@@ -558,26 +619,159 @@ export default function JarvisCoreHUD() {
     } catch { return null; }
   }
 
-  async function submit() {
-    const text = input.trim();
-    if (!text || busy) return;
-    setInput('');
+  function speakReply(text: string): void {
+    if (!text || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setTimeout(() => {
+        voiceActiveRef.current = false;
+        setCoreState('idle');
+        gateRef.current.markHandled();
+      }, 2800);
+      return;
+    }
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text.slice(0, 500));
+      u.lang = 'fa-IR';
+      u.rate = 1.02;
+      u.onstart = () => {
+        gateRef.current.markSpeaking(true);
+        voiceActiveRef.current = true;
+        voiceEnergyRef.current = 0.85;
+        setCoreState('speaking', text.slice(0, 140));
+      };
+      u.onboundary = () => { voiceEnergyRef.current = Math.min(1, 0.55 + Math.random() * 0.45); };
+      const finish = () => {
+        gateRef.current.markSpeaking(false);
+        gateRef.current.markHandled();
+        voiceActiveRef.current = false;
+        voiceEnergyRef.current = 0.15;
+        if (stateRef.current === 'speaking') setCoreState('idle');
+      };
+      u.onend = finish;
+      u.onerror = finish;
+      window.speechSynthesis.speak(u);
+    } catch {
+      gateRef.current.markHandled();
+      voiceActiveRef.current = false;
+      setCoreState('idle');
+    }
+  }
+
+  async function submitTurn(raw: string, transport: 'text' | 'voice'): Promise<void> {
+    const text = raw.trim();
+    const gate = gateRef.current;
+    const verdict = gate.evaluate(text, true, { voice: transport === 'voice' });
+    if (!verdict.accept) return;
+    if (transport === 'text' && (gate.speaking || busyRef.current)) interruptSpeech();
+
+    gate.markSubmitted(text);
+    if (transport === 'text') setInput('');
     setBusy(true);
+    voiceActiveRef.current = true;
     setCoreState('thinking');
     pulseAnchor('memory', 0.5);
     try {
       const sid = await ensureSession();
-      if (!sid) { setCoreState('degraded', 'ارتباط با کرنل برقرار نشد'); return; }
-      const res = await sendTurnAction(sid, text);
-      if (!res) { setCoreState('degraded', 'پاسخی دریافت نشد'); return; }
+      if (!sid) {
+        setCoreState('degraded', 'ارتباط با کرنل برقرار نشد');
+        gate.markHandled();
+        voiceActiveRef.current = false;
+        return;
+      }
+      const res = await sendTurnAction(sid, text, transport);
+      if (!res) {
+        setCoreState('degraded', 'پاسخی دریافت نشد');
+        gate.markHandled();
+        voiceActiveRef.current = false;
+        return;
+      }
       pulseAnchor('loop', 0.6);
-      setCoreState('speaking', res.replyText.slice(0, 140) || '…');
       void refreshTelemetry();
-      setTimeout(() => setCoreState('idle'), 5000);
+      const reply = res.replyText?.trim() || 'انجام شد.';
+      if (!gate.acceptAssistant(reply)) {
+        setCoreState('idle');
+        gate.markHandled();
+        voiceActiveRef.current = false;
+        return;
+      }
+      setCoreState('speaking', reply.slice(0, 140));
+      speakReply(reply);
     } catch {
       setCoreState('degraded', 'خطا در ارتباط');
+      gate.markHandled();
+      voiceActiveRef.current = false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  function toggleListen(): void {
+    if (!speechSupported) return;
+    if (listening) {
+      stopListening();
+      if (stateRef.current === 'listening') setCoreState('idle');
+      return;
+    }
+    if (gateRef.current.speaking || gateRef.current.busy || busyRef.current) return;
+    interruptSpeech();
+    const Ctor = speechCtor();
+    if (!Ctor) return;
+    const rec = new Ctor();
+    rec.lang = 'fa-IR';
+    rec.continuous = false;
+    rec.interimResults = true;
+    finalBufRef.current = '';
+    rec.onresult = (e) => {
+      if (gateRef.current.speaking) return;
+      let interim = '';
+      for (let i = 0; i < e.results.length; i += 1) {
+        const r = e.results[i];
+        const txt = r[0]?.transcript ?? '';
+        if (r.isFinal) {
+          if (i >= e.resultIndex || !finalBufRef.current.includes(txt.trim())) {
+            finalBufRef.current = `${finalBufRef.current} ${txt}`.trim();
+          }
+        } else interim += txt;
+      }
+      const hint = (interim || finalBufRef.current).trim();
+      setInterimHint(hint);
+      if (hint) {
+        voiceEnergyRef.current = Math.min(1, 0.55 + Math.min(0.45, hint.length * 0.03));
+        setCoreState('listening', hint.slice(0, 120));
+      }
+      if (finalBufRef.current) {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          const cmd = finalBufRef.current;
+          finalBufRef.current = '';
+          setInterimHint('');
+          stopListening();
+          void submitTurn(cmd, 'voice');
+        }, gateRef.current.config.silenceMs);
+      }
+    };
+    rec.onend = () => {
+      setListening(false);
+      if (!finalBufRef.current && !silenceTimerRef.current && stateRef.current === 'listening') {
+        voiceActiveRef.current = false;
+        setCoreState('idle');
+      }
+    };
+    rec.onerror = () => {
+      setListening(false);
+      setInterimHint('');
+      voiceActiveRef.current = false;
+      if (stateRef.current === 'listening') setCoreState('idle');
+    };
+    recRef.current = rec;
+    voiceActiveRef.current = true;
+    setListening(true);
+    setCoreState('listening');
+    voiceEnergyRef.current = 0.4;
+    try { rec.start(); } catch {
+      setListening(false);
+      voiceActiveRef.current = false;
+      setCoreState('idle');
     }
   }
 
@@ -613,18 +807,31 @@ export default function JarvisCoreHUD() {
         <span key={caption} className="jarvis-live-caption-text">{caption}</span>
       </div>
       <form
-        className="jarvis-live-cmdbar"
-        onSubmit={(e) => { e.preventDefault(); void submit(); }}
+        className={`jarvis-live-cmdbar${listening ? ' jarvis-live-cmdbar--listening' : ''}`}
+        onSubmit={(e) => { e.preventDefault(); void submitTurn(input, 'text'); }}
       >
+        {speechSupported ? (
+          <button
+            type="button"
+            className={`jarvis-live-mic${listening ? ' jarvis-live-mic--on' : ''}`}
+            onClick={toggleListen}
+            disabled={busy && !listening}
+            aria-label={listening ? 'توقف شنیدن' : 'صحبت با جارویس'}
+            title={listening ? 'توقف' : 'صحبت کنید'}
+          >
+            {listening ? '■' : 'MIC'}
+          </button>
+        ) : null}
         <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={CMD_PLACEHOLDER}
-          disabled={busy}
+          value={listening && interimHint ? interimHint : input}
+          onChange={(e) => { if (!listening) setInput(e.target.value); }}
+          placeholder={listening ? 'در حال شنیدن…' : CMD_PLACEHOLDER}
+          disabled={busy || listening}
+          readOnly={listening}
           data-auto-dir=""
-          {...dirProps(input || CMD_PLACEHOLDER)}
+          {...dirProps((listening && interimHint ? interimHint : input) || CMD_PLACEHOLDER)}
         />
-        <button type="submit" disabled={busy || !input.trim()} aria-label="ارسال">
+        <button type="submit" disabled={busy || listening || !input.trim()} aria-label="ارسال">
           {busy ? '…' : '↵'}
         </button>
       </form>

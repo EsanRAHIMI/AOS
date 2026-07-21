@@ -73,8 +73,12 @@ export async function getSessionAction(sessionId: string): Promise<{ session: Ja
   return { session: r.session as unknown as JarvisSessionView, turns: (r.turns as unknown as JarvisTurnView[]) ?? [] };
 }
 
-export async function sendTurnAction(sessionId: string, text: string): Promise<JarvisTurnResult | null> {
-  return gateway.jarvisTurn(sessionId, text);
+export async function sendTurnAction(
+  sessionId: string,
+  text: string,
+  transport: 'text' | 'voice' = 'text',
+): Promise<JarvisTurnResult | null> {
+  return gateway.jarvisTurn(sessionId, text, transport);
 }
 
 export async function decideApprovalAction(approvalId: string, runId: string, action: 'approve' | 'reject', reason?: string): Promise<{ status: string; replyText: string; pendingApprovalId: string | null } | null> {

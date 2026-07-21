@@ -42,7 +42,14 @@ export type GargantuaPaint = {
   yScale: number;
   outer: number;
   sweep: number;
+  /** 0..1 — user voice / mic (inhale, rim, contact) */
+  listen: number;
+  /** 0..1 — assistant TTS (disk sweep, bloom, emit) */
+  speak: number;
 };
+
+/** Presence drive for singularity — not mesh spin. */
+export type PresenceDrive = { listen?: number; speak?: number };
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -172,9 +179,14 @@ export function prepareGargantuaV2(
   radius: number,
   t: number,
   accent: RGB,
+  presence: PresenceDrive = {},
 ): GargantuaPaint {
   const R = Math.max(12, radius);
   const lux = luxPaletteFromAccent(accent);
+  const listen = Math.max(0, Math.min(1, presence.listen ?? 0));
+  const speak = Math.max(0, Math.min(1, presence.speak ?? 0));
+  // Speaking accelerates the accretion sweep; listening does not.
+  const sweepRate = 0.22 + speak * 0.55;
   return {
     ctx,
     cx,
@@ -187,46 +199,48 @@ export function prepareGargantuaV2(
     accent,
     tilt: -0.08,
     yScale: 0.2,
-    outer: R * 2.35,
-    sweep: (t * 0.22) % (Math.PI * 2),
+    outer: R * (2.35 + listen * 0.08 + speak * 0.12),
+    sweep: (t * sweepRate) % (Math.PI * 2),
+    listen,
+    speak,
   };
 }
 
 export const gargantuaV2Parts = {
   bloom(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, gold, amber, ember } = g;
+    const { ctx, cx, cy, R, gold, amber, ember, speak } = g;
     const orange = mixRgb(amber, [255, 108, 28], 0.5);
-    const bloom = ctx.createRadialGradient(cx, cy, R * 0.3, cx, cy, R * 3.2);
-    bloom.addColorStop(0, rgba(gold, 0.1));
-    bloom.addColorStop(0.3, rgba(amber, 0.07));
-    bloom.addColorStop(0.55, rgba(orange, 0.05));
-    bloom.addColorStop(0.78, rgba(ember, 0.04));
+    const amp = 1 + speak * 1.8;
+    const bloom = ctx.createRadialGradient(cx, cy, R * 0.3, cx, cy, R * (3.2 + speak * 0.6));
+    bloom.addColorStop(0, rgba(gold, 0.1 * amp));
+    bloom.addColorStop(0.3, rgba(amber, 0.07 * amp));
+    bloom.addColorStop(0.55, rgba(orange, 0.05 * amp));
+    bloom.addColorStop(0.78, rgba(ember, 0.04 * amp));
     bloom.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = bloom;
     ctx.beginPath();
-    ctx.arc(cx, cy, R * 3.2, 0, Math.PI * 2);
+    ctx.arc(cx, cy, R * (3.2 + speak * 0.6), 0, Math.PI * 2);
     ctx.fill();
   },
 
   fullDisk(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, hot, gold, amber, tilt, yScale, sweep } = g;
+    const { ctx, cx, cy, R, hot, gold, amber, tilt, yScale, sweep, speak } = g;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(tilt);
     ctx.scale(1, yScale);
-    paintPlane(g, 1);
+    paintPlane(g, 1 + speak * 0.15);
     ctx.globalCompositeOperation = 'lighter';
-    // Sweep highlight shifts gold → orange like a stellar arc
     const sweepCol = mixRgb(hot, mixRgb(gold, amber, 0.5), 0.4);
-    ctx.strokeStyle = rgba(sweepCol, 0.3);
-    ctx.lineWidth = R * 0.38;
+    ctx.strokeStyle = rgba(sweepCol, 0.3 + speak * 0.35);
+    ctx.lineWidth = R * (0.38 + speak * 0.2);
     ctx.beginPath();
-    ctx.arc(0, 0, R * 1.55, sweep - 0.24, sweep + 0.24);
+    ctx.arc(0, 0, R * 1.55, sweep - (0.24 + speak * 0.2), sweep + (0.24 + speak * 0.2));
     ctx.stroke();
-    ctx.strokeStyle = rgba(mixRgb(amber, [255, 100, 30], 0.55), 0.22);
+    ctx.strokeStyle = rgba(mixRgb(amber, [255, 100, 30], 0.55), 0.22 + speak * 0.2);
     ctx.lineWidth = R * 0.28;
     ctx.beginPath();
-    ctx.arc(0, 0, R * 2.05, sweep + 0.8, sweep + 1.35);
+    ctx.arc(0, 0, R * 2.05, sweep + 0.8, sweep + 1.35 + speak * 0.4);
     ctx.stroke();
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
@@ -259,23 +273,23 @@ export const gargantuaV2Parts = {
   },
 
   eventHorizon(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, gold, amber } = g;
+    const { ctx, cx, cy, R, gold, amber, listen } = g;
     ctx.beginPath();
     ctx.fillStyle = '#000000';
     ctx.arc(cx, cy, R, 0, Math.PI * 2);
     ctx.fill();
     paintInwardHorizonLimb(g);
-    // Hot red-gold limb at the horizon edge
+    // Hot red-gold limb — brightens when listening (inhale)
     const limb = mixRgb(mixRgb(gold, amber, 0.55), [255, 48, 18], 0.55);
     ctx.beginPath();
-    ctx.strokeStyle = rgba(limb, 0.72);
-    ctx.lineWidth = Math.max(1.2, R * 0.038);
+    ctx.strokeStyle = rgba(limb, 0.72 + listen * 0.25);
+    ctx.lineWidth = Math.max(1.2, R * (0.038 + listen * 0.02));
     ctx.arc(cx, cy, R * 0.992, 0, Math.PI * 2);
     ctx.stroke();
   },
 
   frontDiskStrip(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, hot, gold, amber, tilt, yScale, outer } = g;
+    const { ctx, cx, cy, R, hot, gold, amber, tilt, yScale, outer, listen, speak } = g;
     ctx.save();
     ctx.beginPath();
     const band = R * yScale * 1.65;
@@ -285,12 +299,12 @@ export const gargantuaV2Parts = {
     ctx.rotate(tilt);
     ctx.scale(1, yScale);
     paintPlane(g, 1.0);
-    // Brighter contact glow where disk pierces the horizon
+    const contactAmp = 1 + listen * 0.9 + speak * 0.55;
     const contact = ctx.createRadialGradient(0, 0, R * 0.55, 0, 0, R * 1.35);
     contact.addColorStop(0, 'rgba(0,0,0,0)');
-    contact.addColorStop(0.42, rgba(hot, 0.48));
-    contact.addColorStop(0.68, rgba(gold, 0.32));
-    contact.addColorStop(0.88, rgba(amber, 0.14));
+    contact.addColorStop(0.42, rgba(hot, 0.48 * contactAmp));
+    contact.addColorStop(0.68, rgba(gold, 0.32 * contactAmp));
+    contact.addColorStop(0.88, rgba(amber, 0.14 * contactAmp));
     contact.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = contact;
@@ -327,26 +341,25 @@ export const gargantuaV2Parts = {
   },
 
   photonRing(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, hot, gold, amber } = g;
+    const { ctx, cx, cy, R, hot, gold, amber, listen, speak } = g;
     const scarlet = mixRgb(amber, [255, 36, 12], 0.65);
     const rim = mixRgb(mixRgb(hot, gold, 0.2), scarlet, 0.7);
+    const pulse = 1 + listen * 0.35 + speak * 0.55;
 
-    // Bright core photon ring
     ctx.beginPath();
-    ctx.strokeStyle = rgba(rim, 0.92);
-    ctx.lineWidth = Math.max(1.4, R * 0.052);
+    ctx.strokeStyle = rgba(rim, Math.min(1, 0.92 * pulse));
+    ctx.lineWidth = Math.max(1.4, R * (0.052 + speak * 0.02));
     ctx.arc(cx, cy, R * 1.03, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Luminous red outer halo
     ctx.globalCompositeOperation = 'lighter';
     ctx.beginPath();
-    ctx.strokeStyle = rgba(scarlet, 0.55);
-    ctx.lineWidth = Math.max(2.2, R * 0.08);
+    ctx.strokeStyle = rgba(scarlet, 0.55 + speak * 0.25 + listen * 0.15);
+    ctx.lineWidth = Math.max(2.2, R * (0.08 + speak * 0.04));
     ctx.arc(cx, cy, R * 1.055, 0, Math.PI * 2);
     ctx.stroke();
     ctx.beginPath();
-    ctx.strokeStyle = rgba([255, 90, 40], 0.28);
+    ctx.strokeStyle = rgba([255, 90, 40], 0.28 + speak * 0.2);
     ctx.lineWidth = Math.max(3.2, R * 0.11);
     ctx.arc(cx, cy, R * 1.08, 0, Math.PI * 2);
     ctx.stroke();
@@ -354,19 +367,21 @@ export const gargantuaV2Parts = {
   },
 
   contactSparks(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, hot, gold, amber } = g;
+    const { ctx, cx, cy, R, hot, gold, amber, listen, speak } = g;
+    const amp = 1 + listen * 1.4 + speak * 0.7;
     ctx.globalCompositeOperation = 'lighter';
     for (const side of [-1, 1] as const) {
       const px = cx + side * R * 0.98;
-      const grad = ctx.createRadialGradient(px, cy, 0, px, cy, R * 0.5);
-      grad.addColorStop(0, rgba(hot, 0.85));
-      grad.addColorStop(0.22, rgba(gold, 0.55));
-      grad.addColorStop(0.5, rgba(amber, 0.28));
-      grad.addColorStop(0.78, rgba(mixRgb(amber, [255, 60, 20], 0.4), 0.12));
+      const rad = R * (0.5 + listen * 0.12);
+      const grad = ctx.createRadialGradient(px, cy, 0, px, cy, rad);
+      grad.addColorStop(0, rgba(hot, Math.min(1, 0.85 * amp)));
+      grad.addColorStop(0.22, rgba(gold, 0.55 * amp));
+      grad.addColorStop(0.5, rgba(amber, 0.28 * amp));
+      grad.addColorStop(0.78, rgba(mixRgb(amber, [255, 60, 20], 0.4), 0.12 * amp));
       grad.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(px, cy, R * 0.5, 0, Math.PI * 2);
+      ctx.arc(px, cy, rad, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -402,11 +417,14 @@ export function drawGargantuaV2(
   radius: number,
   t: number,
   accent: RGB,
+  presenceOrOnly?: PresenceDrive | readonly GargantuaV2PartId[],
   only?: readonly GargantuaV2PartId[],
 ): void {
-  const g = prepareGargantuaV2(ctx, cx, cy, radius, t, accent);
-  const order = only?.length
-    ? GARGANTUA_V2_PART_ORDER.filter((id) => only.includes(id))
+  const presence: PresenceDrive = Array.isArray(presenceOrOnly) ? {} : (presenceOrOnly ?? {});
+  const parts = Array.isArray(presenceOrOnly) ? presenceOrOnly : only;
+  const g = prepareGargantuaV2(ctx, cx, cy, radius, t, accent, presence);
+  const order = parts?.length
+    ? GARGANTUA_V2_PART_ORDER.filter((id) => parts.includes(id))
     : GARGANTUA_V2_PART_ORDER;
   for (const id of order) gargantuaV2Parts[id](g);
 }

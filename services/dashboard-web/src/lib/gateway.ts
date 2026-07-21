@@ -59,9 +59,9 @@ export const gateway = {
   jarvisSessions: () => call<Array<{ sessionId: string; title: string; turnCount: number; lastTurnAt: string | null; totalCostUsd: number }>>('/v1/jarvis/sessions'),
   jarvisSession: (id: string) => call<{ session: Record<string, unknown>; turns: Array<Record<string, unknown>> }>(`/v1/jarvis/sessions/${id}`),
   createJarvisSession: (title?: string) => call<{ sessionId: string }>('/v1/jarvis/sessions', { method: 'POST', body: JSON.stringify({ title: title ?? '' }) }),
-  jarvisTurn: (sessionId: string, text: string) =>
+  jarvisTurn: (sessionId: string, text: string, transport: 'text' | 'voice' = 'text') =>
     call<{ turnId: string; runId: string | null; status: string; replyText: string; pendingApprovalId: string | null; reasoningMode: string }>(
-      `/v1/jarvis/sessions/${sessionId}/turns`, { method: 'POST', body: JSON.stringify({ text }) }),
+      `/v1/jarvis/sessions/${sessionId}/turns`, { method: 'POST', body: JSON.stringify({ text, transport }) }),
   jarvisApprovalDecision: (approvalId: string, runId: string, action: 'approve' | 'reject', reason?: string) =>
     call<{ status: string; replyText: string; pendingApprovalId: string | null }>(
       `/v1/jarvis/loop-approvals/${approvalId}/decision`, { method: 'POST', body: JSON.stringify({ action, runId, reason }) }),

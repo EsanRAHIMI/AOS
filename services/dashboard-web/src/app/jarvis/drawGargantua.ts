@@ -12,6 +12,7 @@ export {
   prepareGargantuaV2,
   luxPaletteFromAccent,
   type GargantuaV2PartId,
+  type PresenceDrive,
   type LuxPalette,
   type RGB as GargantuaRGB,
 } from './baselines/gargantua-v2';
