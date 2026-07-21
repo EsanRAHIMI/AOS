@@ -2,36 +2,37 @@
 /**
  * Jarvis Core HUD — the living presence stage for /jarvis.
  *
- * A single always-alive canvas: a breathing central core wrapped in rotating
- * HUD rings, a slow-drifting starfield for depth, and neural threads (each
- * with its own signature color) reaching out to real kernel concepts
- * (memory, living loop, heartbeat, trust chain, missions, research).
- * Motion is continuous — trailing glow, constant micro-pulses, a resting
- * heartbeat — not a discrete slideshow of states. The command line at the
- * bottom is wired to the real turn pipeline; no fake replies.
+ * DESIGN LOCK (shape / structure — do not redesign without an explicit ask):
+ * Center presence is Gargantua-style: continuous accretion disk through the
+ * event horizon, far/near lens wraps, vertical black sphere silhouette,
+ * horizontal black equatorial ellipse nested inside that sphere, photon ring,
+ * left/right contact sparks. Outer stage: neural mesh + concept threads +
+ * telemetry corners + command bar. No decorative blue HUD rings / ambient discs.
  *
- * Visual-first slice: the bigger "focus" state changes are still demo-timed
- * (honest placeholder cadence) — the next slice replaces that timer with
- * real heartbeat/living-loop events over a realtime channel.
+ * Motion is continuous — trailing glow, micro-pulses, resting heartbeat.
+ * The command line is wired to the real turn pipeline; no fake replies.
+ * Focus-state cadence may still be demo-timed until realtime events land.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   listSessionsAction, createSessionAction, sendTurnAction,
   jarvisTelemetryAction, type JarvisTelemetryView,
 } from './actions';
+import { drawGargantua, luxPaletteFromAccent } from './drawGargantua';
 import { dirProps } from '@/lib/rtl';
 
 type CoreState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting' | 'alert' | 'degraded';
 type RGB = [number, number, number];
 
+/** Orbital gold family — warmer mesh, tracks the accretion spectrum. */
 const STATE_COLOR: Record<CoreState, { core: RGB; ring: RGB }> = {
-  idle: { core: [110, 168, 255], ring: [90, 140, 220] },
-  listening: { core: [130, 200, 255], ring: [110, 180, 255] },
-  thinking: { core: [190, 140, 255], ring: [170, 120, 255] },
-  speaking: { core: [255, 200, 110], ring: [255, 180, 90] },
-  acting: { core: [110, 240, 190], ring: [90, 220, 170] },
-  alert: { core: [255, 130, 110], ring: [255, 110, 90] },
-  degraded: { core: [130, 140, 160], ring: [110, 120, 140] },
+  idle: { core: [236, 168, 72], ring: [210, 132, 48] },
+  listening: { core: [248, 186, 96], ring: [224, 152, 64] },
+  thinking: { core: [220, 148, 78], ring: [190, 118, 56] },
+  speaking: { core: [255, 198, 120], ring: [236, 168, 88] },
+  acting: { core: [214, 152, 72], ring: [184, 124, 56] },
+  alert: { core: [240, 96, 52], ring: [210, 72, 36] },
+  degraded: { core: [158, 112, 68], ring: [128, 88, 52] },
 };
 
 const STATE_LABEL_FA: Record<CoreState, string> = {
@@ -107,6 +108,24 @@ function buildNeuralMesh(count: number, k: number): NeuralMesh {
   const neighbors: number[][] = Array.from({ length: count }, () => []);
   for (const [a, b] of edges) { neighbors[a].push(b); neighbors[b].push(a); }
   return { nodes, edges, neighbors };
+}
+
+const CMD_PLACEHOLDER = 'یک دستور کوتاه بدهید…';
+
+function TelemCell({
+  slot, label, cell,
+}: {
+  slot: 'mode' | 'loop' | 'cost' | 'trust';
+  label: string;
+  cell?: { value: string; detail: string; tone: string } | null;
+}) {
+  return (
+    <div className={`jarvis-telem-cell jarvis-telem-cell--${slot} jarvis-telem-cell--${cell?.tone ?? 'muted'}`}>
+      <span className="jarvis-telem-k">{label}</span>
+      <span className="jarvis-telem-v">{cell?.value ?? '…'}</span>
+      <span className="jarvis-telem-d">{cell?.detail ?? 'loading'}</span>
+    </div>
+  );
 }
 
 export default function JarvisCoreHUD() {
@@ -340,9 +359,6 @@ export default function JarvisCoreHUD() {
       const ease = 1 - Math.pow(0.002, dt);
       cur.core = mixRgb(cur.core, tgt.core, ease);
       cur.ring = mixRgb(cur.ring, tgt.ring, ease);
-      const coreCss = rgba(cur.core, 1);
-      const coreDim = rgba(cur.core, 0.12);
-      const ringCss = rgba(cur.ring, 0.28);
 
       const speedMul = stateRef.current === 'thinking' ? 1.8 : stateRef.current === 'acting' ? 1.4 : 1;
 
@@ -360,12 +376,6 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      // Soft ambient disc (one solid fill — no per-frame gradient object).
-      ctx.beginPath();
-      ctx.fillStyle = coreDim;
-      ctx.arc(cx, cy, fieldRadius * 0.55, 0, Math.PI * 2);
-      ctx.fill();
-
       // Occasional ripple.
       if (now >= nextRippleAt) {
         ripples.push({ start: now, strength: 0.45 });
@@ -380,19 +390,6 @@ export default function JarvisCoreHUD() {
         ctx.arc(cx, cy, coreRadius * (0.8 + age * 2.8), 0, Math.PI * 2);
         ctx.stroke();
       }
-
-      // Two HUD rings (save/restore is expensive — rotate via arc start angle).
-      ctx.strokeStyle = ringCss;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 9]);
-      ctx.beginPath();
-      ctx.arc(cx, cy, coreRadius * 1.55, t * 0.12, t * 0.12 + Math.PI * 1.7);
-      ctx.stroke();
-      ctx.setLineDash([8, 7]);
-      ctx.beginPath();
-      ctx.arc(cx, cy, coreRadius * 2.05, -t * 0.07, -t * 0.07 + Math.PI * 1.6);
-      ctx.stroke();
-      ctx.setLineDash([]);
 
       // Outer neural threads.
       const positions: Array<{ xFrac: number; yFrac: number; label: string; activity: number; color: RGB }> = [];
@@ -462,18 +459,16 @@ export default function JarvisCoreHUD() {
         n.flash *= Math.pow(0.02, dt);
       }
 
-      ctx.beginPath();
-      ctx.fillStyle = rgba(cur.core, 0.1);
-      ctx.arc(cx, cy, meshRadius * 0.85, 0, Math.PI * 2);
-      ctx.fill();
+      // Mesh + singularity share orbital gold (hot / gold via lux aliases).
+      const lux = luxPaletteFromAccent(cur.core);
 
-      // Synapses — solid color, no per-edge mixRgb allocations beyond rgba.
+      // Synapses — orbital gold mid-tone.
       for (const [a, b] of mesh.edges) {
         const pa = projected[a], pb = projected[b];
         const flash = Math.max(mesh.nodes[a].flash, mesh.nodes[b].flash);
-        const alpha = Math.max(0.05, 0.1 + ((pa.persp + pb.persp) / 2 - 0.55) * 0.2 + flash * 0.45);
-        ctx.strokeStyle = rgba(cur.core, alpha);
-        ctx.lineWidth = 0.7 + flash * 0.9;
+        const alpha = Math.max(0.05, 0.08 + ((pa.persp + pb.persp) / 2 - 0.55) * 0.18 + flash * 0.4);
+        ctx.strokeStyle = rgba(lux.gold, alpha);
+        ctx.lineWidth = 0.55 + flash * 0.75;
         ctx.beginPath();
         ctx.moveTo(pa.x, pa.y);
         ctx.lineTo(pb.x, pb.y);
@@ -503,36 +498,29 @@ export default function JarvisCoreHUD() {
         }
         const pa = projected[s.a], pb = projected[s.b];
         ctx.beginPath();
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.arc(lerp(pa.x, pb.x, s.t), lerp(pa.y, pb.y, s.t), 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(lux.hot, 0.85);
+        ctx.arc(lerp(pa.x, pb.x, s.t), lerp(pa.y, pb.y, s.t), 1.55, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Nodes — no z-sort (cheap enough; depth via size/alpha only).
+      // Nodes — keep clear of the singularity so the void reads cleanly.
+      const bhR = coreRadius * 0.44;
+      const bhKeepout = bhR * 1.55;
       for (let i = 0; i < projected.length; i += 1) {
         const p = projected[i];
+        const dxn = p.x - cx, dyn = p.y - cy;
+        if (dxn * dxn + dyn * dyn < bhKeepout * bhKeepout) continue;
         const flash = mesh.nodes[i].flash;
         const depthAlpha = Math.max(0, Math.min(1, (p.persp - 0.55) / 1.1));
-        const size = (1.0 + depthAlpha * 1.4) * (1 + flash * 1.2);
+        const size = (0.9 + depthAlpha * 1.2) * (1 + flash * 1.05);
+        const nodeColor = flash > 0.35 ? lux.hot : lux.gold;
         ctx.beginPath();
-        ctx.fillStyle = rgba(cur.core, 0.35 + depthAlpha * 0.35 + flash * 0.45);
+        ctx.fillStyle = rgba(nodeColor, 0.3 + depthAlpha * 0.35 + flash * 0.4);
         ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      ctx.strokeStyle = rgba(cur.core, 0.2);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(cx, cy, meshRadius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Tiny bright nucleus.
-      ctx.beginPath();
-      ctx.fillStyle = coreCss;
-      ctx.globalAlpha = 0.55;
-      ctx.arc(cx, cy, coreRadius * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      drawGargantua(ctx, cx, cy, bhR, t, cur.core);
 
       raf = requestAnimationFrame(frame);
     }
@@ -631,30 +619,15 @@ export default function JarvisCoreHUD() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="یک دستور کوتاه بدهید…"
+          placeholder={CMD_PLACEHOLDER}
           disabled={busy}
-          {...dirProps(input)}
+          data-auto-dir=""
+          {...dirProps(input || CMD_PLACEHOLDER)}
         />
         <button type="submit" disabled={busy || !input.trim()} aria-label="ارسال">
           {busy ? '…' : '↵'}
         </button>
       </form>
-    </div>
-  );
-}
-
-function TelemCell({
-  slot, label, cell,
-}: {
-  slot: 'mode' | 'loop' | 'cost' | 'trust';
-  label: string;
-  cell?: { value: string; detail: string; tone: string } | null;
-}) {
-  return (
-    <div className={`jarvis-telem-cell jarvis-telem-cell--${slot} jarvis-telem-cell--${cell?.tone ?? 'muted'}`}>
-      <span className="jarvis-telem-k">{label}</span>
-      <span className="jarvis-telem-v">{cell?.value ?? '…'}</span>
-      <span className="jarvis-telem-d">{cell?.detail ?? 'loading'}</span>
     </div>
   );
 }
