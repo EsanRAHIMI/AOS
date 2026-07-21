@@ -244,11 +244,18 @@ button { font: inherit; }
 .command input { flex: 1; padding: 14px 16px; font-size: 15px; border-radius: var(--r); }
 
 /* ---------- Jarvis living presence stage (/jarvis) ---------- */
+/* Break out of the control-room content column so the stage is edge-to-edge
+   in the main pane (sidebar stays; max-width:1280 and page padding go away). */
+.main:has(.jarvis-live-stage) {
+  max-width: none;
+  padding: 0;
+  width: 100%;
+}
 .jarvis-live-stage {
   --jarvis-pad: 22px;
   --jarvis-bottom-safe: 40px;
   position: relative; overflow: hidden;
-  margin: -26px -30px -60px; width: calc(100% + 60px);
+  margin: 0; width: 100%;
   height: 100vh; height: 100dvh;
   min-height: 0;
   border-radius: 0;
@@ -344,11 +351,11 @@ button { font: inherit; }
 .jarvis-telem-cell--muted .jarvis-telem-v { color: var(--muted); }
 
 @media (max-width: 1024px) {
+  .main:has(.jarvis-live-stage) { padding: 0; }
   .jarvis-live-stage {
     --jarvis-pad: 12px;
     --jarvis-bottom-safe: calc(12px + 72px + env(safe-area-inset-bottom));
-    margin: calc(-72px - env(safe-area-inset-top)) -16px calc(-96px - env(safe-area-inset-bottom));
-    width: 100vw; height: 100dvh;
+    margin: 0; width: 100%; height: 100dvh;
     padding-top: calc(56px + env(safe-area-inset-top));
   }
   .jarvis-live-glyph { font-size: 8.5px; letter-spacing: 1px; }

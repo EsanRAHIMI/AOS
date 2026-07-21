@@ -126,6 +126,10 @@ export default function JarvisCoreHUD() {
   const setBusy = useCallback((v: boolean) => { busyRef.current = v; setBusyState(v); }, []);
   const sessionIdRef = useRef<string | null>(null);
   const [telem, setTelem] = useState<JarvisTelemetryView | null>(null);
+  /** True only when this tab is visible AND the window has focus — desktop
+   *  stays "visible" while you work in another app; without the focus check
+   *  the canvas keeps burning and resume after minutes can wedge the loop. */
+  const liveRef = useRef(true);
 
   const setCoreState = useCallback((s: CoreState, note?: string) => {
     stateRef.current = s;
@@ -140,6 +144,7 @@ export default function JarvisCoreHUD() {
   }, []);
 
   const refreshTelemetry = useCallback(async () => {
+    if (!liveRef.current) return;
     try {
       const t = await jarvisTelemetryAction(sessionIdRef.current);
       setTelem(t);
@@ -147,6 +152,21 @@ export default function JarvisCoreHUD() {
       if (t.trust.tone === 'warn') pulseAnchor('trust', 0.35);
     } catch { /* keep last good snapshot */ }
   }, [pulseAnchor]);
+
+  useEffect(() => {
+    const syncLive = () => {
+      liveRef.current = document.visibilityState === 'visible' && document.hasFocus();
+    };
+    syncLive();
+    window.addEventListener('focus', syncLive);
+    window.addEventListener('blur', syncLive);
+    document.addEventListener('visibilitychange', syncLive);
+    return () => {
+      window.removeEventListener('focus', syncLive);
+      window.removeEventListener('blur', syncLive);
+      document.removeEventListener('visibilitychange', syncLive);
+    };
+  }, []);
 
   useEffect(() => {
     void refreshTelemetry();
@@ -158,12 +178,15 @@ export default function JarvisCoreHUD() {
   // pulses on random threads, so the stage never looks "off" between the
   // slower, more deliberate focus-state changes below.
   useEffect(() => {
-    const hb = setInterval(() => { if (!busyRef.current) pulseAnchor('heartbeat', 0.45); }, 1050);
+    const hb = setInterval(() => {
+      if (!liveRef.current || busyRef.current) return;
+      pulseAnchor('heartbeat', 0.4);
+    }, 1400);
     const ambient = setInterval(() => {
-      if (busyRef.current) return;
+      if (!liveRef.current || busyRef.current) return;
       const ids = ['memory', 'loop', 'trust', 'missions', 'research'];
-      pulseAnchor(ids[Math.floor(Math.random() * ids.length)], 0.16 + Math.random() * 0.18);
-    }, 900 + Math.random() * 700);
+      pulseAnchor(ids[Math.floor(Math.random() * ids.length)], 0.14 + Math.random() * 0.14);
+    }, 1600);
     return () => { clearInterval(hb); clearInterval(ambient); };
   }, [pulseAnchor]);
 
@@ -174,19 +197,21 @@ export default function JarvisCoreHUD() {
     const anchorCycle = ['memory', 'loop', 'heartbeat', 'trust', 'missions', 'research'];
     let i = 0;
     const timer = setInterval(() => {
-      if (!alive || busyRef.current) return;
+      if (!alive || !liveRef.current || busyRef.current) return;
       setCoreState(cycle[i % cycle.length]);
-      pulseAnchor(anchorCycle[i % anchorCycle.length], 0.7);
+      pulseAnchor(anchorCycle[i % anchorCycle.length], 0.55);
       i += 1;
-    }, 5200);
+    }, 7000);
     return () => { alive = false; clearInterval(timer); };
   }, [setCoreState, pulseAnchor]);
 
-  // Canvas render loop.
+  // Canvas render loop — tuned for crisp 60fps: hard clear (no smear trail),
+  // no shadowBlur, capped DPR, lean mesh. Motion stays continuous without
+  // the soft-fade tax that made desktop feel laggy and blurred.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx2d = canvas.getContext('2d', { alpha: false });
+    const ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
     if (!ctx2d) return;
     const canvasEl: HTMLCanvasElement = canvas;
     const ctx: CanvasRenderingContext2D = ctx2d;
@@ -195,18 +220,62 @@ export default function JarvisCoreHUD() {
     let raf = 0;
     let w = 0, h = 0, dpr = 1;
     let compact = (typeof window !== 'undefined') && (window.innerWidth < 720 || window.innerHeight < 640);
-    let running = true;
-    const mesh = buildNeuralMesh(compact ? 28 : 42, 3);
+    let running = false;
+    /** Wall-clock offset so animation time does not jump after a freeze. */
+    let clockBase = performance.now();
+    let last = performance.now();
+    const mesh = buildNeuralMesh(compact ? 24 : 32, 3);
+    const projected = mesh.nodes.map(() => ({ x: 0, y: 0, z: 0, persp: 1 }));
     const signals: Array<{ a: number; b: number; t: number; speed: number }> = [];
     let nextSignalAt = 0;
-    let signalCap = compact ? 10 : 18;
-    let dustCount = compact ? 22 : 48;
-    const dust = Array.from({ length: 70 }, () => ({
-      x: Math.random(), y: Math.random(), r: 0.4 + Math.random() * 1.4,
-      phase: Math.random() * Math.PI * 2, speed: 0.03 + Math.random() * 0.05, drift: Math.random() * Math.PI * 2,
+    let signalCap = compact ? 8 : 12;
+    let dustCount = compact ? 14 : 24;
+    const dust = Array.from({ length: 32 }, () => ({
+      x: Math.random(), y: Math.random(), r: 0.5 + Math.random() * 1.1,
+      phase: Math.random() * Math.PI * 2, speed: 0.03 + Math.random() * 0.04, drift: Math.random() * Math.PI * 2,
     }));
     const ripples: Array<{ start: number; strength: number }> = [];
     let nextRippleAt = 0;
+    let frozenAt = 0;
+
+    function isLive(): boolean {
+      return document.visibilityState === 'visible' && document.hasFocus();
+    }
+
+    function freeze() {
+      if (!running && raf === 0) return;
+      running = false;
+      cancelAnimationFrame(raf);
+      raf = 0;
+      frozenAt = performance.now();
+      // Drop transient particles so resume never replays a backlog.
+      signals.length = 0;
+      ripples.length = 0;
+      liveRef.current = false;
+    }
+
+    function resume() {
+      if (!isLive()) return;
+      if (running) return;
+      // Absorb frozen wall time into the clock so `t` continues smoothly
+      // instead of leaping minutes ahead (that leap is what wedges the loop).
+      if (frozenAt > 0) {
+        clockBase += performance.now() - frozenAt;
+        frozenAt = 0;
+      }
+      last = performance.now();
+      nextSignalAt = last + 400;
+      nextRippleAt = last + 800;
+      running = true;
+      liveRef.current = true;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(frame);
+    }
+
+    function onPresence() {
+      if (isLive()) resume();
+      else freeze();
+    }
 
     function resize() {
       const parent = canvasEl.parentElement;
@@ -214,10 +283,10 @@ export default function JarvisCoreHUD() {
       const nextW = parent.clientWidth;
       const nextH = parent.clientHeight;
       compact = nextW < 720 || nextH < 640;
-      signalCap = compact ? 10 : 18;
-      dustCount = compact ? 22 : 48;
-      // Cap DPR on small screens — halves GPU work with almost no visual loss.
-      dpr = Math.min(window.devicePixelRatio || 1, compact ? 1.5 : 2);
+      signalCap = compact ? 8 : 12;
+      dustCount = compact ? 14 : 24;
+      // Full-bleed desktop at DPR 2 is the main lag source — cap hard.
+      dpr = Math.min(window.devicePixelRatio || 1, 1.25);
       w = nextW;
       h = nextH;
       canvasEl.width = Math.floor(w * dpr);
@@ -230,262 +299,261 @@ export default function JarvisCoreHUD() {
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => resize()) : null;
     if (ro && canvasEl.parentElement) ro.observe(canvasEl.parentElement);
     else window.addEventListener('resize', resize);
-    const onVis = () => { running = document.visibilityState === 'visible'; if (running) { last = performance.now(); raf = requestAnimationFrame(frame); } };
-    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onPresence);
+    window.addEventListener('blur', onPresence);
+    document.addEventListener('visibilitychange', onPresence);
+    window.addEventListener('pagehide', freeze);
+    window.addEventListener('pageshow', onPresence);
 
-    let last = performance.now();
     function frame(now: number) {
       if (!running) return;
-      const dt = Math.min(0.045, (now - last) / 1000);
-      last = now;
-      const t = now / 1000;
+      // Defensive: if focus was lost mid-frame batch, stop without scheduling.
+      if (!isLive()) { freeze(); return; }
 
-      // Soft trail — slightly stronger on mobile so trails don't smear under lower FPS.
+      const rawDt = (now - last) / 1000;
+      // Any gap larger than a couple frames = we were throttled/frozen; skip
+      // catch-up entirely rather than trying to simulate the missing time.
+      if (rawDt > 0.1) {
+        clockBase += now - last;
+        last = now;
+        raf = requestAnimationFrame(frame);
+        return;
+      }
+      const dt = Math.min(0.04, Math.max(0, rawDt));
+      last = now;
+      const t = Math.max(0, (now - clockBase) / 1000);
+
+      // Hard clear — sharp frames, no motion smear.
       ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = compact ? 'rgba(7,10,18,0.32)' : 'rgba(7,10,18,0.24)';
+      ctx.fillStyle = '#070a12';
       ctx.fillRect(0, 0, w, h);
 
       const cx = w / 2;
-      // Lift the core slightly so it clears the command bar / mobile chrome.
       const cy = h * (compact ? 0.42 : 0.48);
       const scale = Math.min(w, h);
-      const breath = reducedMotion ? 1 : 1 + Math.sin(t * 0.55) * 0.018;
-      const coreRadius = scale * (compact ? 0.18 : 0.155) * breath;
-      const fieldRadius = scale * (compact ? 0.38 : 0.44);
+      const breath = reducedMotion ? 1 : 1 + Math.sin(t * 0.55) * 0.015;
+      const coreRadius = scale * (compact ? 0.18 : 0.15) * breath;
+      const fieldRadius = scale * (compact ? 0.38 : 0.42);
 
-      // Color transition toward target state.
       const cur = currentColorRef.current;
       const tgt = targetColorRef.current;
-      const ease = 1 - Math.pow(0.001, dt);
+      const ease = 1 - Math.pow(0.002, dt);
       cur.core = mixRgb(cur.core, tgt.core, ease);
       cur.ring = mixRgb(cur.ring, tgt.ring, ease);
+      const coreCss = rgba(cur.core, 1);
+      const coreDim = rgba(cur.core, 0.12);
+      const ringCss = rgba(cur.ring, 0.28);
 
-      const speedMul = stateRef.current === 'thinking' ? 2.2 : stateRef.current === 'acting' ? 1.6 : stateRef.current === 'alert' ? 1.8 : 1;
+      const speedMul = stateRef.current === 'thinking' ? 1.8 : stateRef.current === 'acting' ? 1.4 : 1;
 
-      ctx.globalCompositeOperation = 'lighter';
-
-      // Drifting starfield — always-on depth cue, independent of state.
+      // Sparse starfield.
       for (let di = 0; di < dustCount; di += 1) {
         const s = dust[di];
-        const dx = (s.x + Math.sin(t * s.speed + s.drift) * 0.01) * w;
-        const dy = (s.y + Math.cos(t * s.speed * 0.8 + s.drift) * 0.01) * h;
-        const tw = 0.25 + 0.35 * (0.5 + 0.5 * Math.sin(t * 1.4 + s.phase));
+        const tw = 0.2 + 0.3 * (0.5 + 0.5 * Math.sin(t * 1.2 + s.phase));
         ctx.beginPath();
-        ctx.fillStyle = rgba([180, 195, 230], tw * 0.5);
-        ctx.arc(dx, dy, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(180,195,230,${tw * 0.45})`;
+        ctx.arc(
+          (s.x + Math.sin(t * s.speed + s.drift) * 0.008) * w,
+          (s.y + Math.cos(t * s.speed * 0.8 + s.drift) * 0.008) * h,
+          s.r, 0, Math.PI * 2,
+        );
         ctx.fill();
       }
 
-      // Ambient outer glow field.
-      const grad = ctx.createRadialGradient(cx, cy, coreRadius * 0.2, cx, cy, fieldRadius);
-      grad.addColorStop(0, rgba(cur.core, 0.14));
-      grad.addColorStop(1, rgba(cur.core, 0));
-      ctx.fillStyle = grad;
+      // Soft ambient disc (one solid fill — no per-frame gradient object).
       ctx.beginPath();
-      ctx.arc(cx, cy, fieldRadius, 0, Math.PI * 2);
+      ctx.fillStyle = coreDim;
+      ctx.arc(cx, cy, fieldRadius * 0.55, 0, Math.PI * 2);
       ctx.fill();
 
-      // Resting heartbeat ripples — expanding rings from the core, always on.
+      // Occasional ripple.
       if (now >= nextRippleAt) {
-        ripples.push({ start: now, strength: 0.5 });
-        nextRippleAt = now + 2200 + Math.random() * 900;
+        ripples.push({ start: now, strength: 0.45 });
+        nextRippleAt = now + 2600 + Math.random() * 1000;
       }
       for (let i = ripples.length - 1; i >= 0; i -= 1) {
-        const age = (now - ripples[i].start) / 1400;
+        const age = (now - ripples[i].start) / 1200;
         if (age >= 1) { ripples.splice(i, 1); continue; }
-        const r = coreRadius * (0.7 + age * 3.2);
         ctx.beginPath();
-        ctx.strokeStyle = rgba(cur.core, (1 - age) * 0.35 * ripples[i].strength);
-        ctx.lineWidth = 1.4;
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = rgba(cur.core, (1 - age) * 0.28 * ripples[i].strength);
+        ctx.lineWidth = 1.2;
+        ctx.arc(cx, cy, coreRadius * (0.8 + age * 2.8), 0, Math.PI * 2);
         ctx.stroke();
       }
 
-      // Rotating HUD rings (arc-reactor style), independent speeds/directions.
-      const ringSpecs = [
-        { radius: coreRadius * 1.55, speed: 0.12, dash: [2, 10], width: 1.1 },
-        { radius: coreRadius * 1.9, speed: -0.07, dash: [10, 6], width: 1 },
-        { radius: coreRadius * 2.3, speed: 0.045, dash: [1, 5], width: 0.9 },
-      ];
-      for (const rs of ringSpecs) {
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(t * rs.speed);
-        ctx.setLineDash(rs.dash);
-        ctx.strokeStyle = rgba(cur.ring, 0.32);
-        ctx.lineWidth = rs.width;
-        ctx.beginPath();
-        ctx.arc(0, 0, rs.radius, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
+      // Two HUD rings (save/restore is expensive — rotate via arc start angle).
+      ctx.strokeStyle = ringCss;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 9]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, coreRadius * 1.55, t * 0.12, t * 0.12 + Math.PI * 1.7);
+      ctx.stroke();
+      ctx.setLineDash([8, 7]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, coreRadius * 2.05, -t * 0.07, -t * 0.07 + Math.PI * 1.6);
+      ctx.stroke();
       ctx.setLineDash([]);
 
-      // Neural threads to anchors — each with its own signature color,
-      // continuously carrying faint data even at rest.
+      // Outer neural threads.
       const positions: Array<{ xFrac: number; yFrac: number; label: string; activity: number; color: RGB }> = [];
       const anchors = anchorsRef.current;
-      const sweep = t * 0.015;
+      const sweep = t * 0.012;
       for (const a of anchors) {
         let target = 0.08;
         if (a.heartbeat) {
           const phase = (t % 0.9) / 0.9;
-          target = Math.max(target, Math.pow(Math.max(0, Math.sin(phase * Math.PI)), 6) * 0.5);
+          target = Math.max(target, Math.pow(Math.max(0, Math.sin(phase * Math.PI)), 6) * 0.45);
         }
         a.activity = Math.max(target, a.activity - dt * 0.35);
 
         const angle = a.angle + sweep;
         const ax = cx + Math.cos(angle) * fieldRadius;
         const ay = cy + Math.sin(angle) * fieldRadius;
-        const midx = cx + Math.cos(angle) * fieldRadius * 0.52 + Math.sin(t * 0.3 + angle) * 16;
-        const midy = cy + Math.sin(angle) * fieldRadius * 0.52 + Math.cos(t * 0.3 + angle) * 16;
+        const midx = cx + Math.cos(angle) * fieldRadius * 0.52 + Math.sin(t * 0.25 + angle) * 12;
+        const midy = cy + Math.sin(angle) * fieldRadius * 0.52 + Math.cos(t * 0.25 + angle) * 12;
         const startx = cx + Math.cos(angle) * coreRadius * 0.9;
         const starty = cy + Math.sin(angle) * coreRadius * 0.9;
 
-        const lineGrad = ctx.createLinearGradient(startx, starty, ax, ay);
-        lineGrad.addColorStop(0, rgba(cur.core, 0.05 + a.activity * 0.45));
-        lineGrad.addColorStop(1, rgba(a.color, 0.06 + a.activity * 0.6));
-        ctx.strokeStyle = lineGrad;
-        ctx.lineWidth = 0.8 + a.activity * 1.8;
+        ctx.strokeStyle = rgba(a.color, 0.08 + a.activity * 0.5);
+        ctx.lineWidth = 0.9 + a.activity * 1.4;
         ctx.beginPath();
         ctx.moveTo(startx, starty);
         ctx.quadraticCurveTo(midx, midy, ax, ay);
         ctx.stroke();
 
-        // A faint data point always travels the line; brighter when active.
-        const pt = (t * (0.22 + a.activity * 0.6) + a.angle) % 1;
+        const pt = (t * (0.2 + a.activity * 0.5) + a.angle) % 1;
         const px = lerp(lerp(startx, midx, pt), lerp(midx, ax, pt), pt);
         const py = lerp(lerp(starty, midy, pt), lerp(midy, ay, pt), pt);
         ctx.beginPath();
-        ctx.fillStyle = rgba(a.color, 0.25 + a.activity * 0.7);
-        if (!compact) { ctx.shadowColor = rgba(a.color, 1); ctx.shadowBlur = 4 + a.activity * 8; }
-        ctx.arc(px, py, 1.4 + a.activity * 2, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(a.color, 0.35 + a.activity * 0.55);
+        ctx.arc(px, py, 1.3 + a.activity * 1.6, 0, Math.PI * 2);
         ctx.fill();
-        if (!compact) ctx.shadowBlur = 0;
 
-        // Anchor node glow.
         ctx.beginPath();
-        ctx.fillStyle = rgba(a.color, 0.3 + a.activity * 0.5);
-        if (!compact) { ctx.shadowColor = rgba(a.color, 1); ctx.shadowBlur = 6; }
-        ctx.arc(ax, ay, 2.2 + a.activity * 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(a.color, 0.35 + a.activity * 0.4);
+        ctx.arc(ax, ay, 2 + a.activity * 1.2, 0, Math.PI * 2);
         ctx.fill();
-        if (!compact) ctx.shadowBlur = 0;
 
         positions.push({ xFrac: ax / w, yFrac: ay / h, label: a.label, activity: a.activity, color: a.color });
       }
       anchorPosRef.current = positions;
 
-      // Living neural mesh — the actual core: nodes + synapses in slow
-      // pseudo-3D rotation, with signals that travel edge-to-edge and make
-      // nodes flash on arrival, occasionally propagating onward like a
-      // real thought moving through a small brain.
+      // Neural mesh core.
       const meshRadius = coreRadius * 0.98;
-      const ry = t * (0.1 + (speedMul - 1) * 0.06);
-      const rx = Math.sin(t * 0.05) * 0.18 + Math.sin(t * 0.023) * 0.07;
+      const ry = t * (0.08 + (speedMul - 1) * 0.05);
+      const rx = Math.sin(t * 0.05) * 0.16;
       const cosY = Math.cos(ry), sinY = Math.sin(ry);
       const cosX = Math.cos(rx), sinX = Math.sin(rx);
       const camDist = 2.6;
-      const projected: Array<{ x: number; y: number; z: number; persp: number }> = new Array(mesh.nodes.length);
       for (let i = 0; i < mesh.nodes.length; i += 1) {
         const n = mesh.nodes[i];
-        const wob = 1 + Math.sin(t * 0.8 + n.driftPhase) * 0.025;
+        const wob = 1 + Math.sin(t * 0.7 + n.driftPhase) * 0.02;
         const [px0, py0, pz0] = n.pos;
         const x1 = px0 * cosY - pz0 * sinY;
         const z1 = px0 * sinY + pz0 * cosY;
         const y2 = py0 * cosX - z1 * sinX;
         const z2 = py0 * sinX + z1 * cosX;
         const persp = camDist / (camDist - z2 * wob);
-        projected[i] = { x: cx + x1 * wob * meshRadius * persp, y: cy + y2 * wob * meshRadius * persp, z: z2, persp };
-        n.flash *= Math.pow(0.015, dt);
+        const p = projected[i];
+        p.x = cx + x1 * wob * meshRadius * persp;
+        p.y = cy + y2 * wob * meshRadius * persp;
+        p.z = z2;
+        p.persp = persp;
+        n.flash *= Math.pow(0.02, dt);
       }
 
-      // Subtle rim + faint inner glow to read as a bounded "core", not a free dust cloud.
-      const coreGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, meshRadius * 0.9);
-      coreGlow.addColorStop(0, rgba(cur.core, 0.16));
-      coreGlow.addColorStop(1, rgba(cur.core, 0));
-      ctx.fillStyle = coreGlow;
       ctx.beginPath();
-      ctx.arc(cx, cy, meshRadius * 0.9, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(cur.core, 0.1);
+      ctx.arc(cx, cy, meshRadius * 0.85, 0, Math.PI * 2);
       ctx.fill();
 
-      // Synapses.
+      // Synapses — solid color, no per-edge mixRgb allocations beyond rgba.
       for (const [a, b] of mesh.edges) {
         const pa = projected[a], pb = projected[b];
         const flash = Math.max(mesh.nodes[a].flash, mesh.nodes[b].flash);
-        const depthAlpha = (pa.persp + pb.persp) / 2 - 0.55;
-        const alpha = Math.max(0, 0.08 + depthAlpha * 0.22 + flash * 0.55);
-        ctx.strokeStyle = rgba(mixRgb(cur.core, [255, 255, 255], 0.25 + flash * 0.4), alpha);
-        ctx.lineWidth = 0.6 + flash * 1.1;
+        const alpha = Math.max(0.05, 0.1 + ((pa.persp + pb.persp) / 2 - 0.55) * 0.2 + flash * 0.45);
+        ctx.strokeStyle = rgba(cur.core, alpha);
+        ctx.lineWidth = 0.7 + flash * 0.9;
         ctx.beginPath();
         ctx.moveTo(pa.x, pa.y);
         ctx.lineTo(pb.x, pb.y);
         ctx.stroke();
       }
 
-      // Signals traveling along synapses — spawn continuously, faster while thinking/acting.
       if (now >= nextSignalAt && signals.length < signalCap) {
         const [ea, eb] = mesh.edges[Math.floor(Math.random() * mesh.edges.length)];
-        signals.push({ a: ea, b: eb, t: 0, speed: 1 + Math.random() * 0.6 });
-        nextSignalAt = now + (320 + Math.random() * 260) / speedMul;
+        signals.push({ a: ea, b: eb, t: 0, speed: 1.1 + Math.random() * 0.5 });
+        nextSignalAt = now + (380 + Math.random() * 320) / speedMul;
       }
       for (let i = signals.length - 1; i >= 0; i -= 1) {
         const s = signals[i];
         s.t += dt * s.speed * speedMul;
         if (s.t >= 1) {
           mesh.nodes[s.b].flash = 1;
-          if (signals.length < signalCap && Math.random() < 0.65) {
-            const options = mesh.neighbors[s.b].filter((n) => n !== s.a);
-            if (options.length) signals.push({ a: s.b, b: options[Math.floor(Math.random() * options.length)], t: 0, speed: 1 + Math.random() * 0.6 });
+          if (signals.length < signalCap && Math.random() < 0.55) {
+            const options = mesh.neighbors[s.b];
+            let pick = options[0];
+            for (let oi = 0; oi < options.length; oi += 1) {
+              if (options[oi] !== s.a) { pick = options[oi]; if (Math.random() < 0.5) break; }
+            }
+            if (pick !== undefined && pick !== s.a) signals.push({ a: s.b, b: pick, t: 0, speed: 1.1 + Math.random() * 0.5 });
           }
           signals.splice(i, 1);
           continue;
         }
         const pa = projected[s.a], pb = projected[s.b];
-        const sx = lerp(pa.x, pb.x, s.t);
-        const sy = lerp(pa.y, pb.y, s.t);
-        const glowCol = mixRgb(cur.core, [255, 255, 255], 0.55);
         ctx.beginPath();
-        ctx.fillStyle = rgba(glowCol, 0.85);
-        if (!compact) { ctx.shadowColor = rgba(glowCol, 1); ctx.shadowBlur = 8; }
-        ctx.arc(sx, sy, 1.7, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.arc(lerp(pa.x, pb.x, s.t), lerp(pa.y, pb.y, s.t), 1.8, 0, Math.PI * 2);
         ctx.fill();
-        if (!compact) ctx.shadowBlur = 0;
       }
 
-      // Nodes — far-to-near so nearer ones sit visually on top.
-      const order = projected.map((_, i) => i).sort((i, j) => projected[i].z - projected[j].z);
-      for (const i of order) {
+      // Nodes — no z-sort (cheap enough; depth via size/alpha only).
+      for (let i = 0; i < projected.length; i += 1) {
         const p = projected[i];
         const flash = mesh.nodes[i].flash;
         const depthAlpha = Math.max(0, Math.min(1, (p.persp - 0.55) / 1.1));
-        const size = (1.1 + depthAlpha * 1.6) * (1 + flash * 1.4);
+        const size = (1.0 + depthAlpha * 1.4) * (1 + flash * 1.2);
         ctx.beginPath();
-        ctx.fillStyle = rgba(mixRgb(cur.core, [255, 255, 255], 0.15 + depthAlpha * 0.2 + flash * 0.55), 0.35 + depthAlpha * 0.35 + flash * 0.5);
-        if (!compact && flash > 0.08) { ctx.shadowColor = rgba(cur.core, 1); ctx.shadowBlur = 6 + flash * 8; }
+        ctx.fillStyle = rgba(cur.core, 0.35 + depthAlpha * 0.35 + flash * 0.45);
         ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
         ctx.fill();
-        if (!compact) ctx.shadowBlur = 0;
       }
 
-      ctx.strokeStyle = rgba(cur.core, 0.16);
+      ctx.strokeStyle = rgba(cur.core, 0.2);
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(cx, cy, meshRadius, 0, Math.PI * 2);
       ctx.stroke();
 
-      ctx.globalCompositeOperation = 'source-over';
+      // Tiny bright nucleus.
+      ctx.beginPath();
+      ctx.fillStyle = coreCss;
+      ctx.globalAlpha = 0.55;
+      ctx.arc(cx, cy, coreRadius * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
       raf = requestAnimationFrame(frame);
     }
-    raf = requestAnimationFrame(frame);
 
-    // Decoupled label sync — slower on mobile to avoid React thrash fighting the canvas.
-    const syncTimer = setInterval(() => setAnchorLabels([...anchorPosRef.current]), compact ? 280 : 180);
+    // Start only if the window is actually live; otherwise wait for focus.
+    if (isLive()) resume();
+    else freeze();
+
+    const syncTimer = setInterval(() => {
+      if (!liveRef.current) return;
+      setAnchorLabels([...anchorPosRef.current]);
+    }, 240);
 
     return () => {
-      running = false;
-      cancelAnimationFrame(raf);
+      freeze();
       clearInterval(syncTimer);
-      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onPresence);
+      window.removeEventListener('blur', onPresence);
+      document.removeEventListener('visibilitychange', onPresence);
+      window.removeEventListener('pagehide', freeze);
+      window.removeEventListener('pageshow', onPresence);
       if (ro) ro.disconnect();
       else window.removeEventListener('resize', resize);
     };
