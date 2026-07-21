@@ -1,17 +1,17 @@
 ---
-description: Jarvis core baselines — v1 frozen warm orbital gold, v2 for development
+description: Jarvis core baselines — v1 frozen inward-glow lock, v2 for development
 globs: services/dashboard-web/src/app/jarvis/**
 alwaysApply: false
 ---
 
 # Jarvis visual baselines
 
-- `baselines/gargantua-v1.ts` — **frozen** warm orbital-gold lock (do not edit)
+- `baselines/gargantua-v1.ts` — **frozen** (do not edit)
 - `baselines/gargantua-v2.ts` — **dev fork** — all experiments go here
 - Live: `drawGargantua.ts` → `drawGargantuaV2`
 
 ## Restore cues
 
-- «برگردون به v1» → re-export `drawGargantuaV1` (and palette from v1 if needed)
+- «برگردون به v1» → re-export `drawGargantuaV1`
 - Continue experiments on v2 only
 - New lock when asked → promote v2 into v1 (or add `v3`)

@@ -408,13 +408,11 @@ export default function JarvisCoreHUD() {
       cur.core = mixRgb(cur.core, tgt.core, ease);
       cur.ring = mixRgb(cur.ring, tgt.ring, ease);
 
-      // Voice drives the singularity — not mesh spin-up.
+      // Assistant speak → singularity gravity (redder + orbital spin). Listening never touches the stage.
       voiceEnergy = Math.max(voiceEnergy * Math.pow(0.12, dt), voiceEnergyRef.current);
       voiceEnergyRef.current *= Math.pow(0.45, dt);
       const st = stateRef.current;
-      const listenE = st === 'listening' ? voiceEnergy : 0;
-      const speakE = st === 'speaking' ? voiceEnergy : 0;
-      // Mesh stays calm; only mild think agitation (never listen/speak spin).
+      const speakE = st === 'speaking' ? Math.max(0.35, voiceEnergy) : 0;
       const speedMul = st === 'thinking' ? 1.12 : 1;
 
       // Sparse starfield.
@@ -431,12 +429,10 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      // Soft horizon ripples — only while the singularity is speaking (emit).
-      if (speakE > 0.15 && now >= nextRippleAt) {
-        ripples.push({ start: now, strength: 0.35 + speakE * 0.65 });
-        nextRippleAt = now + 900 + Math.random() * 500;
-      } else if (speakE <= 0.15 && now >= nextRippleAt) {
-        nextRippleAt = now + 4000;
+      // Occasional soft ambient ripple (never voice-triggered).
+      if (now >= nextRippleAt) {
+        ripples.push({ start: now, strength: 0.4 });
+        nextRippleAt = now + 3200 + Math.random() * 1600;
       }
       for (let i = ripples.length - 1; i >= 0; i -= 1) {
         const age = (now - ripples[i].start) / 1200;
@@ -492,15 +488,13 @@ export default function JarvisCoreHUD() {
       }
       anchorPosRef.current = positions;
 
-      // Neural mesh — steady slow orbit; never spins up with voice.
+      // Neural mesh — steady slow orbit; voice never scales or flashes it.
       const meshRadius = coreRadius * 0.98;
       const ry = t * 0.065;
       const rx = Math.sin(t * 0.05) * 0.16;
       const cosY = Math.cos(ry), sinY = Math.sin(ry);
       const cosX = Math.cos(rx), sinX = Math.sin(rx);
       const camDist = 2.6;
-      // Listening: mesh contracts slightly (attention inward). Speaking: slight expand (emit).
-      const meshScale = 1 - listenE * 0.06 + speakE * 0.04;
       for (let i = 0; i < mesh.nodes.length; i += 1) {
         const n = mesh.nodes[i];
         const wob = 1 + Math.sin(t * 0.7 + n.driftPhase) * 0.02;
@@ -511,13 +505,11 @@ export default function JarvisCoreHUD() {
         const z2 = py0 * sinX + z1 * cosX;
         const persp = camDist / (camDist - z2 * wob);
         const p = projected[i];
-        p.x = cx + x1 * wob * meshRadius * meshScale * persp;
-        p.y = cy + y2 * wob * meshRadius * meshScale * persp;
+        p.x = cx + x1 * wob * meshRadius * persp;
+        p.y = cy + y2 * wob * meshRadius * persp;
         p.z = z2;
         p.persp = persp;
         n.flash *= Math.pow(0.02, dt);
-        // Soft hear-flash while listening — not rotation.
-        if (listenE > 0.2 && Math.random() < listenE * 0.04) n.flash = Math.max(n.flash, 0.55 + listenE * 0.4);
       }
 
       // Mesh + singularity share orbital gold (hot / gold via lux aliases).
@@ -538,8 +530,8 @@ export default function JarvisCoreHUD() {
 
       if (now >= nextSignalAt && signals.length < signalCap) {
         const [ea, eb] = mesh.edges[Math.floor(Math.random() * mesh.edges.length)];
-        signals.push({ a: ea, b: eb, t: 0, speed: 0.85 + Math.random() * 0.35 + speakE * 0.25 });
-        nextSignalAt = now + (listenE > 0.15 ? 1400 : speakE > 0.15 ? 520 : 700) + Math.random() * 400;
+        signals.push({ a: ea, b: eb, t: 0, speed: 0.85 + Math.random() * 0.35 });
+        nextSignalAt = now + 700 + Math.random() * 400;
       }
       for (let i = signals.length - 1; i >= 0; i -= 1) {
         const s = signals[i];
@@ -565,7 +557,7 @@ export default function JarvisCoreHUD() {
       }
 
       // Nodes — keep clear of the singularity so the void reads cleanly.
-      const bhR = coreRadius * 0.44 * (1 + listenE * 0.06 + speakE * 0.03);
+      const bhR = coreRadius * 0.44;
       const bhKeepout = bhR * 1.55;
       for (let i = 0; i < projected.length; i += 1) {
         const p = projected[i];
@@ -581,7 +573,7 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      drawGargantua(ctx, cx, cy, bhR, t, cur.core, { listen: listenE, speak: speakE });
+      drawGargantua(ctx, cx, cy, bhR, t, cur.core, { speak: speakE });
 
       raf = requestAnimationFrame(frame);
     }
@@ -736,7 +728,6 @@ export default function JarvisCoreHUD() {
       const hint = (interim || finalBufRef.current).trim();
       setInterimHint(hint);
       if (hint) {
-        voiceEnergyRef.current = Math.min(1, 0.55 + Math.min(0.45, hint.length * 0.03));
         setCoreState('listening', hint.slice(0, 120));
       }
       if (finalBufRef.current) {
@@ -767,7 +758,6 @@ export default function JarvisCoreHUD() {
     voiceActiveRef.current = true;
     setListening(true);
     setCoreState('listening');
-    voiceEnergyRef.current = 0.4;
     try { rec.start(); } catch {
       setListening(false);
       voiceActiveRef.current = false;
