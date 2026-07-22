@@ -8,7 +8,11 @@
 #   Dockerfile path:  Dockerfile
 #   Root Directory:   /   (روت monorepo — الزامی)
 #   Docker Build Stage: runtime   (اگر Dokploy stage می‌پرسد)
-#   Env / Build Arg:  SERVICE_ID=<id>   مثلاً dashboard-web
+#
+# مهم: Envهای Dokploy معمولاً فقط در runtime تزریق می‌شوند، نه build.
+# برای سرویس‌های غیر dashboard حتماً Build Arg بگذار:
+#   Advanced → Build Args → SERVICE_ID=<id>
+# اگر Build Arg خالی باشد، پیش‌فرض dashboard-web است.
 #
 # Local smoke:
 #   docker build --build-arg SERVICE_ID=dashboard-web -t aos-dashboard .
@@ -25,7 +29,9 @@ RUN apt-get update \
 
 COPY . .
 
-ARG SERVICE_ID
+# Default = dashboard-web so Dokploy works without Build Args for that app.
+# Other services: docker build --build-arg SERVICE_ID=gateway-api ...
+ARG SERVICE_ID=dashboard-web
 ENV SERVICE_ID=${SERVICE_ID}
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -33,7 +39,8 @@ ENV NPM_CONFIG_PRODUCTION=false
 # Headroom for Next.js / tsc on small Dokploy build hosts
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
-RUN test -n "$SERVICE_ID" || (echo "ERROR: SERVICE_ID build-arg/env is required" && exit 1)
+RUN echo "docker-build: SERVICE_ID=${SERVICE_ID}" \
+  && test -n "$SERVICE_ID" || (echo "ERROR: SERVICE_ID is empty" && exit 1)
 RUN pnpm install --frozen-lockfile
 RUN chmod +x scripts/nixpacks-build.sh scripts/nixpacks-start.sh \
   && bash scripts/nixpacks-build.sh
@@ -57,7 +64,8 @@ COPY --from=build --chown=aos:aos /app /app
 
 USER aos
 
-ARG SERVICE_ID
+# Re-declare so runtime image keeps the same default / build-arg value.
+ARG SERVICE_ID=dashboard-web
 ENV SERVICE_ID=${SERVICE_ID}
 
 EXPOSE 4100

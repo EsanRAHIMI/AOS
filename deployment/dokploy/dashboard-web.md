@@ -8,11 +8,15 @@
 | Repository | github.com/EsanRAHIMI/AOS |
 | Root directory | `/` (monorepo root — الزامی) |
 | Build Type | **Dockerfile** (نه Nixpacks) |
-| Dockerfile path | `Dockerfile` |
+| Dockerfile path | `deployment/docker/Dockerfile.dashboard-web` |
 | Docker stage | `runtime` (اگر Dokploy پرسید) |
 | Health check | `/` یا `/login` |
 
-## Environment (حداقل)
+> مسیر بالا `SERVICE_ID=dashboard-web` را در خود image می‌پزد.
+> Envهای Dokploy معمولاً فقط هنگام **اجرا** تزریق می‌شوند، نه هنگام build —
+> برای همین Build Arg لازم نیست اگر از این Dockerfile اختصاصی استفاده کنی.
+
+## Environment (runtime — حداقل)
 
 ```env
 NODE_ENV=production
@@ -29,14 +33,10 @@ DASHBOARD_ADMIN_EMAIL=
 DASHBOARD_ADMIN_PASSWORD_HASH=
 ```
 
-`SERVICE_ID=dashboard-web` هم برای **build** و هم برای **runtime** لازم است
-(Docker build-arg از همین env خوانده می‌شود).
-
 ## چرا Dockerfile؟
 
 Nixpacks روی cold build حدود ۸+ دقیقه فقط برای unpack کردن nixpkgs صرف می‌کند؛
-بعد `next build` روی هاست کوچک اغلب timeout یا OOM می‌شود. ایمیج رسمی
-`node:22-bookworm-slim` این هزینه را حذف می‌کند.
+بعد `next build` روی هاست کوچک اغلب timeout یا OOM می‌شود.
 
 ## Validation after deploy
 

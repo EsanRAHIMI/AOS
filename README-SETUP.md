@@ -1067,11 +1067,12 @@ LOG_LEVEL=info
 |---|---|
 | Root directory | `/` (روت monorepo) |
 | Build Type | **Dockerfile** |
-| Dockerfile | `Dockerfile` |
-| Env الزامی | `SERVICE_ID=dashboard-web` |
+| Dockerfile | `deployment/docker/Dockerfile.dashboard-web` |
+| Env الزامی (runtime) | `SERVICE_ID=dashboard-web` |
 
 > Nixpacks را برای این سرویس استفاده نکن — cold build فقط برای nixpkgs حدود ۸ دقیقه
-> طول می‌کشد و اغلب fail/timeout می‌شود.
+> طول می‌کشد و اغلب fail/timeout می‌شود. Envهای Dokploy در build تزریق نمی‌شوند؛
+> برای همین Dockerfile اختصاصی بالا `SERVICE_ID` را bake می‌کند.
 
 **Environment**
 

@@ -24,10 +24,11 @@ agent-transcripts
 .tmp
 .cache
 
-# Keep deployment/dokploy markdown out of image; env examples stay ignored via .env.*
+# Keep dokploy markdown out of image; keep deployment/docker Dockerfiles
 deployment/dokploy
 deployment/env
-
+!deployment/docker
+!deployment/docker/**
 # Tests (do not exclude source folders named like "test" under src)
 **/*.test.ts
 **/*.test.tsx
