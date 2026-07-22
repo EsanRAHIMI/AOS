@@ -3,11 +3,8 @@
  * Jarvis Core HUD — the living presence stage for /jarvis.
  *
  * DESIGN LOCK (shape / structure — do not redesign without an explicit ask):
- * Center presence is Gargantua-style: continuous accretion disk through the
- * event horizon, far/near lens wraps, vertical black sphere silhouette,
- * horizontal black equatorial ellipse nested inside that sphere, photon ring,
- * left/right contact sparks. Outer stage: neural mesh + concept threads +
- * telemetry corners + command bar. No decorative blue HUD rings / ambient discs.
+ * Center presence is a real WebGL Gargantua (sphere + accretion disk + orbit).
+ * Outer stage: neural mesh + concept threads + telemetry + command bar.
  *
  * Motion is continuous — trailing glow, micro-pulses, resting heartbeat.
  * The command line is wired to the real turn pipeline; no fake replies.
@@ -19,7 +16,8 @@ import {
   listSessionsAction, createSessionAction, sendTurnAction,
   jarvisTelemetryAction, type JarvisTelemetryView,
 } from './actions';
-import { drawGargantua, luxPaletteFromAccent } from './drawGargantua';
+import { luxPaletteFromAccent } from './drawGargantua';
+import { createGargantua3D, type Gargantua3D } from './gargantua3d';
 import { UtteranceGate } from '@/lib/utteranceGate';
 import { dirProps } from '@/lib/rtl';
 
@@ -143,6 +141,7 @@ function TelemCell({
 
 export default function JarvisCoreHUD() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<CoreState>('idle');
   const targetColorRef = useRef(STATE_COLOR.idle);
   const currentColorRef = useRef({ core: [...STATE_COLOR.idle.core] as RGB, ring: [...STATE_COLOR.idle.ring] as RGB });
@@ -276,7 +275,8 @@ export default function JarvisCoreHUD() {
   // the soft-fade tax that made desktop feel laggy and blurred.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const glCanvas = glCanvasRef.current;
+    if (!canvas || !glCanvas) return;
     const ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
     if (!ctx2d) return;
     const canvasEl: HTMLCanvasElement = canvas;
@@ -304,6 +304,12 @@ export default function JarvisCoreHUD() {
     let nextRippleAt = 0;
     let frozenAt = 0;
     let voiceEnergy = 0;
+    let gargantua: Gargantua3D | null = null;
+    try {
+      gargantua = createGargantua3D(glCanvas);
+    } catch {
+      gargantua = null;
+    }
 
     function isLive(): boolean {
       return document.visibilityState === 'visible' && document.hasFocus();
@@ -361,6 +367,7 @@ export default function JarvisCoreHUD() {
       canvasEl.style.width = `${w}px`;
       canvasEl.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      gargantua?.setSize(w, h, dpr);
     }
     resize();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => resize()) : null;
@@ -557,8 +564,8 @@ export default function JarvisCoreHUD() {
       }
 
       // Nodes — keep clear of the singularity so the void reads cleanly.
-      const bhR = coreRadius * 0.44;
-      const bhKeepout = bhR * 1.55;
+      const bhR = coreRadius * 0.252;
+      const bhKeepout = bhR * 4.0;
       for (let i = 0; i < projected.length; i += 1) {
         const p = projected[i];
         const dxn = p.x - cx, dyn = p.y - cy;
@@ -573,7 +580,12 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      drawGargantua(ctx, cx, cy, bhR, t, cur.core, { speak: speakE });
+      // Raymarched singularity — sized to the old HUD footprint (not fullscreen).
+      if (gargantua) {
+        gargantua.setViewRadius(bhR);
+        gargantua.setSpeak(speakE);
+        gargantua.tick(t);
+      }
 
       raf = requestAnimationFrame(frame);
     }
@@ -590,6 +602,7 @@ export default function JarvisCoreHUD() {
     return () => {
       freeze();
       clearInterval(syncTimer);
+      gargantua?.dispose();
       window.removeEventListener('focus', onPresence);
       window.removeEventListener('blur', onPresence);
       document.removeEventListener('visibilitychange', onPresence);
@@ -768,6 +781,7 @@ export default function JarvisCoreHUD() {
   return (
     <div className="jarvis-live-stage" {...dirProps(caption)}>
       <canvas ref={canvasRef} className="jarvis-live-canvas" />
+      <canvas ref={glCanvasRef} className="jarvis-gl-canvas" aria-label="سیاه‌چاله سه‌بعدی" />
       <div className="jarvis-telem" aria-label="system telemetry">
         <TelemCell slot="mode" label="MODE" cell={telem?.mode} />
         <TelemCell slot="loop" label="LOOP" cell={telem?.loop} />

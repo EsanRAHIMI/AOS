@@ -40,6 +40,8 @@ export type GargantuaPaint = {
   accent: RGB;
   tilt: number;
   yScale: number;
+  /** Vertical squash for lensed far-disk wraps (follows view pitch). */
+  wrapScale: number;
   outer: number;
   sweep: number;
   /** 0..1 — user voice / mic (inhale, rim, contact) */
@@ -49,7 +51,20 @@ export type GargantuaPaint = {
 };
 
 /** Presence drive for singularity — not mesh spin. */
-export type PresenceDrive = { listen?: number; speak?: number };
+export type PresenceDrive = {
+  listen?: number;
+  speak?: number;
+  /**
+   * Whole-object orbit (applied AFTER the locked silhouette is painted).
+   * yaw/pitch rotate+tip the black hole and disk together — never split them.
+   */
+  yaw?: number;
+  pitch?: number;
+};
+
+/** Neutral orbit — identity view transform (cinematic lock unchanged). */
+export const GARGANTUA_DEFAULT_YAW = 0;
+export const GARGANTUA_DEFAULT_PITCH = 0;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -62,8 +77,8 @@ function mixRgb(a: RGB, b: RGB, t: number): RGB {
 }
 
 /**
- * Accretion-disk gold family with stellar outer limbs (gold → orange → red).
- * Base orbital hues stay dominant; accent only nudges temperature slightly.
+ * Accretion palette closer to Interstellar / EHT-style disk:
+ * white-hot → gold → fiery orange → deep red → magenta fringe.
  */
 export function luxPaletteFromAccent(accent: RGB): LuxPalette & {
   pearl: RGB;
@@ -72,14 +87,15 @@ export function luxPaletteFromAccent(accent: RGB): LuxPalette & {
   gilt: RGB;
   orange: RGB;
   scarlet: RGB;
+  magenta: RGB;
 } {
-  // Warmer stellar accretion: cream → gold → amber → orange → scarlet
-  const hot = mixRgb([255, 232, 198], accent, 0.06);
-  const gold = mixRgb([248, 176, 68], accent, 0.08);
-  const amber = mixRgb([236, 132, 36], accent, 0.06);
-  const orange = mixRgb([255, 98, 28], accent, 0.05);
-  const scarlet = mixRgb([206, 36, 18], accent, 0.04);
-  const ember = mixRgb([138, 24, 12], accent, 0.05);
+  const hot = mixRgb([255, 248, 230], accent, 0.04);
+  const gold = mixRgb([255, 190, 88], accent, 0.06);
+  const amber = mixRgb([242, 128, 36], accent, 0.05);
+  const orange = mixRgb([230, 86, 28], accent, 0.04);
+  const scarlet = mixRgb([188, 42, 28], accent, 0.04);
+  const ember = mixRgb([110, 28, 28], accent, 0.04);
+  const magenta = mixRgb([92, 28, 78], accent, 0.03);
   return {
     hot,
     gold,
@@ -87,96 +103,123 @@ export function luxPaletteFromAccent(accent: RGB): LuxPalette & {
     ember,
     orange,
     scarlet,
+    magenta,
     pearl: hot,
     steel: gold,
     ink: ember,
-    gilt: mixRgb(gold, amber, 0.4),
+    gilt: mixRgb(hot, gold, 0.35),
   };
 }
 
 function paintPlane(g: GargantuaPaint, alphaMul: number): void {
   const { ctx, R, hot, gold, amber, ember, outer } = g;
-  const orange: RGB = mixRgb(amber, [255, 108, 28], 0.55);
-  const scarlet: RGB = mixRgb(ember, [210, 36, 18], 0.45);
+  const orange: RGB = mixRgb(amber, [255, 110, 40], 0.4);
+  const scarlet: RGB = mixRgb(ember, [200, 55, 40], 0.45);
+  const magenta: RGB = mixRgb(ember, [130, 40, 115], 0.5);
 
-  // Inner hot → mid gold → outer stellar orange/red rings
-  const rad = ctx.createRadialGradient(0, 0, 0, 0, 0, outer);
-  rad.addColorStop(0, rgba(hot, 0.42 * alphaMul));
-  rad.addColorStop(0.14, rgba(gold, 0.58 * alphaMul));
-  rad.addColorStop(0.36, rgba(amber, 0.44 * alphaMul));
-  rad.addColorStop(0.58, rgba(orange, 0.4 * alphaMul));
-  rad.addColorStop(0.78, rgba(scarlet, 0.32 * alphaMul));
-  rad.addColorStop(0.9, rgba(ember, 0.16 * alphaMul));
-  rad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = rad;
+  // Compact disk: most mass hugs the hole; fringe dies quickly (smaller diameter).
+  const body = ctx.createRadialGradient(0, 0, R * 0.98, 0, 0, outer);
+  body.addColorStop(0, rgba(hot, 0.82 * alphaMul));
+  body.addColorStop(0.12, rgba(gold, 0.78 * alphaMul));
+  body.addColorStop(0.38, rgba(orange, 0.55 * alphaMul));
+  body.addColorStop(0.62, rgba(scarlet, 0.32 * alphaMul));
+  body.addColorStop(0.82, rgba(magenta, 0.14 * alphaMul));
+  body.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = body;
   ctx.beginPath();
   ctx.arc(0, 0, outer, 0, Math.PI * 2);
   ctx.fill();
 
-  // Doppler: approaching hotter gold, receding scarlet
-  const wash = ctx.createLinearGradient(-outer, 0, outer, 0);
-  wash.addColorStop(0, rgba(scarlet, 0.22));
-  wash.addColorStop(0.2, rgba(orange, 0.42));
-  wash.addColorStop(0.48, rgba(hot, 0.8));
-  wash.addColorStop(0.7, rgba(gold, 0.48));
-  wash.addColorStop(0.88, rgba(orange, 0.28));
-  wash.addColorStop(1, rgba(ember, 0.14));
-  ctx.globalCompositeOperation = 'screen';
-  ctx.fillStyle = wash;
-  ctx.globalAlpha = 0.4 * alphaMul;
+  // Dense inner sheet — brightest / fattest luminous zone near ISCO
+  const inner = ctx.createRadialGradient(0, 0, R * 0.98, 0, 0, R * 1.55);
+  inner.addColorStop(0, rgba(hot, 0.75 * alphaMul));
+  inner.addColorStop(0.35, rgba(gold, 0.7 * alphaMul));
+  inner.addColorStop(0.7, rgba(orange, 0.45 * alphaMul));
+  inner.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = inner;
   ctx.beginPath();
-  ctx.arc(0, 0, outer * 0.94, 0, Math.PI * 2);
+  ctx.arc(0, 0, R * 1.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Doppler: left approaching white-hot, right receding red
+  const wash = ctx.createLinearGradient(-outer, 0, outer, 0);
+  wash.addColorStop(0, rgba(scarlet, 0.35));
+  wash.addColorStop(0.25, rgba(orange, 0.5));
+  wash.addColorStop(0.48, rgba(hot, 0.95));
+  wash.addColorStop(0.72, rgba(gold, 0.45));
+  wash.addColorStop(1, rgba(magenta, 0.18));
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = 0.4 * alphaMul;
+  ctx.fillStyle = wash;
+  ctx.beginPath();
+  ctx.arc(0, 0, outer * 0.9, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
 
-  // Inner bright gold layer — just outside the horizon, a bit more luminous
-  const innerGold = mixRgb(hot, gold, 0.35);
-  const inner = ctx.createRadialGradient(0, 0, R * 0.92, 0, 0, R * 1.28);
-  inner.addColorStop(0, 'rgba(0,0,0,0)');
-  inner.addColorStop(0.35, rgba(innerGold, 0.55 * alphaMul));
-  inner.addColorStop(0.55, rgba(hot, 0.72 * alphaMul));
-  inner.addColorStop(0.78, rgba(gold, 0.38 * alphaMul));
-  inner.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = inner;
+  // Soft mid lanes (stay inside compact outer)
+  const lanes: Array<{ r: number; w: number; c: RGB; a: number }> = [
+    { r: R * 1.18, w: R * 0.28, c: gold, a: 0.22 * alphaMul },
+    { r: R * 1.4, w: R * 0.22, c: orange, a: 0.16 * alphaMul },
+    { r: R * 1.65, w: R * 0.14, c: scarlet, a: 0.12 * alphaMul },
+  ];
+  for (const lane of lanes) {
+    ctx.strokeStyle = rgba(lane.c, lane.a);
+    ctx.lineWidth = lane.w;
+    ctx.beginPath();
+    ctx.arc(0, 0, lane.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Soft inner limb glow (no hard white stroke — those become chalky ellipses after yScale)
+  const limb = ctx.createRadialGradient(0, 0, R * 0.98, 0, 0, R * 1.22);
+  limb.addColorStop(0, 'rgba(0,0,0,0)');
+  limb.addColorStop(0.35, rgba(gold, 0.35 * alphaMul));
+  limb.addColorStop(0.55, rgba(mixRgb(hot, gold, 0.4), 0.42 * alphaMul));
+  limb.addColorStop(0.75, rgba(orange, 0.2 * alphaMul));
+  limb.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = limb;
   ctx.beginPath();
-  ctx.arc(0, 0, R * 1.28, 0, Math.PI * 2);
+  ctx.arc(0, 0, R * 1.22, 0, Math.PI * 2);
   ctx.fill();
+}
 
-  ctx.strokeStyle = rgba(hot, 0.55 * alphaMul);
-  ctx.lineWidth = R * 0.14;
-  ctx.beginPath();
-  ctx.arc(0, 0, R * 1.08, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Second inner gold ring — brighter, nested just outside the first
-  const gilt = mixRgb(hot, [255, 220, 160], 0.45);
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.strokeStyle = rgba(gilt, 0.7 * alphaMul);
-  ctx.lineWidth = R * 0.09;
-  ctx.beginPath();
-  ctx.arc(0, 0, R * 1.22, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = rgba(hot, 0.45 * alphaMul);
-  ctx.lineWidth = R * 0.045;
-  ctx.beginPath();
-  ctx.arc(0, 0, R * 1.22, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.globalCompositeOperation = 'source-over';
-
-  // Explicit outer orbital rings — star-like red / orange / gold
-  const rings: Array<{ r: number; c: RGB; a: number; w: number }> = [
-    { r: R * 1.55, c: gold, a: 0.35 * alphaMul, w: R * 0.1 },
-    { r: R * 1.9, c: orange, a: 0.42 * alphaMul, w: R * 0.12 },
-    { r: R * 2.2, c: scarlet, a: 0.32 * alphaMul, w: R * 0.14 },
+/**
+ * Detached dark scarlet / magenta / violet fringe rings just outside the disk.
+ * Tight spacing + uneven thickness so they read as natural spectroscopic layers.
+ */
+function paintDetachedOuterRings(g: GargantuaPaint, alphaMul: number): void {
+  const { ctx, R, ember, outer } = g;
+  const deepScarlet: RGB = mixRgb(ember, [150, 28, 36], 0.55);
+  const wine: RGB = mixRgb(ember, [110, 24, 70], 0.5);
+  const magenta: RGB = [95, 28, 105];
+  const violet: RGB = [42, 14, 68];
+  // Close to disk edge, irregular gaps & weights (not evenly spaced bullseye)
+  const rings: Array<{ r: number; c: RGB; a: number; w: number; glow: number; glowW: number }> = [
+    { r: outer * 1.035, c: deepScarlet, a: 0.48 * alphaMul, w: Math.max(1.4, R * 0.038), glow: 0.16, glowW: 0.055 },
+    { r: outer * 1.1, c: wine, a: 0.34 * alphaMul, w: Math.max(0.85, R * 0.016), glow: 0.1, glowW: 0.035 },
+    { r: outer * 1.175, c: magenta, a: 0.4 * alphaMul, w: Math.max(1.2, R * 0.028), glow: 0.12, glowW: 0.045 },
+    { r: outer * 1.255, c: violet, a: 0.28 * alphaMul, w: Math.max(0.55, R * 0.009), glow: 0.07, glowW: 0.028 },
   ];
   for (const ring of rings) {
-    const track = ctx.createLinearGradient(-outer, 0, outer, 0);
-    track.addColorStop(0, 'rgba(0,0,0,0)');
+    const hw = R * ring.glowW;
+    const soft = ctx.createRadialGradient(0, 0, Math.max(1, ring.r - hw), 0, 0, ring.r + hw);
+    soft.addColorStop(0, 'rgba(0,0,0,0)');
+    soft.addColorStop(0.4, rgba(ring.c, ring.glow * 0.55 * alphaMul));
+    soft.addColorStop(0.5, rgba(ring.c, ring.glow * alphaMul));
+    soft.addColorStop(0.6, rgba(ring.c, ring.glow * 0.55 * alphaMul));
+    soft.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = soft;
+    ctx.beginPath();
+    ctx.arc(0, 0, ring.r + hw, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Slight Doppler fade so rings don't look perfectly uniform
+    const track = ctx.createLinearGradient(-ring.r, 0, ring.r, 0);
+    track.addColorStop(0, rgba(ring.c, ring.a * 0.55));
     track.addColorStop(0.35, rgba(ring.c, ring.a));
-    track.addColorStop(0.5, rgba(hot, ring.a * 0.7));
-    track.addColorStop(0.65, rgba(ring.c, ring.a));
-    track.addColorStop(1, 'rgba(0,0,0,0)');
+    track.addColorStop(0.65, rgba(ring.c, ring.a * 0.85));
+    track.addColorStop(1, rgba(ring.c, ring.a * 0.45));
     ctx.strokeStyle = track;
     ctx.lineWidth = ring.w;
     ctx.beginPath();
@@ -212,7 +255,7 @@ function paintHorizonGoldRing(g: GargantuaPaint): void {
   const soft = mixRgb(gold, gilt, 0.5);
   const amp = 1 + speak * 0.08;
 
-  // Several milder luminous shells, stepped inward
+  // v1 shells — stepped inward gold glow
   const shells: Array<{ mid: number; half: number; peak: number }> = [
     { mid: 0.9, half: 0.045, peak: 0.14 * amp },
     { mid: 0.82, half: 0.05, peak: 0.16 * amp },
@@ -234,7 +277,7 @@ function paintHorizonGoldRing(g: GargantuaPaint): void {
     ctx.fill();
   }
 
-  // Wide bright layer — soft gradient falloff both inward and outward
+  // Wide bright layer — same soft falloff as v1
   const mid = R * 0.88;
   const half = R * 0.14;
   const rIn = mid - half;
@@ -288,9 +331,11 @@ export function prepareGargantuaV2(
     amber,
     ember,
     accent,
-    tilt: -0.08,
-    yScale: 0.2 * thicknessBreath,
-    outer: R * 2.35,
+    // Locked cinematic pose — orbit is a WHOLE-object transform in drawGargantuaV2.
+    tilt: -0.05,
+    yScale: 0.48 * thicknessBreath,
+    wrapScale: 0.24,
+    outer: R * 1.95,
     sweep: (t * sweepRate) % (Math.PI * 2),
     listen: 0,
     speak,
@@ -301,12 +346,12 @@ export const gargantuaV2Parts = {
   bloom(g: GargantuaPaint): void {
     const { ctx, cx, cy, R, gold, amber, ember } = g;
     const orange = mixRgb(amber, [255, 108, 28], 0.5);
-    // Quiet ambient bloom only — never explode with speak.
-    const bloom = ctx.createRadialGradient(cx, cy, R * 0.3, cx, cy, R * 3.2);
-    bloom.addColorStop(0, rgba(gold, 0.1));
-    bloom.addColorStop(0.3, rgba(amber, 0.07));
-    bloom.addColorStop(0.55, rgba(orange, 0.05));
-    bloom.addColorStop(0.78, rgba(ember, 0.04));
+    const magenta = mixRgb(ember, [100, 30, 90], 0.4);
+    const bloom = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 3.2);
+    bloom.addColorStop(0, rgba(gold, 0.08));
+    bloom.addColorStop(0.35, rgba(orange, 0.05));
+    bloom.addColorStop(0.6, rgba(magenta, 0.035));
+    bloom.addColorStop(0.82, rgba(ember, 0.02));
     bloom.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = bloom;
     ctx.beginPath();
@@ -316,60 +361,78 @@ export const gargantuaV2Parts = {
 
   fullDisk(g: GargantuaPaint): void {
     const { ctx, cx, cy, R, hot, gold, amber, tilt, yScale, sweep, speak } = g;
+    const orange = mixRgb(amber, [255, 110, 40], 0.4);
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(tilt);
     ctx.scale(1, yScale);
     paintPlane(g, 1);
-    // Extra orbital tracks — innermost gold is brighter; more spin while speaking.
-    const tracks: Array<{ r: number; w: number; a: number; col: RGB }> = [
-      { r: R * 1.06, w: R * 0.11, a: 0.48 + speak * 0.22, col: hot },
-      { r: R * 1.22, w: R * 0.1, a: 0.58 + speak * 0.2, col: mixRgb(hot, [255, 230, 180], 0.4) },
-      { r: R * 1.42, w: R * 0.08, a: 0.28 + speak * 0.2, col: gold },
-      { r: R * 1.55, w: R * 0.12, a: 0.28 + speak * 0.25, col: mixRgb(hot, amber, 0.4) },
-      { r: R * 1.9, w: R * 0.1, a: 0.2 + speak * 0.22, col: amber },
-      { r: R * 2.15, w: R * 0.09, a: 0.14 + speak * 0.2, col: mixRgb(amber, [210, 36, 18], 0.45) },
-    ];
-    for (const tr of tracks) {
-      const span = 0.35 + speak * 0.55;
-      ctx.strokeStyle = rgba(tr.col, tr.a);
-      ctx.lineWidth = tr.w;
-      ctx.beginPath();
-      ctx.arc(0, 0, tr.r, sweep - span * 0.5, sweep + span * 0.5);
-      ctx.stroke();
-      if (speak > 0.05) {
-        ctx.strokeStyle = rgba(tr.col, tr.a * 0.55);
-        ctx.beginPath();
-        ctx.arc(0, 0, tr.r, sweep + Math.PI - span * 0.4, sweep + Math.PI + span * 0.4);
-        ctx.stroke();
-      }
-    }
+    paintDetachedOuterRings(g, 1);
+
+    // Extra vertical bulk near the hole — soft fill only (no chalky stroke ellipse)
+    ctx.save();
+    ctx.scale(1, 1.55);
+    ctx.globalCompositeOperation = 'screen';
+    const fat = ctx.createRadialGradient(0, 0, R * 0.98, 0, 0, R * 1.4);
+    fat.addColorStop(0, 'rgba(0,0,0,0)');
+    fat.addColorStop(0.25, rgba(gold, 0.32));
+    fat.addColorStop(0.5, rgba(mixRgb(hot, gold, 0.45), 0.38));
+    fat.addColorStop(0.78, rgba(orange, 0.16));
+    fat.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = fat;
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = rgba(mixRgb(gold, orange, 0.35), 0.18 + speak * 0.2);
+    ctx.lineWidth = R * (0.4 + speak * 0.15);
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 1.25, sweep - 0.5, sweep + 0.5);
+    ctx.stroke();
+    ctx.strokeStyle = rgba(orange, 0.12 + speak * 0.1);
+    ctx.lineWidth = R * 0.24;
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 1.55, sweep + 0.9, sweep + 1.65);
+    ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
   },
 
   lensWraps(g: GargantuaPaint): void {
-    const { ctx, cx, cy, R, hot, gold, amber, tilt, speak } = g;
-    const orange = mixRgb(amber, [255, 108, 28], 0.55 + speak * 0.2);
+    const { ctx, cx, cy, R, hot, gold, amber, tilt, speak, wrapScale } = g;
+    const orange = mixRgb(amber, [255, 110, 40], 0.45);
+    const scarlet = mixRgb(amber, [200, 55, 40], 0.4);
+    const magenta: RGB = [120, 40, 105];
+    // Compact wraps — stay close to the hole like the reference framing
+    const sheets: Array<{ y: number; r: number; w: number; a0: number; a1: number; cols: [RGB, RGB, RGB]; a: number }> = [
+      { y: -0.22, r: 1.28, w: 0.95, a0: 0.14, a1: 0.86, cols: [scarlet, hot, gold], a: 0.58 },
+      { y: -0.12, r: 1.48, w: 0.7, a0: 0.16, a1: 0.84, cols: [orange, gold, scarlet], a: 0.4 },
+      { y: -0.04, r: 1.68, w: 0.35, a0: 0.2, a1: 0.8, cols: [magenta, scarlet, orange], a: 0.24 },
+      { y: 0.38, r: 1.32, w: 0.7, a0: 1.14, a1: 1.86, cols: [orange, gold, scarlet], a: 0.34 },
+      { y: 0.5, r: 1.52, w: 0.4, a0: 1.16, a1: 1.84, cols: [scarlet, magenta, orange], a: 0.22 },
+    ];
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(tilt);
-    ctx.scale(1, 0.12);
-    const wrap = ctx.createLinearGradient(-R * 2.0, 0, R * 2.0, 0);
-    wrap.addColorStop(0, 'rgba(0,0,0,0)');
-    wrap.addColorStop(0.35, rgba(orange, 0.28 + speak * 0.08));
-    wrap.addColorStop(0.5, rgba(mixRgb(hot, amber, speak * 0.4), 0.5));
-    wrap.addColorStop(0.65, rgba(gold, 0.35));
-    wrap.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.strokeStyle = wrap;
-    ctx.lineWidth = R * 0.52;
-    ctx.beginPath();
-    ctx.arc(0, -R * 0.35, R * 1.75, Math.PI * 0.14, Math.PI * 0.86);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.strokeStyle = rgba(mixRgb(orange, amber, 0.4), 0.26 + speak * 0.08);
-    ctx.lineWidth = R * 0.34;
-    ctx.arc(0, R * 0.45, R * 1.6, Math.PI * 1.14, Math.PI * 1.86);
-    ctx.stroke();
+    ctx.scale(1, wrapScale);
+    for (const s of sheets) {
+      const grad = ctx.createLinearGradient(-R * 1.9, 0, R * 1.9, 0);
+      const a = s.a + speak * 0.08;
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(0.28, rgba(s.cols[0], a * 0.55));
+      grad.addColorStop(0.5, rgba(s.cols[1], a));
+      grad.addColorStop(0.72, rgba(s.cols[2], a * 0.55));
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = R * s.w;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, R * s.y, R * s.r, Math.PI * s.a0, Math.PI * s.a1);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
     ctx.restore();
   },
 
@@ -393,25 +456,30 @@ export const gargantuaV2Parts = {
     const { ctx, cx, cy, R, hot, gold, amber, tilt, yScale, outer } = g;
     ctx.save();
     ctx.beginPath();
-    const band = R * yScale * 1.65;
-    ctx.rect(cx - outer, cy - band, outer * 2, band * 2 + R * 0.28);
+    const band = R * yScale * 2.4;
+    const haloReach = outer * 1.75;
+    ctx.rect(cx - haloReach, cy - band, haloReach * 2, band * 2 + R * 0.35);
     ctx.clip();
     ctx.translate(cx, cy);
     ctx.rotate(tilt);
     ctx.scale(1, yScale);
     paintPlane(g, 1.0);
-    // Steady contact — no luminous explosion
-    const contact = ctx.createRadialGradient(0, 0, R * 0.55, 0, 0, R * 1.35);
+    paintDetachedOuterRings(g, 0.95);
+    // Fat contact limb where the thick inner disk crosses the silhouette
+    ctx.save();
+    ctx.scale(1, 1.55);
+    const contact = ctx.createRadialGradient(0, 0, R * 0.55, 0, 0, R * 1.4);
     contact.addColorStop(0, 'rgba(0,0,0,0)');
-    contact.addColorStop(0.42, rgba(hot, 0.48));
-    contact.addColorStop(0.68, rgba(gold, 0.32));
-    contact.addColorStop(0.88, rgba(amber, 0.14));
+    contact.addColorStop(0.35, rgba(gold, 0.38));
+    contact.addColorStop(0.62, rgba(mixRgb(hot, gold, 0.4), 0.28));
+    contact.addColorStop(0.85, rgba(amber, 0.12));
     contact.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = contact;
     ctx.beginPath();
-    ctx.arc(0, 0, R * 1.35, 0, Math.PI * 2);
+    ctx.arc(0, 0, R * 1.4, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
   },
@@ -435,7 +503,7 @@ export const gargantuaV2Parts = {
     const { ctx, cx, cy, R, tilt } = g;
     ctx.beginPath();
     ctx.fillStyle = '#000000';
-    ctx.ellipse(cx, cy, R * 0.96, R * 0.26, tilt, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, R * 0.96, R * 0.38, tilt, 0, Math.PI * 2);
     ctx.fill();
     // Re-apply after punches so the soft inward limb survives the silhouette rebuild.
     paintInwardHorizonLimb(g);
@@ -444,20 +512,22 @@ export const gargantuaV2Parts = {
 
   photonRing(g: GargantuaPaint): void {
     const { ctx, cx, cy, R, hot, gold, amber, speak } = g;
-    const scarlet = mixRgb(amber, [255, 36, 12], 0.65 + speak * 0.2);
-    const rim = mixRgb(mixRgb(hot, gold, 0.2), scarlet, 0.7 + speak * 0.15);
-
+    // Soft photon limb — gradient annulus, no hard chalk stroke
+    const ring = ctx.createRadialGradient(cx, cy, R * 0.98, cx, cy, R * 1.12);
+    ring.addColorStop(0, 'rgba(0,0,0,0)');
+    ring.addColorStop(0.35, rgba(gold, 0.28));
+    ring.addColorStop(0.55, rgba(mixRgb(hot, gold, 0.35), 0.42));
+    ring.addColorStop(0.75, rgba(mixRgb(gold, amber, 0.4), 0.22));
+    ring.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = ring;
     ctx.beginPath();
-    ctx.strokeStyle = rgba(rim, 0.88);
-    ctx.lineWidth = Math.max(1.4, R * 0.052);
-    ctx.arc(cx, cy, R * 1.03, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Thin red outer limb — hue shift only, no bloom blast
+    ctx.arc(cx, cy, R * 1.12, 0, Math.PI * 2);
+    ctx.fill();
+    const magenta = mixRgb(amber, [120, 40, 110], 0.55);
     ctx.beginPath();
-    ctx.strokeStyle = rgba(scarlet, 0.42 + speak * 0.12);
-    ctx.lineWidth = Math.max(1.6, R * 0.06);
-    ctx.arc(cx, cy, R * 1.05, 0, Math.PI * 2);
+    ctx.strokeStyle = rgba(magenta, 0.2 + speak * 0.06);
+    ctx.lineWidth = Math.max(1.0, R * 0.032);
+    ctx.arc(cx, cy, R * 1.08, 0, Math.PI * 2);
     ctx.stroke();
   },
 
@@ -500,7 +570,7 @@ export const GARGANTUA_V2_META = {
   id: 'gargantua-v2',
   forkedFrom: 'gargantua-v1@2026-07-21-inward-glow',
   description:
-    'Dev fork of locked v1 (orbital gold + multi-shell inward glow). Experiment here.',
+    'Dev fork — compact thick disk (fat near hole, short outer reach)',
   parts: GARGANTUA_V2_PART_ORDER,
 } as const;
 
@@ -514,7 +584,10 @@ export function drawGargantuaV2(
   presenceOrOnly?: PresenceDrive | readonly GargantuaV2PartId[],
   only?: readonly GargantuaV2PartId[],
 ): void {
-  const presence: PresenceDrive = Array.isArray(presenceOrOnly) ? {} : (presenceOrOnly ?? {});
+  let presence: PresenceDrive = {};
+  if (presenceOrOnly && !Array.isArray(presenceOrOnly)) {
+    presence = presenceOrOnly as PresenceDrive;
+  }
   const parts = Array.isArray(presenceOrOnly) ? presenceOrOnly : only;
   const g = prepareGargantuaV2(ctx, cx, cy, radius, t, accent, presence);
   const order = parts?.length

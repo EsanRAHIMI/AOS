@@ -264,8 +264,13 @@ button { font: inherit; }
   padding-bottom: var(--jarvis-bottom-safe);
   touch-action: manipulation;
 }
-.jarvis-live-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.jarvis-live-overlay { position: absolute; inset: 0; pointer-events: none; }
+.jarvis-live-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
+.jarvis-gl-canvas {
+  position: absolute; inset: 0; display: block; width: 100%; height: 100%;
+  pointer-events: auto; cursor: grab; touch-action: none; z-index: 1;
+}
+.jarvis-gl-canvas:active { cursor: grabbing; }
+.jarvis-live-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .jarvis-live-glyph {
   position: absolute; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 4px;
@@ -348,7 +353,7 @@ button { font: inherit; }
 }
 
 /* Corner telemetry — helmet-style, minimal, real values only */
-.jarvis-telem {
+  .jarvis-telem {
   position: absolute; inset: 0; z-index: 3; pointer-events: none;
 }
 .jarvis-telem-cell {

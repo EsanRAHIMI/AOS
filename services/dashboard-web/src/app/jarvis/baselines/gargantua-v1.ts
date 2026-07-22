@@ -518,7 +518,10 @@ export function drawGargantuaV1(
   presenceOrOnly?: PresenceDrive | readonly GargantuaV1PartId[],
   only?: readonly GargantuaV1PartId[],
 ): void {
-  const presence: PresenceDrive = Array.isArray(presenceOrOnly) ? {} : (presenceOrOnly ?? {});
+  let presence: PresenceDrive = {};
+  if (presenceOrOnly && !Array.isArray(presenceOrOnly)) {
+    presence = presenceOrOnly as PresenceDrive;
+  }
   const parts = Array.isArray(presenceOrOnly) ? presenceOrOnly : only;
   const g = prepareGargantuaV1(ctx, cx, cy, radius, t, accent, presence);
   const order = parts?.length

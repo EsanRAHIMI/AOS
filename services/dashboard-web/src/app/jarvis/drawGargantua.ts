@@ -11,6 +11,8 @@ export {
   GARGANTUA_V2_META,
   prepareGargantuaV2,
   luxPaletteFromAccent,
+  GARGANTUA_DEFAULT_PITCH,
+  GARGANTUA_DEFAULT_YAW,
   type GargantuaV2PartId,
   type PresenceDrive,
   type LuxPalette,
