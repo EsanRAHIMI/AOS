@@ -24,6 +24,7 @@ VALID_IDS=(
   voice-operator-agent
   code-operator-agent
   dashboard-web
+  aos-agent-runtime
 )
 
 ok=0
@@ -43,4 +44,10 @@ fi
 PKG="@factory/${SERVICE_ID}"
 echo "nixpacks-build: SERVICE_ID=$SERVICE_ID package=$PKG"
 
+export NEXT_TELEMETRY_DISABLED="${NEXT_TELEMETRY_DISABLED:-1}"
+# Prevent OOM kills on small Dokploy build VMs (Next.js + TypeScript)
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
+
 pnpm --filter "${PKG}..." run build
+
+echo "nixpacks-build: OK — ${PKG}"

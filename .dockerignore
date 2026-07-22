@@ -1,0 +1,39 @@
+# Keep Dokploy / Docker build context small and deterministic
+.git
+.github
+.cursor
+.vscode
+.idea
+**/.DS_Store
+
+# Local / generated
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+
+# Docs & non-runtime assets (not needed to build services)
+docs
+agent-transcripts
+*.log
+.tmp
+.cache
+
+# Keep deployment/dokploy markdown out of image; env examples stay ignored via .env.*
+deployment/dokploy
+deployment/env
+
+# Tests (do not exclude source folders named like "test" under src)
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/vitest.config.*
+services/*/test
+services/*/tests
+shared/test
+packages/*/test

@@ -1065,9 +1065,13 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/dashboard-web` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/dashboard-web... run build` |
-| Start | `pnpm --filter @factory/dashboard-web run start` |
+| Root directory | `/` (روت monorepo) |
+| Build Type | **Dockerfile** |
+| Dockerfile | `Dockerfile` |
+| Env الزامی | `SERVICE_ID=dashboard-web` |
+
+> Nixpacks را برای این سرویس استفاده نکن — cold build فقط برای nixpkgs حدود ۸ دقیقه
+> طول می‌کشد و اغلب fail/timeout می‌شود.
 
 **Environment**
 
@@ -1294,11 +1298,12 @@ cp .env.example .env && pnpm sync:env && pnpm dev:all
 ```
 
 **Dokploy**
-- Build path: `/` (روت monorepo)
-- `SERVICE_ID` در env هر Application
-- `nixpacks.toml` در روت → build/start خودکار با pnpm
+- Build Type: **Dockerfile** (فایل `Dockerfile` در روت) — Nixpacks فقط fallback
+- Build path / Root: `/` (روت monorepo)
+- `SERVICE_ID` در env هر Application (build + runtime)
 - `FACTORY_INTERNAL_TOKEN` یکسان در همه سرویس‌ها
 - نقشه سرویس‌ها: `docs/service-map.md`
+- راهنمای dashboard: `deployment/dokploy/dashboard-web.md`
 
 **Phase 10** — env جدید لازم نیست؛ فقط redeploy: `dashboard-web`، `gateway-api`، `orchestrator-agent`
 

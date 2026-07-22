@@ -24,16 +24,13 @@ diagnostics, checklists, and approvals.
 
 ## Creating a Service
 
-1. New Dokploy application from the monorepo.
-2. Set root directory to `services/<id>`.
-3. Build command:
-   `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/<id>... run build`
-4. Start command:
-   `pnpm --filter @factory/<id> run start`
-5. Set domain and port from `docs/service-map.md`.
-6. Fill env from `.env.example` and `deployment/env`.
-7. Set health check path `/health`.
-8. Deploy and verify all standard factory endpoints.
+1. New Dokploy application from the monorepo (**Root Directory = `/`**).
+2. **Build Type = Dockerfile**, Dockerfile path `Dockerfile` (preferred).
+   Nixpacks is fallback-only — cold nixpkgs bootstrap is very slow and often times out.
+3. Set env `SERVICE_ID=<id>` (required at build + runtime), plus domain/port from `docs/service-map.md`.
+4. Fill remaining env from `.env.example` and `deployment/env`.
+5. Set health check (`/health` for APIs; `/` or `/login` for `dashboard-web`).
+6. Deploy and verify.
 
 ## Calibration
 

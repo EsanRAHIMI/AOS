@@ -1,8 +1,12 @@
 # =============================================================================
-# Autonomous OS Kernel — Nixpacks (Dokploy)
+# Autonomous OS Kernel — Nixpacks (Dokploy) — FALLBACK ONLY
 # =============================================================================
 #
-# Dokploy settings (همه Applicationها یکسان):
+# ⚠ توصیهٔ اصلی: در Dokploy از Build Type = Dockerfile استفاده کن (فایل
+#   Dockerfile در روت). Nixpacks روی cold build حدود ۸+ دقیقه فقط برای
+#   unpack کردن nixpkgs صرف می‌کند و روی هاست‌های کوچک اغلب timeout/OOM می‌شود.
+#
+# اگر هنوز Nixpacks می‌مانی:
 #   • Repository build path / root:  /  (روت monorepo)
 #   • Root Directory:                /  (نه services/xxx)
 #   • Build Type:                    Nixpacks
@@ -35,15 +39,6 @@
 # 18. code-operator-agent      4122  code.simorx.com              @factory/code-operator-agent
 # 19. dashboard-web            4100  factory.simorx.com           @factory/dashboard-web
 #
-# نمونه env در Dokploy (file-asset-service):
-#   NODE_ENV=production
-#   FACTORY_ENV=production
-#   SERVICE_ID=file-asset-service
-#   SERVICE_NAME=File Asset Service
-#   SERVICE_DOMAIN=https://assets.simorx.com
-#   SERVICE_PORT=4112
-#   (+ FACTORY_INTERNAL_TOKEN, MONGODB_URI, ...)
-#
 # =============================================================================
 
 providers = ["node"]
@@ -51,6 +46,8 @@ providers = ["node"]
 [variables]
 NIXPACKS_NODE_VERSION = "22"
 NPM_CONFIG_PRODUCTION = "false"
+NEXT_TELEMETRY_DISABLED = "1"
+NODE_OPTIONS = "--max-old-space-size=4096"
 
 [phases.setup]
 nixPkgs = ["nodejs_22"]
