@@ -403,7 +403,8 @@ export default function JarvisCoreHUD() {
       ctx.fillRect(0, 0, w, h);
 
       const cx = w / 2;
-      const cy = h * (compact ? 0.42 : 0.48);
+      // Shared stage center for neural mesh + Gargantua (slightly above geometric mid for cmdbar).
+      const cy = h * (compact ? 0.42 : 0.46);
       const scale = Math.min(w, h);
       const breath = reducedMotion ? 1 : 1 + Math.sin(t * 0.55) * 0.015;
       const coreRadius = scale * (compact ? 0.18 : 0.15) * breath;
@@ -468,8 +469,8 @@ export default function JarvisCoreHUD() {
         const ay = cy + Math.sin(angle) * fieldRadius;
         const midx = cx + Math.cos(angle) * fieldRadius * 0.52 + Math.sin(t * 0.25 + angle) * 12;
         const midy = cy + Math.sin(angle) * fieldRadius * 0.52 + Math.cos(t * 0.25 + angle) * 12;
-        const startx = cx + Math.cos(angle) * coreRadius * 0.9;
-        const starty = cy + Math.sin(angle) * coreRadius * 0.9;
+        const startx = cx + Math.cos(angle) * coreRadius * 0.42;
+        const starty = cy + Math.sin(angle) * coreRadius * 0.42;
 
         ctx.strokeStyle = rgba(a.color, 0.08 + a.activity * 0.5);
         ctx.lineWidth = 0.9 + a.activity * 1.4;
@@ -495,8 +496,10 @@ export default function JarvisCoreHUD() {
       }
       anchorPosRef.current = positions;
 
-      // Neural mesh — steady slow orbit; voice never scales or flashes it.
-      const meshRadius = coreRadius * 0.98;
+      // Neural mesh — co-centered with Gargantua; hollow around the event horizon.
+      const bhR = coreRadius * 0.252;
+      const bhKeepout = bhR * 3.4;
+      const meshRadius = coreRadius * 1.02;
       const ry = t * 0.065;
       const rx = Math.sin(t * 0.05) * 0.16;
       const cosY = Math.cos(ry), sinY = Math.sin(ry);
@@ -564,8 +567,6 @@ export default function JarvisCoreHUD() {
       }
 
       // Nodes — keep clear of the singularity so the void reads cleanly.
-      const bhR = coreRadius * 0.252;
-      const bhKeepout = bhR * 4.0;
       for (let i = 0; i < projected.length; i += 1) {
         const p = projected[i];
         const dxn = p.x - cx, dyn = p.y - cy;
@@ -580,8 +581,9 @@ export default function JarvisCoreHUD() {
         ctx.fill();
       }
 
-      // Raymarched singularity — sized to the old HUD footprint (not fullscreen).
+      // Raymarched singularity — share the neural mesh stage center exactly.
       if (gargantua) {
+        gargantua.setCenter(cx, cy);
         gargantua.setViewRadius(bhR);
         gargantua.setSpeak(speakE);
         gargantua.tick(t);

@@ -9,6 +9,8 @@ import * as THREE from 'three';
 
 export type Gargantua3D = {
   setSize: (cssW: number, cssH: number, dpr: number) => void;
+  /** Stage center in CSS pixels (origin top-left), matching the 2D neural mesh. */
+  setCenter: (cssX: number, cssY: number) => void;
   setViewRadius: (cssPx: number) => void;
   setSpeak: (speak: number) => void;
   tick: (tSec: number) => void;
@@ -38,6 +40,7 @@ const FRAG = /* glsl */ `
 precision highp float;
 
 uniform vec2 uResolution;
+uniform vec2 uCenter;
 uniform float uTime;
 uniform float uSpeak;
 uniform float uRadiusPx;
@@ -204,7 +207,8 @@ void accumulateDisk(
 
 void main() {
   vec2 frag = gl_FragCoord.xy;
-  vec2 center = 0.5 * uResolution;
+  // uCenter is in gl_FragCoord space (origin bottom-left)
+  vec2 center = uCenter;
   vec2 d = frag - center;
 
   float plate = uRadiusPx * 6.8;
@@ -350,6 +354,7 @@ export function createGargantua3DV2(canvas: HTMLCanvasElement): Gargantua3D {
 
   const uniforms = {
     uResolution: { value: new THREE.Vector2(1, 1) },
+    uCenter: { value: new THREE.Vector2(0.5, 0.5) },
     uTime: { value: 0 },
     uSpeak: { value: 0 },
     uRadiusPx: { value: 80 },
@@ -429,11 +434,25 @@ export function createGargantua3DV2(canvas: HTMLCanvasElement): Gargantua3D {
   let viewRadius = 80;
   let disposed = false;
   let cssW = 1;
+  let cssH = 1;
+  let dprLocal = 1;
+  let centerCssX = 0.5;
+  let centerCssY = 0.5;
+
+  function syncCenter() {
+    // Canvas 2D: y from top. WebGL gl_FragCoord: y from bottom.
+    uniforms.uCenter.value.set(
+      centerCssX * dprLocal,
+      (cssH - centerCssY) * dprLocal,
+    );
+  }
 
   return {
     setSize(w, h, dpr) {
       if (disposed) return;
       cssW = w;
+      cssH = h;
+      dprLocal = dpr;
       const rw = Math.max(1, Math.floor(w * dpr));
       const rh = Math.max(1, Math.floor(h * dpr));
       renderer.setPixelRatio(1);
@@ -442,11 +461,21 @@ export function createGargantua3DV2(canvas: HTMLCanvasElement): Gargantua3D {
       canvas.style.height = `${h}px`;
       uniforms.uResolution.value.set(rw, rh);
       uniforms.uRadiusPx.value = viewRadius * dpr;
+      if (centerCssX <= 1 && centerCssY <= 1) {
+        centerCssX = w * 0.5;
+        centerCssY = h * 0.5;
+      }
+      syncCenter();
+    },
+    setCenter(cssX, cssY) {
+      if (disposed) return;
+      centerCssX = cssX;
+      centerCssY = cssY;
+      syncCenter();
     },
     setViewRadius(cssPx) {
       viewRadius = Math.max(24, cssPx);
-      const dpr = uniforms.uResolution.value.x / Math.max(1, cssW);
-      uniforms.uRadiusPx.value = viewRadius * dpr;
+      uniforms.uRadiusPx.value = viewRadius * dprLocal;
     },
     setSpeak(v) {
       speak = Math.max(0, Math.min(1, v));
