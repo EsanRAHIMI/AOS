@@ -1,0 +1,58 @@
+# Dokploy: aos-agent-runtime
+#
+# SERVICE_ID is baked at build-time — Dokploy Env is runtime-only, so Nixpacks
+# fails with: Missing SERVICE_ID — set it in Dokploy Environment Settings.
+#
+# Dokploy settings:
+#   Build Type:       Dockerfile  (نه Nixpacks)
+#   Dockerfile path:  deployment/docker/Dockerfile.aos-agent-runtime
+#   Root Directory:   /
+
+# syntax=docker/dockerfile:1
+
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@9.15.0 --activate
+
+COPY . .
+
+ENV SERVICE_ID=aos-agent-runtime
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NPM_CONFIG_PRODUCTION=false
+ENV NODE_OPTIONS=--max-old-space-size=4096
+
+RUN echo "docker-build: SERVICE_ID=${SERVICE_ID}" \
+  && pnpm install --frozen-lockfile \
+  && chmod +x scripts/nixpacks-build.sh scripts/nixpacks-start.sh \
+  && bash scripts/nixpacks-build.sh
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates tini \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@9.15.0 --activate \
+  && groupadd --system --gid 1001 aos \
+  && useradd --system --uid 1001 --gid aos --create-home aos
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV SERVICE_ID=aos-agent-runtime
+
+COPY --from=build --chown=aos:aos /app /app
+
+USER aos
+
+# Seven workers listen on their historical ports inside one process.
+EXPOSE 4103 4106 4107 4109 4110 4114 4115
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["bash", "scripts/nixpacks-start.sh"]
