@@ -33,6 +33,8 @@ export interface Projected {
 }
 
 const BASE_PX_PER_UNIT = 26;
+/** The zoom the board opens at — also the reference for `zoomScale`. */
+export const DEFAULT_ZOOM = -0.35;
 /** Focal distance in world units — larger = flatter, more orthographic feel. */
 const FOCAL = 46;
 const MIN_ZOOM = -3.2;
@@ -130,6 +132,13 @@ export class BoardCamera {
   /** 1 = the reference scale; shown as a percentage in the HUD. */
   get zoomFactor(): number {
     return Math.pow(2, this.view.zoom);
+  }
+
+  /** World scale relative to the default zoom — 1 at the opening view. The
+   *  singularity multiplies its radius by this so it shrinks and grows with
+   *  the board instead of swallowing the inner rings when zoomed out. */
+  get zoomScale(): number {
+    return Math.pow(2, this.view.zoom - DEFAULT_ZOOM);
   }
 
   get zoomRange(): { min: number; max: number } {

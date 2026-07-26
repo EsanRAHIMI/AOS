@@ -273,6 +273,10 @@ export default function JarvisCoreHUD() {
     } catch {
       gargantua = null;
     }
+    // If WebGL never came up, the (empty) GL canvas must not sit on top of the
+    // board swallowing pan/zoom/card clicks — its hit disc is only set while
+    // the frame loop runs.
+    if (!gargantua) glCanvas.style.pointerEvents = 'none';
 
     function isLive(): boolean {
       return document.visibilityState === 'visible' && document.hasFocus();

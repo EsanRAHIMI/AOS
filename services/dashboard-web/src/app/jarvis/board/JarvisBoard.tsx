@@ -425,8 +425,10 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       // Sort back-to-front so nearer cards overlap farther ones correctly.
       out.sort((p, q) => q.depth - p.depth);
 
-      // The parent keeps the singularity glued to the board's origin.
-      originRef.current?.({ x: origin.x, y: origin.y, scale: origin.scale });
+      // The parent keeps the singularity glued to the board's origin — and
+      // sized with the world (perspective × zoom-vs-default), so zooming out
+      // to see everything actually shrinks the black hole too.
+      originRef.current?.({ x: origin.x, y: origin.y, scale: origin.scale * cam.zoomScale });
 
       // DOM sync is throttled — 30fps of React state is plenty for text.
       if (now - syncAt > 33) {
@@ -475,7 +477,10 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
               {...(isSelf ? { 'data-card-fixed': 'true' } : {})}
               className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}`}
               style={{
-                transform: `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${s})`,
+                // The self nameplate hangs below the singularity (offset is
+                // inside the scaled transform, so it tracks the black hole as
+                // the board zooms); every other card sits on its own point.
+                transform: `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${s})${isSelf ? ' translateY(150px)' : ''}`,
                 opacity: Math.max(0.25, Math.min(1, scale * 1.15)),
                 borderColor: rgba(card.accent, 0.35 + card.activity * 0.4),
                 boxShadow: `0 0 ${12 + card.activity * 34}px ${rgba(card.accent, 0.1 + card.activity * 0.22)}`,

@@ -44,11 +44,22 @@ board/
 ```
 
 Nothing imports the black hole and the black hole imports nothing here. The
-board reports its projected origin through `onOriginChange`; `JarvisCoreHUD`
+board reports its projected origin through `onOriginChange` (with
+`scale = perspective × zoom-vs-default`, so the black hole shrinks when you
+zoom out to see the whole space and never swallows the inner rings); `JarvisCoreHUD`
 feeds that into `resolveJarvisEnsemble({ boardOrigin })`, so the singularity,
 the neural cage and the concept threads all travel and scale with the board as
 one organism. Omit `boardOrigin` and the stage renders exactly as it did
 before the board existed — that is the rollback path.
+
+**Layer order (fragile — read before editing CSS):** the stage paints
+`.jboard-canvas` → `.jarvis-live-canvas` → `.jarvis-gl-canvas` (z 1) →
+`.jboard-cards` (z 2) → telemetry (z 3) → caption (z 4) → `.jboard-hud` (z 5)
+→ `.jboard-panel` (z 6). The `.jboard` wrapper **must keep `z-index: auto` and
+full opacity**: giving it a numeric z-index (or any opacity < 1, filter, or
+transform) creates a stacking context that traps the cards and the zoom HUD
+*below* the Gargantua canvas — they vanish behind the black hole. Dimming is
+therefore applied to `.jboard-canvas`/`.jboard-cards`, never the wrapper.
 
 **Pointer arbitration (why the black hole still drags):** the GL canvas keeps
 its own `pointerdown/wheel/dblclick` handlers, but each frame the stage sets
