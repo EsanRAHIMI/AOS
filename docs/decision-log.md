@@ -2,6 +2,40 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-25 — CIN-2c: the Jarvis infinite board + black-hole restore point (D-183)
+
+Spec: `docs/cin-v2/jarvis-board.md`.
+
+- **Backup first, build second.** The owner's overhauled Gargantua was frozen
+  byte-exact as `baselines/gargantua3d-v3.ts` (identifiers renamed to `V3`,
+  body verified identical to the live v2 modulo the rename). `v1` and `v2` were
+  NOT touched — a frozen restore point must never be overwritten to reuse a
+  name. `baselines/README.md` now documents both baseline families and the
+  one-line restore for each.
+- **`/jarvis` becomes an infinite 3D board with the singularity at world
+  origin.** Five independent modules (model / camera / layout / synapses /
+  profile) + one server action + one DOM layer. The black hole and the board
+  import nothing from each other; they are coupled only by the projected
+  origin passed through `resolveJarvisEnsemble({ boardOrigin })`, which
+  defaults to the previous viewport-centred behaviour — that default IS the
+  rollback path.
+- **Orbital law:** ring distance encodes how personal a subject is
+  (self → personal → work → org → network → world). Semantic, not decorative,
+  and owner-reassignable, because only the owner knows what is personal to
+  them. Role presets (founder/operator/engineer/analyst) decide the defaults.
+- **Synapses are a readout, not an ornament:** axon thickness = structural
+  strength, packet rate = real record recency, activity jumps fire bursts. A
+  quiet system looks quiet; degraded sources produce no card at all (they are
+  listed as `degraded`) rather than a fabricated one.
+- **Pointer arbitration without touching the owner's shader file:** the GL
+  canvas keeps its own drag/wheel/dblclick handlers; the stage sets a
+  per-frame `clip-path` disc (1.35 × keepout, far wider than the drawn
+  horizon) so the black hole owns pointer events only over itself and the
+  board owns the rest. Zero edits to `gargantua3d-v2.ts`.
+- Verification: dashboard typecheck clean; the only edits to existing files
+  are five additive lines in `JarvisCoreHUD.tsx`, two optional fields in
+  `jarvisStage.ts`, one sidebar-free CSS block appended to `globals.css`.
+
 ## 2026-07-20 — CIN-2b live-demo gates G2/G10 PASS on owner machine; ops hardening (D-182)
 
 - **G2 + G10 verified live** (owner machine, real model + Atlas + Dokploy

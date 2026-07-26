@@ -1,0 +1,524 @@
+'use client';
+/**
+ * JarvisBoard — the infinite 3D operating board (CIN-2c).
+ *
+ * Layered deliberately, so nothing here can break the presence stage:
+ *   · a canvas painting the orbital rings and the LIVE SYNAPSES (axons +
+ *     travelling packets) between cards,
+ *   · absolutely-positioned DOM cards projected from world space each frame
+ *     (DOM keeps text crisp, selectable and accessible; the canvas keeps the
+ *     neural traffic cheap),
+ *   · the Gargantua singularity, which the parent stage draws at the board's
+ *     world origin — this component reports the projected origin back up via
+ *     `onOriginChange` instead of drawing anything at the centre itself.
+ *
+ * Interaction: drag to pan (infinite), wheel/pinch to zoom about the cursor,
+ * Alt+drag or right-drag to orbit, double-click a card to focus it, drag a
+ * card to hand-place it forever. Everything is owner-personalisable through
+ * boardProfile.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BoardCamera } from './boardCamera';
+import { layoutCards, driftOffset, type CardPlacement } from './boardLayout';
+import {
+  SCOPE_RING, BOARD_SCOPES,
+  type BoardCard, type BoardGraph, type BoardScope,
+} from './boardModel';
+import { SynapseTraffic, axonPoint } from './boardSynapses';
+import {
+  DEFAULT_PROFILE, ROLE_LABEL_FA, isSourceVisible, loadBoardProfile,
+  resolveScope, saveBoardProfile, type BoardProfile, type BoardRole,
+} from './boardProfile';
+import { loadBoardGraphAction } from './boardSources';
+
+const REFRESH_MS = 12_000;
+
+type ScreenCard = {
+  card: BoardCard;
+  x: number;
+  y: number;
+  scale: number;
+  depth: number;
+  visible: boolean;
+};
+
+function rgba(c: [number, number, number], a: number): string {
+  return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+}
+
+export interface JarvisBoardProps {
+  /** Reports the projected world origin + zoom so the parent can keep the
+   *  black hole locked to the centre of the board as it pans/zooms. */
+  onOriginChange?: (o: { x: number; y: number; scale: number }) => void;
+  /** Board dims the chrome while the owner is typing a command. */
+  dimmed?: boolean;
+}
+
+export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBoardProps) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cameraRef = useRef(new BoardCamera());
+  const trafficRef = useRef(new SynapseTraffic());
+  const graphRef = useRef<BoardGraph>({ cards: [], links: [], degraded: [], generatedAt: '' });
+  const placementsRef = useRef<Map<string, CardPlacement>>(new Map());
+  const profileRef = useRef<BoardProfile>(DEFAULT_PROFILE);
+  const originRef = useRef(onOriginChange);
+  originRef.current = onOriginChange;
+
+  const [profile, setProfileState] = useState<BoardProfile>(DEFAULT_PROFILE);
+  const [graph, setGraph] = useState<BoardGraph>(graphRef.current);
+  const [screen, setScreen] = useState<ScreenCard[]>([]);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const setProfile = useCallback((next: BoardProfile) => {
+    profileRef.current = next;
+    setProfileState(next);
+    saveBoardProfile(next);
+  }, []);
+
+  /* ------------------------------- profile ------------------------------- */
+  useEffect(() => {
+    const p = loadBoardProfile();
+    profileRef.current = p;
+    setProfileState(p);
+  }, []);
+
+  /* ------------------------------ live data ------------------------------ */
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const pull = async () => {
+      try {
+        const next = await loadBoardGraphAction();
+        if (!alive) return;
+        // Spike the synapses wherever a card's activity just jumped — the
+        // animation is a readout of real change, never a random shimmer.
+        const prev = new Map(graphRef.current.cards.map((c) => [c.id, c.activity]));
+        for (const c of next.cards) {
+          const before = prev.get(c.id);
+          if (before !== undefined && c.activity > before + 0.12) {
+            for (const l of next.links) {
+              if (l.from === c.id) trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: 3 });
+            }
+          }
+        }
+        graphRef.current = next;
+        setGraph(next);
+      } catch {
+        /* fail-soft: keep the last good graph on screen */
+      } finally {
+        if (alive) {
+          setLoading(false);
+          timer = setTimeout(pull, REFRESH_MS);
+        }
+      }
+    };
+    void pull();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, []);
+
+  /* --------------------- visible cards + placements ---------------------- */
+  const visibleCards = useMemo(() => {
+    return graph.cards
+      .filter((c) => c.id === 'self' || (isSourceVisible(profile, c.sourceId) && !profile.hiddenCards[c.id]))
+      .map((c) => (c.id === 'self' ? c : { ...c, scope: resolveScope(profile, c.sourceId, c.scope) }));
+  }, [graph.cards, profile]);
+
+  const visibleLinks = useMemo(() => {
+    const ids = new Set(visibleCards.map((c) => c.id));
+    return graph.links.filter((l) => ids.has(l.from) && ids.has(l.to));
+  }, [graph.links, visibleCards]);
+
+  useEffect(() => {
+    const placed = layoutCards(visibleCards.filter((c) => c.scope !== 'self'), profile.placements);
+    const map = new Map<string, CardPlacement>();
+    for (const p of placed) map.set(p.id, p);
+    map.set('self', { id: 'self', x: 0, y: 0, z: 0, r: 0, scope: 'self', manual: true });
+    placementsRef.current = map;
+  }, [visibleCards, profile.placements]);
+
+  /* ------------------------------ interaction ---------------------------- */
+  const dragRef = useRef<
+    | { mode: 'pan'; lastX: number; lastY: number }
+    | { mode: 'orbit'; lastX: number; lastY: number }
+    | { mode: 'card'; id: string; lastX: number; lastY: number; moved: boolean }
+    | null
+  >(null);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    const target = e.target as HTMLElement;
+    const cardEl = target.closest('[data-card-id]') as HTMLElement | null;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (cardEl && !cardEl.dataset.cardFixed) {
+      dragRef.current = { mode: 'card', id: cardEl.dataset.cardId!, lastX: e.clientX, lastY: e.clientY, moved: false };
+      return;
+    }
+    dragRef.current = e.altKey || e.button === 2
+      ? { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
+      : { mode: 'pan', lastX: e.clientX, lastY: e.clientY };
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.lastX;
+    const dy = e.clientY - d.lastY;
+    d.lastX = e.clientX;
+    d.lastY = e.clientY;
+    if (d.mode === 'pan') cameraRef.current.panByScreen(dx, dy);
+    else if (d.mode === 'orbit') cameraRef.current.orbitBy(dx * 0.004, -dy * 0.003);
+    else {
+      d.moved = d.moved || Math.abs(dx) + Math.abs(dy) > 2;
+      const cam = cameraRef.current;
+      const p = placementsRef.current.get(d.id);
+      if (p) {
+        // Screen delta → world delta, un-rotated by yaw and un-squashed by
+        // pitch so the card tracks the cursor at any camera angle.
+        const s = cam.pxPerUnit;
+        const cy = Math.cos(-cam.pose.yaw);
+        const sy = Math.sin(-cam.pose.yaw);
+        const wy = (dy / s) / Math.max(0.35, Math.cos(cam.pose.pitch));
+        const wx = dx / s;
+        p.x += wx * cy - wy * sy;
+        p.y += wx * sy + wy * cy;
+        p.manual = true;
+      }
+    }
+  }, []);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (d?.mode === 'card' && d.moved) {
+      const p = placementsRef.current.get(d.id);
+      if (p) {
+        const cur = profileRef.current;
+        setProfile({ ...cur, placements: { ...cur.placements, [d.id]: { x: p.x, y: p.y, z: p.z } } });
+      }
+    }
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* already released */ }
+  }, [setProfile]);
+
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    cameraRef.current.zoomAt(-e.deltaY * 0.0016, e.clientX - rect.left, e.clientY - rect.top);
+  }, []);
+
+  const focusCard = useCallback((id: string) => {
+    const p = placementsRef.current.get(id);
+    if (!p) return;
+    setFocusId(id);
+    cameraRef.current.resetTo(p.x, p.y, id === 'self' ? -0.2 : 0.45);
+  }, []);
+
+  const resetView = useCallback(() => {
+    setFocusId(null);
+    cameraRef.current.resetTo(0, 0, -0.35);
+  }, []);
+
+  /* ------------------------------- the frame ----------------------------- */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let raf = 0;
+    let last = performance.now();
+    let w = 0;
+    let h = 0;
+    const reduced = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    const resize = () => {
+      const r = wrap.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      w = r.width;
+      h = r.height;
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cameraRef.current.setViewport(w, h);
+    };
+    resize();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
+    if (ro) ro.observe(wrap); else window.addEventListener('resize', resize);
+
+    let syncAt = 0;
+
+    const frame = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const t = now / 1000;
+      const cam = cameraRef.current;
+      cam.update(dt);
+      ctx.clearRect(0, 0, w, h);
+
+      const links = visibleLinks;
+      trafficRef.current.update(links, dt, reduced ? 0.4 : 1);
+
+      // --- orbital rings: the visual grammar of "how personal is this" ----
+      const origin = cam.project(0, 0, 0);
+      for (const scope of BOARD_SCOPES) {
+        const ring = SCOPE_RING[scope];
+        if (ring.radius <= 0) continue;
+        ctx.beginPath();
+        for (let i = 0; i <= 96; i += 1) {
+          const a = (i / 96) * Math.PI * 2;
+          const p = cam.project(Math.cos(a) * ring.radius, Math.sin(a) * ring.radius, 0);
+          if (!p.visible) continue;
+          if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        }
+        ctx.strokeStyle = rgba(ring.tone, 0.07);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        // Ring caption sits at the far side so it never fights the cards.
+        const lp = cam.project(0, -ring.radius, 0);
+        if (lp.visible) {
+          ctx.font = '9px ui-monospace, monospace';
+          ctx.fillStyle = rgba(ring.tone, 0.3);
+          ctx.textAlign = 'center';
+          ctx.fillText(ring.label, lp.x, lp.y - 4);
+        }
+      }
+
+      // --- project cards -------------------------------------------------
+      const projected = new Map<string, { x: number; y: number; scale: number; depth: number; visible: boolean }>();
+      const out: ScreenCard[] = [];
+      for (const card of visibleCards) {
+        const p = placementsRef.current.get(card.id);
+        if (!p) continue;
+        const d = reduced || p.manual ? { dx: 0, dy: 0, dz: 0 } : driftOffset(card.id, t);
+        const pr = cam.project(p.x + d.dx, p.y + d.dy, p.z + d.dz);
+        projected.set(card.id, pr);
+        out.push({ card, x: pr.x, y: pr.y, scale: pr.scale, depth: pr.depth, visible: pr.visible });
+      }
+
+      // --- axons + travelling packets (the neural network) ---------------
+      // Tone lookup once per frame — the axon/packet loops must stay O(links).
+      const toneOf = new Map<string, [number, number, number]>();
+      for (const c of visibleCards) toneOf.set(c.id, SCOPE_RING[c.scope].tone);
+
+      for (const l of links) {
+        const a = projected.get(l.from);
+        const b = projected.get(l.to);
+        if (!a || !b || !a.visible || !b.visible) continue;
+        const bow = Math.hypot(b.x - a.x, b.y - a.y) * 0.16;
+        const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
+        const alpha = 0.05 + l.strength * 0.12 + l.flow * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        const mid = axonPoint(a.x, a.y, b.x, b.y, bow, 0.5);
+        ctx.quadraticCurveTo(
+          mid.x * 2 - (a.x + b.x) / 2,
+          mid.y * 2 - (a.y + b.y) / 2,
+          b.x, b.y,
+        );
+        ctx.strokeStyle = rgba(tone, alpha);
+        ctx.lineWidth = 0.7 + l.strength * 1.1 + l.flow * 0.9;
+        ctx.stroke();
+      }
+
+      for (const pk of trafficRef.current.list()) {
+        const l = links[pk.linkIndex];
+        if (!l || pk.t < 0) continue;
+        const a = projected.get(l.from);
+        const b = projected.get(l.to);
+        if (!a || !b || !a.visible || !b.visible) continue;
+        const bow = Math.hypot(b.x - a.x, b.y - a.y) * 0.16;
+        const pt = axonPoint(a.x, a.y, b.x, b.y, bow, pk.t);
+        const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
+        const fade = Math.sin(Math.min(1, pk.t) * Math.PI) * pk.life;
+        const r = (pk.size + 0.6) * Math.max(0.5, (a.scale + b.scale) / 2);
+        const g = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r * 3.2);
+        g.addColorStop(0, rgba(tone, 0.85 * fade));
+        g.addColorStop(1, rgba(tone, 0));
+        ctx.beginPath();
+        ctx.fillStyle = g;
+        ctx.arc(pt.x, pt.y, r * 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Sort back-to-front so nearer cards overlap farther ones correctly.
+      out.sort((p, q) => q.depth - p.depth);
+
+      // The parent keeps the singularity glued to the board's origin.
+      originRef.current?.({ x: origin.x, y: origin.y, scale: origin.scale });
+
+      // DOM sync is throttled — 30fps of React state is plenty for text.
+      if (now - syncAt > 33) {
+        syncAt = now;
+        setScreen(out);
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      if (ro) ro.disconnect(); else window.removeEventListener('resize', resize);
+    };
+  }, [visibleCards, visibleLinks]);
+
+  /* -------------------------------- render ------------------------------- */
+  const roleOptions: BoardRole[] = ['founder', 'operator', 'engineer', 'analyst', 'custom'];
+
+  return (
+    <div
+      ref={wrapRef}
+      className={`jboard${dimmed ? ' jboard--dim' : ''}`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onWheel={onWheel}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <canvas ref={canvasRef} className="jboard-canvas" />
+
+      <div className="jboard-cards">
+        {screen.map(({ card, x, y, scale, visible }) => {
+          if (!visible) return null;
+          const isSelf = card.id === 'self';
+          const focus = focusId === card.id;
+          const s = Math.max(0.42, Math.min(1.5, scale));
+          const pinned = Boolean(profile.pinned[card.id]);
+          return (
+            <article
+              key={card.id}
+              data-card-id={card.id}
+              {...(isSelf ? { 'data-card-fixed': 'true' } : {})}
+              className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}`}
+              style={{
+                transform: `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${s})`,
+                opacity: Math.max(0.25, Math.min(1, scale * 1.15)),
+                borderColor: rgba(card.accent, 0.35 + card.activity * 0.4),
+                boxShadow: `0 0 ${12 + card.activity * 34}px ${rgba(card.accent, 0.1 + card.activity * 0.22)}`,
+                zIndex: Math.round(1000 - (1 - scale) * 500),
+              }}
+              onDoubleClick={() => focusCard(card.id)}
+            >
+              <header className="jboard-card-h">
+                <span className="jboard-card-dot" style={{ background: rgba(card.accent, 0.55 + card.activity * 0.45) }} />
+                <span className="jboard-card-title">{card.title}</span>
+                {(pinned || card.activity > 0.6) && (
+                  <span className="jboard-card-live" style={{ color: rgba(card.accent, 0.9) }}>
+                    {pinned ? '📌' : '●'}
+                  </span>
+                )}
+              </header>
+              <p className="jboard-card-sub">{card.subtitle}</p>
+              <div className="jboard-card-metrics">
+                {card.metrics.length === 0 && card.emptyHint ? (
+                  <span className="jboard-card-empty">{card.emptyHint}</span>
+                ) : card.metrics.map((m) => (
+                  <span key={m.k} className="jboard-metric">
+                    <b style={{ color: m.heat && m.heat > 0.5 ? rgba(card.accent, 1) : undefined }}>{m.v}</b>
+                    <i>{m.k}</i>
+                  </span>
+                ))}
+              </div>
+              {focus && (
+                <footer className="jboard-card-actions">
+                  {card.href && <a href={card.href} onClick={(e) => e.stopPropagation()}>باز کردن</a>}
+                  {!isSelf && (
+                    <button type="button" onClick={(e) => {
+                      e.stopPropagation();
+                      const cur = profileRef.current;
+                      const pin = { ...cur.pinned };
+                      if (pin[card.id]) delete pin[card.id]; else pin[card.id] = true;
+                      setProfile({ ...cur, pinned: pin });
+                    }}>{pinned ? 'برداشتن پین' : 'پین'}</button>
+                  )}
+                  {!isSelf && (
+                    <button type="button" onClick={(e) => {
+                      e.stopPropagation();
+                      const cur = profileRef.current;
+                      setProfile({ ...cur, hiddenCards: { ...cur.hiddenCards, [card.id]: true } });
+                    }}>پنهان</button>
+                  )}
+                </footer>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="jboard-hud">
+        <button type="button" className="jboard-btn" onClick={resetView} title="بازگشت به مرکز">مرکز</button>
+        <button type="button" className="jboard-btn" onClick={() => setPanelOpen((v) => !v)} title="شخصی‌سازی برد">
+          چیدمان
+        </button>
+        <span className="jboard-stat">
+          {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${visibleLinks.length} سیناپس`}
+          {graph.degraded.length > 0 ? ` · ${graph.degraded.length} منبع در دسترس نیست` : ''}
+        </span>
+      </div>
+
+      {panelOpen && (
+        <aside className="jboard-panel" onPointerDown={(e) => e.stopPropagation()}>
+          <h3>چیدمان برد</h3>
+          <label className="jboard-row">
+            <span>نقش</span>
+            <select
+              value={profile.role}
+              onChange={(e) => setProfile({ ...profileRef.current, role: e.target.value as BoardRole })}
+            >
+              {roleOptions.map((r) => <option key={r} value={r}>{ROLE_LABEL_FA[r]}</option>)}
+            </select>
+          </label>
+          <p className="jboard-note">
+            هرچه موضوع شخصی‌تر است نزدیک‌تر به مرکز می‌نشیند و هرچه عمومی‌تر، دورتر.
+            حلقه‌ها: {BOARD_SCOPES.map((sc) => SCOPE_RING[sc].labelFa).join(' → ')}
+          </p>
+          <div className="jboard-sources">
+            {graph.cards.filter((c) => c.id !== 'self').map((c) => {
+              const hidden = Boolean(profile.hiddenCards[c.id]) || !isSourceVisible(profile, c.sourceId);
+              const scope = resolveScope(profile, c.sourceId, c.scope);
+              return (
+                <div key={c.id} className="jboard-source-row">
+                  <button
+                    type="button"
+                    className={`jboard-chip${hidden ? ' jboard-chip--off' : ''}`}
+                    onClick={() => {
+                      const cur = profileRef.current;
+                      const hiddenCards = { ...cur.hiddenCards };
+                      const hiddenSources = cur.hiddenSources.filter((sid) => sid !== c.sourceId);
+                      if (hidden) delete hiddenCards[c.id];
+                      else hiddenCards[c.id] = true;
+                      setProfile({ ...cur, hiddenCards, hiddenSources });
+                    }}
+                  >{c.title}</button>
+                  <select
+                    value={scope}
+                    onChange={(e) => {
+                      const cur = profileRef.current;
+                      setProfile({
+                        ...cur,
+                        scopeOverrides: { ...cur.scopeOverrides, [c.sourceId]: e.target.value as BoardScope },
+                      });
+                    }}
+                  >
+                    {BOARD_SCOPES.map((sc) => <option key={sc} value={sc}>{SCOPE_RING[sc].labelFa}</option>)}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            className="jboard-btn jboard-btn--wide"
+            onClick={() => setProfile({ ...DEFAULT_PROFILE, role: profileRef.current.role })}
+          >بازنشانی چیدمان</button>
+        </aside>
+      )}
+    </div>
+  );
+}

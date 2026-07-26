@@ -3,8 +3,9 @@
  * Jarvis Core HUD — the living presence stage for /jarvis.
  *
  * DESIGN LOCK (shape / structure — do not redesign without an explicit ask):
- * Center presence is a real WebGL Gargantua (sphere + accretion disk + orbit).
- * Outer stage: neural mesh + concept threads + telemetry + command bar.
+ * Center: WebGL Gargantua (independent module). Cage: NeuralMesh3D (independent).
+ * They share one ensemble pose via jarvisStage — one organism, scalable parts.
+ * Outer stage: concept threads + telemetry + command bar.
  *
  * Motion is continuous — trailing glow, micro-pulses, resting heartbeat.
  * The command line is wired to the real turn pipeline; no fake replies.
@@ -16,8 +17,10 @@ import {
   listSessionsAction, createSessionAction, sendTurnAction,
   jarvisTelemetryAction, type JarvisTelemetryView,
 } from './actions';
-import { luxPaletteFromAccent } from './drawGargantua';
 import { createGargantua3D, type Gargantua3D } from './gargantua3d';
+import { resolveJarvisEnsemble } from './jarvisStage';
+import { createNeuralMeshPainter } from './neuralMesh3d';
+import JarvisBoard from './board/JarvisBoard';
 import { UtteranceGate } from '@/lib/utteranceGate';
 import { dirProps } from '@/lib/rtl';
 
@@ -81,46 +84,6 @@ function lerp(a: number, b: number, t: number): number { return a + (b - a) * t;
 function rgba(c: RGB, a: number): string { return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`; }
 function mixRgb(a: RGB, b: RGB, t: number): RGB { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)]; }
 
-/** A small volumetric neural mesh (nodes + synapses) used for the core —
- * a real graph, not decorative dust. Built once per mount. */
-interface NeuralMesh {
-  nodes: Array<{ pos: [number, number, number]; flash: number; driftPhase: number }>;
-  edges: Array<[number, number]>;
-  neighbors: number[][];
-}
-function buildNeuralMesh(count: number, k: number): NeuralMesh {
-  const offset = 2 / count;
-  const increment = Math.PI * (3 - Math.sqrt(5));
-  const nodes: NeuralMesh['nodes'] = [];
-  for (let i = 0; i < count; i += 1) {
-    const y = i * offset - 1 + offset / 2;
-    const r = Math.sqrt(Math.max(0, 1 - y * y));
-    const phi = i * increment;
-    const depth = 0.5 + Math.random() * 0.5;
-    nodes.push({ pos: [Math.cos(phi) * r * depth, y * depth, Math.sin(phi) * r * depth], flash: 0, driftPhase: Math.random() * Math.PI * 2 });
-  }
-  const seen = new Set<string>();
-  const edges: Array<[number, number]> = [];
-  for (let i = 0; i < count; i += 1) {
-    const dists: Array<[number, number]> = [];
-    for (let j = 0; j < count; j += 1) {
-      if (i === j) continue;
-      const [ax, ay, az] = nodes[i].pos;
-      const [bx, by, bz] = nodes[j].pos;
-      dists.push([j, (ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2]);
-    }
-    dists.sort((a, b) => a[1] - b[1]);
-    for (let m = 0; m < k; m += 1) {
-      const j = dists[m][0];
-      const key = i < j ? `${i}:${j}` : `${j}:${i}`;
-      if (!seen.has(key)) { seen.add(key); edges.push([i, j]); }
-    }
-  }
-  const neighbors: number[][] = Array.from({ length: count }, () => []);
-  for (const [a, b] of edges) { neighbors[a].push(b); neighbors[b].push(a); }
-  return { nodes, edges, neighbors };
-}
-
 const CMD_PLACEHOLDER = 'یک دستور کوتاه بدهید…';
 
 function TelemCell({
@@ -146,6 +109,10 @@ export default function JarvisCoreHUD() {
   const targetColorRef = useRef(STATE_COLOR.idle);
   const currentColorRef = useRef({ core: [...STATE_COLOR.idle.core] as RGB, ring: [...STATE_COLOR.idle.ring] as RGB });
   const anchorsRef = useRef<Anchor[]>(buildAnchors());
+  /** CIN-2c — projected origin of the infinite board; the singularity and its
+   *  cage ride on it. Null until the board reports its first frame, so the
+   *  stage renders exactly as before if the board is ever removed. */
+  const boardOriginRef = useRef<{ x: number; y: number; scale: number } | null>(null);
   const anchorPosRef = useRef<Array<{ xFrac: number; yFrac: number; label: string; activity: number; color: RGB }>>([]);
 
   const [uiState, setUiState] = useState<CoreState>('idle');
@@ -290,12 +257,8 @@ export default function JarvisCoreHUD() {
     /** Wall-clock offset so animation time does not jump after a freeze. */
     let clockBase = performance.now();
     let last = performance.now();
-    const mesh = buildNeuralMesh(compact ? 24 : 32, 3);
-    const projected = mesh.nodes.map(() => ({ x: 0, y: 0, z: 0, persp: 1 }));
-    const signals: Array<{ a: number; b: number; t: number; speed: number }> = [];
-    let nextSignalAt = 0;
-    let signalCap = compact ? 8 : 12;
-    let dustCount = compact ? 14 : 24;
+    const meshPainter = createNeuralMeshPainter(compact);
+    let dustCount = compact ? 18 : 30;
     const dust = Array.from({ length: 32 }, () => ({
       x: Math.random(), y: Math.random(), r: 0.5 + Math.random() * 1.1,
       phase: Math.random() * Math.PI * 2, speed: 0.03 + Math.random() * 0.04, drift: Math.random() * Math.PI * 2,
@@ -322,7 +285,6 @@ export default function JarvisCoreHUD() {
       raf = 0;
       frozenAt = performance.now();
       // Drop transient particles so resume never replays a backlog.
-      signals.length = 0;
       ripples.length = 0;
       liveRef.current = false;
     }
@@ -337,7 +299,6 @@ export default function JarvisCoreHUD() {
         frozenAt = 0;
       }
       last = performance.now();
-      nextSignalAt = last + 400;
       nextRippleAt = last + 800;
       running = true;
       liveRef.current = true;
@@ -356,8 +317,8 @@ export default function JarvisCoreHUD() {
       const nextW = parent.clientWidth;
       const nextH = parent.clientHeight;
       compact = nextW < 720 || nextH < 640;
-      signalCap = compact ? 8 : 12;
-      dustCount = compact ? 14 : 24;
+      meshPainter.setCompact(compact);
+      dustCount = compact ? 18 : 30;
       // Full-bleed desktop at DPR 2 is the main lag source — cap hard.
       dpr = Math.min(window.devicePixelRatio || 1, 1.25);
       w = nextW;
@@ -402,26 +363,34 @@ export default function JarvisCoreHUD() {
       ctx.fillStyle = '#070a12';
       ctx.fillRect(0, 0, w, h);
 
-      const cx = w / 2;
-      // Shared stage center for neural mesh + Gargantua (slightly above geometric mid for cmdbar).
-      const cy = h * (compact ? 0.42 : 0.46);
-      const scale = Math.min(w, h);
-      const breath = reducedMotion ? 1 : 1 + Math.sin(t * 0.55) * 0.015;
-      const coreRadius = scale * (compact ? 0.18 : 0.15) * breath;
-      const fieldRadius = scale * (compact ? 0.38 : 0.42);
-
       const cur = currentColorRef.current;
       const tgt = targetColorRef.current;
       const ease = 1 - Math.pow(0.002, dt);
       cur.core = mixRgb(cur.core, tgt.core, ease);
       cur.ring = mixRgb(cur.ring, tgt.ring, ease);
 
-      // Assistant speak → singularity gravity (redder + orbital spin). Listening never touches the stage.
+      // Assistant speak → ensemble gravity. Listening never touches the stage.
       voiceEnergy = Math.max(voiceEnergy * Math.pow(0.12, dt), voiceEnergyRef.current);
       voiceEnergyRef.current *= Math.pow(0.45, dt);
       const st = stateRef.current;
       const speakE = st === 'speaking' ? Math.max(0.35, voiceEnergy) : 0;
       const speedMul = st === 'thinking' ? 1.12 : 1;
+
+      // Shared ensemble pose — mesh + singularity stay independent modules, one organism.
+      const pose = resolveJarvisEnsemble({
+        t,
+        dt,
+        w,
+        h,
+        compact,
+        reducedMotion,
+        speak: speakE,
+        speedMul,
+        accent: cur.core,
+        orbit: gargantua?.getOrbit() ?? null,
+        boardOrigin: boardOriginRef.current,
+      });
+      const { cx, cy, coreRadius, fieldRadius, bhRadius } = pose;
 
       // Sparse starfield.
       for (let di = 0; di < dustCount; di += 1) {
@@ -467,8 +436,8 @@ export default function JarvisCoreHUD() {
         const angle = a.angle + sweep;
         const ax = cx + Math.cos(angle) * fieldRadius;
         const ay = cy + Math.sin(angle) * fieldRadius;
-        const midx = cx + Math.cos(angle) * fieldRadius * 0.52 + Math.sin(t * 0.25 + angle) * 12;
-        const midy = cy + Math.sin(angle) * fieldRadius * 0.52 + Math.cos(t * 0.25 + angle) * 12;
+        const midx = cx + Math.cos(angle) * fieldRadius * 0.55 + Math.sin(t * 0.25 + angle) * 16;
+        const midy = cy + Math.sin(angle) * fieldRadius * 0.55 + Math.cos(t * 0.25 + angle) * 16;
         const startx = cx + Math.cos(angle) * coreRadius * 0.42;
         const starty = cy + Math.sin(angle) * coreRadius * 0.42;
 
@@ -496,96 +465,22 @@ export default function JarvisCoreHUD() {
       }
       anchorPosRef.current = positions;
 
-      // Neural mesh — co-centered with Gargantua; hollow around the event horizon.
-      const bhR = coreRadius * 0.252;
-      const bhKeepout = bhR * 3.4;
-      const meshRadius = coreRadius * 1.02;
-      const ry = t * 0.065;
-      const rx = Math.sin(t * 0.05) * 0.16;
-      const cosY = Math.cos(ry), sinY = Math.sin(ry);
-      const cosX = Math.cos(rx), sinX = Math.sin(rx);
-      const camDist = 2.6;
-      for (let i = 0; i < mesh.nodes.length; i += 1) {
-        const n = mesh.nodes[i];
-        const wob = 1 + Math.sin(t * 0.7 + n.driftPhase) * 0.02;
-        const [px0, py0, pz0] = n.pos;
-        const x1 = px0 * cosY - pz0 * sinY;
-        const z1 = px0 * sinY + pz0 * cosY;
-        const y2 = py0 * cosX - z1 * sinX;
-        const z2 = py0 * sinX + z1 * cosX;
-        const persp = camDist / (camDist - z2 * wob);
-        const p = projected[i];
-        p.x = cx + x1 * wob * meshRadius * persp;
-        p.y = cy + y2 * wob * meshRadius * persp;
-        p.z = z2;
-        p.persp = persp;
-        n.flash *= Math.pow(0.02, dt);
-      }
-
-      // Mesh + singularity share orbital gold (hot / gold via lux aliases).
-      const lux = luxPaletteFromAccent(cur.core);
-
-      // Synapses — orbital gold mid-tone.
-      for (const [a, b] of mesh.edges) {
-        const pa = projected[a], pb = projected[b];
-        const flash = Math.max(mesh.nodes[a].flash, mesh.nodes[b].flash);
-        const alpha = Math.max(0.05, 0.08 + ((pa.persp + pb.persp) / 2 - 0.55) * 0.18 + flash * 0.4);
-        ctx.strokeStyle = rgba(lux.gold, alpha);
-        ctx.lineWidth = 0.55 + flash * 0.75;
-        ctx.beginPath();
-        ctx.moveTo(pa.x, pa.y);
-        ctx.lineTo(pb.x, pb.y);
-        ctx.stroke();
-      }
-
-      if (now >= nextSignalAt && signals.length < signalCap) {
-        const [ea, eb] = mesh.edges[Math.floor(Math.random() * mesh.edges.length)];
-        signals.push({ a: ea, b: eb, t: 0, speed: 0.85 + Math.random() * 0.35 });
-        nextSignalAt = now + 700 + Math.random() * 400;
-      }
-      for (let i = signals.length - 1; i >= 0; i -= 1) {
-        const s = signals[i];
-        s.t += dt * s.speed * speedMul;
-        if (s.t >= 1) {
-          mesh.nodes[s.b].flash = 1;
-          if (signals.length < signalCap && Math.random() < 0.55) {
-            const options = mesh.neighbors[s.b];
-            let pick = options[0];
-            for (let oi = 0; oi < options.length; oi += 1) {
-              if (options[oi] !== s.a) { pick = options[oi]; if (Math.random() < 0.5) break; }
-            }
-            if (pick !== undefined && pick !== s.a) signals.push({ a: s.b, b: pick, t: 0, speed: 1.1 + Math.random() * 0.5 });
-          }
-          signals.splice(i, 1);
-          continue;
-        }
-        const pa = projected[s.a], pb = projected[s.b];
-        ctx.beginPath();
-        ctx.fillStyle = rgba(lux.hot, 0.85);
-        ctx.arc(lerp(pa.x, pb.x, s.t), lerp(pa.y, pb.y, s.t), 1.55, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Nodes — keep clear of the singularity so the void reads cleanly.
-      for (let i = 0; i < projected.length; i += 1) {
-        const p = projected[i];
-        const dxn = p.x - cx, dyn = p.y - cy;
-        if (dxn * dxn + dyn * dyn < bhKeepout * bhKeepout) continue;
-        const flash = mesh.nodes[i].flash;
-        const depthAlpha = Math.max(0, Math.min(1, (p.persp - 0.55) / 1.1));
-        const size = (0.9 + depthAlpha * 1.2) * (1 + flash * 1.05);
-        const nodeColor = flash > 0.35 ? lux.hot : lux.gold;
-        ctx.beginPath();
-        ctx.fillStyle = rgba(nodeColor, 0.3 + depthAlpha * 0.35 + flash * 0.4);
-        ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Raymarched singularity — share the neural mesh stage center exactly.
+      // Independent modules, shared ensemble pose.
+      meshPainter.paint(ctx, pose, now);
       if (gargantua) {
-        gargantua.setCenter(cx, cy);
-        gargantua.setViewRadius(bhR);
+        // CIN-2c: clip the GL layer to a disc around the singularity. Purely a
+        // HIT-TEST boundary (the disc is far wider than the drawn horizon, so
+        // nothing visible is cut): inside it the black hole keeps its own
+        // drag-to-orbit; outside, pointer events reach the board underneath.
+        const glEl = glCanvasRef.current;
+        if (glEl) {
+          const clipR = Math.max(60, pose.bhKeepout * 1.35);
+          glEl.style.clipPath = `circle(${clipR.toFixed(1)}px at ${pose.cx.toFixed(1)}px ${pose.cy.toFixed(1)}px)`;
+        }
+        gargantua.setCenter(pose.cx, pose.cy);
+        gargantua.setViewRadius(bhRadius);
         gargantua.setSpeak(speakE);
+        gargantua.setEnsemble(pose.spin.yaw, pose.spin.pitch, pose.t);
         gargantua.tick(t);
       }
 
@@ -782,6 +677,13 @@ export default function JarvisCoreHUD() {
 
   return (
     <div className="jarvis-live-stage" {...dirProps(caption)}>
+      {/* CIN-2c — infinite 3D board beneath the presence layer. It owns pan /
+          zoom / card placement and reports its world origin so the singularity
+          stays the centre of the board. */}
+      <JarvisBoard
+        onOriginChange={(o) => { boardOriginRef.current = o; }}
+        dimmed={busy || listening}
+      />
       <canvas ref={canvasRef} className="jarvis-live-canvas" />
       <canvas ref={glCanvasRef} className="jarvis-gl-canvas" aria-label="سیاه‌چاله سه‌بعدی" />
       <div className="jarvis-telem" aria-label="system telemetry">
