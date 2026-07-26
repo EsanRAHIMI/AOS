@@ -84,6 +84,10 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const [panelOpen, setPanelOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [zoomPct, setZoomPct] = useState(100);
+  /** Epoch ms of the last REAL data exchange — surfaced in the HUD so a still
+   *  board is legible as "nothing moved", not as "the animation is broken". */
+  const [lastExchange, setLastExchange] = useState(0);
+  const [nowTick, setNowTick] = useState(0);
   /** Slider mirrors the camera's TARGET zoom; while the owner drags it we stop
    *  syncing so the eased camera can never fight the thumb. */
   const [sliderZoom, setSliderZoom] = useState(-0.35);
@@ -102,6 +106,12 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     setProfileState(p);
   }, []);
 
+  /* One cheap tick a second, only so the "last exchange" age stays honest. */
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   /* ------------------------------ live data ------------------------------ */
   useEffect(() => {
     let alive = true;
@@ -111,17 +121,37 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       try {
         const next = await loadBoardGraphAction();
         if (!alive) return;
-        // Spike the synapses wherever a card's activity just jumped — the
-        // animation is a readout of real change, never a random shimmer.
-        const prev = new Map(graphRef.current.cards.map((c) => [c.id, c.activity]));
+        // REAL exchange detection (D-183.7): a packet is emitted only when a
+        // card's underlying records actually changed between two snapshots —
+        // a new metric value, a newer updatedAt, or a rising activity. No
+        // free-running animation: still wires mean a still system.
+        const prev = new Map(graphRef.current.cards.map((c) => [c.id, c]));
+        const changed = new Map<string, number>();
         for (const c of next.cards) {
           const before = prev.get(c.id);
-          if (before !== undefined && c.activity > before + 0.12) {
-            for (const l of next.links) {
-              if (l.from === c.id) trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: 3 });
+          if (!before) continue; // first load is not an "exchange"
+          let magnitude = 0;
+          const beforeMetrics = before.metrics.map((m) => `${m.k}=${m.v}`).join('|');
+          const nextMetrics = c.metrics.map((m) => `${m.k}=${m.v}`).join('|');
+          if (beforeMetrics !== nextMetrics) magnitude += 1;
+          if (c.updatedAt && c.updatedAt !== before.updatedAt) magnitude += 1;
+          if (c.activity > before.activity + 0.08) magnitude += 1;
+          if (magnitude > 0) changed.set(c.id, magnitude);
+        }
+        for (const [cardId, magnitude] of changed) {
+          // New data in a card travels outward along its own axons…
+          for (const l of next.links) {
+            if (l.from === cardId) {
+              trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: 1 + magnitude });
+            }
+            // …and inward on edges that feed it, because the sender is the
+            // one whose record produced the change we can see here.
+            else if (l.to === cardId && changed.has(l.from)) {
+              trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: 1 + magnitude });
             }
           }
         }
+        if (changed.size > 0) setLastExchange(Date.now());
         graphRef.current = next;
         setGraph(next);
       } catch {
@@ -135,6 +165,42 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     };
     void pull();
     return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, []);
+
+  /* ---------------- live exchanges from the owner stream ------------------ */
+  // The 12s poll can only see change after the fact. The persistent owner SSE
+  // stream (CIN-2) pushes real proactive events the moment the kernel raises
+  // them, so those fire their packets immediately, on the exact edges the
+  // event travelled.
+  useEffect(() => {
+    let stopped = false;
+    let es: EventSource | null = null;
+    let retry = 3000;
+
+    const fire = (fromId: string) => {
+      const links = graphRef.current.links;
+      let sent = false;
+      for (const l of links) {
+        if (l.from === fromId || l.to === fromId) {
+          trafficRef.current.burst(links, { from: l.from, to: l.to, count: 4 });
+          sent = true;
+        }
+      }
+      if (sent) setLastExchange(Date.now());
+    };
+
+    const connect = () => {
+      if (stopped) return;
+      es = new EventSource('/api/owner-stream');
+      es.addEventListener('proactive', () => { retry = 3000; fire('proactive'); });
+      es.addEventListener('ping', () => { retry = 3000; });
+      es.onerror = () => {
+        es?.close();
+        if (!stopped) setTimeout(connect, retry = Math.min(retry * 2, 30000));
+      };
+    };
+    connect();
+    return () => { stopped = true; es?.close(); };
   }, []);
 
   /* --------------------- visible cards + placements ---------------------- */
@@ -469,23 +535,19 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       // --- axons + travelling packets (the neural network) ---------------
       // Tone lookup once per frame — the axon/packet loops must stay O(links).
       const toneOf = new Map<string, [number, number, number]>();
-      const actOf = new Map<string, number>();
-      for (const c of visibleCards) {
-        toneOf.set(c.id, SCOPE_RING[c.scope].tone);
-        actOf.set(c.id, c.activity);
-      }
-      // Effective traffic: the link's own flow, or the SENDING card's live
-      // activity — both are real signals, so an active card visibly pushes
-      // data down its axons even when that particular edge has no counter.
-      const flowOf = (l: (typeof links)[number]) =>
-        Math.max(0, Math.min(1, Math.max(l.flow, (actOf.get(l.from) ?? 0) * 0.5)));
+      for (const c of visibleCards) toneOf.set(c.id, SCOPE_RING[c.scope].tone);
+      // The wire itself is STABLE — its weight comes from structural strength
+      // only. Brightness above that baseline is `heat`: a decaying afterglow
+      // set when a REAL exchange was observed on that exact edge. No traffic,
+      // no glow; the wiring stays fully visible either way.
+      const heatOf = (l: (typeof links)[number]) => trafficRef.current.heatOf(l.from, l.to);
 
       ctx.lineCap = 'round';
       for (const l of links) {
         const a = projected.get(l.from);
         const b = projected.get(l.to);
         if (!a || !b || !a.visible || !b.visible) continue;
-        const flow = flowOf(l);
+        const heat = heatOf(l);
         const bow = Math.hypot(b.x - a.x, b.y - a.y) * 0.16;
         const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
         const mid = axonPoint(a.x, a.y, b.x, b.y, bow, 0.5);
@@ -499,17 +561,17 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         };
         // Wide, very soft underglow makes the wiring legible over the
         // starfield without shouting; the crisp core line carries the detail.
-        ctx.strokeStyle = rgba(tone, 0.05 + flow * 0.1);
-        ctx.lineWidth = 3.2 + l.strength * 2.6 + flow * 3;
+        ctx.strokeStyle = rgba(tone, 0.05 + heat * 0.12);
+        ctx.lineWidth = 3.2 + l.strength * 2.6 + heat * 3;
         trace();
-        ctx.strokeStyle = rgba(tone, 0.2 + l.strength * 0.3 + flow * 0.35);
-        ctx.lineWidth = 0.9 + l.strength * 1.3 + flow * 1.2;
+        ctx.strokeStyle = rgba(tone, 0.2 + l.strength * 0.3 + heat * 0.4);
+        ctx.lineWidth = 0.9 + l.strength * 1.3 + heat * 1.3;
         trace();
         // Endpoint terminals — where the axon meets the card.
         for (const [pt, isSender] of [[a, true], [b, false]] as const) {
           const r = (isSender ? 2.6 : 2) * Math.max(0.5, pt.scale);
           ctx.beginPath();
-          ctx.fillStyle = rgba(tone, isSender ? 0.35 + flow * 0.5 : 0.22 + flow * 0.35);
+          ctx.fillStyle = rgba(tone, isSender ? 0.35 + heat * 0.5 : 0.22 + heat * 0.35);
           ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
           ctx.fill();
         }
@@ -691,6 +753,12 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         </button>
         <span className="jboard-stat">
           {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${visibleLinks.length} سیناپس`}
+          {!loading && (() => {
+            void nowTick; // re-render each second so the age stays truthful
+            if (!lastExchange) return ' · بدون تبادل داده تا این لحظه';
+            const sec = Math.max(0, Math.round((Date.now() - lastExchange) / 1000));
+            return sec < 3 ? ' · تبادل داده هم‌اکنون' : ` · آخرین تبادل ${sec < 60 ? `${sec}s` : `${Math.round(sec / 60)}m`} پیش`;
+          })()}
           {graph.degraded.length > 0 ? ` · ${graph.degraded.length} منبع در دسترس نیست` : ''}
         </span>
       </div>

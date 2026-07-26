@@ -123,19 +123,30 @@ unreachable endpoint adds its name to `degraded` and contributes **no card**
 rather than a fabricated one. Cards with nothing yet render an explicit
 `emptyHint`.
 
-Synapse traffic is a **readout, not an ornament**:
+Synapse traffic is a **readout, not an ornament** (D-183.7 — there is no
+free-running spawner anywhere in the renderer):
 
-- `link.strength` (structural) sets the resting axon thickness — the wiring is
-  always visible, so the network reads as a network even at rest,
-- effective traffic is `max(link.flow, sending card activity × 0.5)`: both are
-  real signals, so an active card visibly pushes packets down its axons even
-  on edges that have no counter of their own,
-- packets carry a short comet tail (drawn additively) so the direction of the
-  exchange is unmistakable,
-- a card whose activity jumps between polls fires an immediate burst.
+- **the wires are permanent.** An axon's weight comes from `link.strength`
+  alone, so the network is always readable as a network, even at total rest.
+- **a packet exists only because a real exchange was observed.** Two sources
+  feed it: the 12s snapshot diff (a card's metric value, `updatedAt` or
+  activity actually changed) and the persistent owner SSE stream, which fires
+  the moment the kernel raises a proactive event.
+- **direction is truthful:** change in a card sends packets outward along its
+  own axons, and inward only on edges whose sender also changed.
+- **afterglow:** a wire that just carried data brightens and decays with a
+  3.5s half-life (`SynapseTraffic.heatOf`), so recent exchanges are visible
+  for a moment after the packet lands.
+- the HUD prints the age of the last real exchange, so a still board reads as
+  "nothing moved", never as "the animation is broken".
 
-A quiet system therefore looks quiet. `prefers-reduced-motion` slows the
-simulation instead of faking calm.
+`prefers-reduced-motion` slows the packet simulation instead of faking calm.
+
+The six legacy concept threads that used to radiate from the singularity
+(MEMORY / LIVING LOOP / HEARTBEAT / TRUST CHAIN / MISSIONS / RESEARCH) were
+removed in D-183.7: the board now carries real, data-backed cards for exactly
+those domains, wired by real synapses, so decorative stand-ins beside them
+would be noise.
 
 ## 6. Controls
 
