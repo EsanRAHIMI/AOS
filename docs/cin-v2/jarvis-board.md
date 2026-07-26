@@ -62,13 +62,21 @@ fade the board out when you zoom out), and card content switches to a
 level-of-detail chip below ~0.5 scale so a far view stays readable.
 
 **Layer order (fragile — read before editing CSS):** the stage paints
-`.jboard-canvas` → `.jarvis-live-canvas` → `.jarvis-gl-canvas` (z 1) →
+`.jarvis-live-canvas` → `.jboard-canvas` (z 1) → `.jarvis-gl-canvas` (z 1) →
 `.jboard-cards` (z 2) → telemetry (z 3) → caption (z 4) → `.jboard-hud` (z 5)
 → `.jboard-panel` (z 6). The `.jboard` wrapper **must keep `z-index: auto` and
 full opacity**: giving it a numeric z-index (or any opacity < 1, filter, or
 transform) creates a stacking context that traps the cards and the zoom HUD
 *below* the Gargantua canvas — they vanish behind the black hole. Dimming is
 therefore applied to `.jboard-canvas`/`.jboard-cards`, never the wrapper.
+
+`.jboard-canvas`'s own `z-index: 1` is equally load-bearing (D-183.6):
+`.jarvis-live-canvas` hard-clears with an **opaque** `#070a12` fill every
+frame, so a board canvas left at the default layer is repainted over — every
+ring and every synapse disappears while the DOM cards (z 2) keep rendering,
+which reads as "the cards have no connections at all". At z 1 the board canvas
+draws above that clear but still below the Gargantua canvas (also z 1, later
+in DOM), so the singularity keeps occluding axons that pass behind it.
 
 **Wheel and pinch are captured at the STAGE, not the board (D-183.5).** The GL
 canvas is a *sibling* of `.jboard` and carries its own `wheel` handler that
@@ -117,8 +125,13 @@ rather than a fabricated one. Cards with nothing yet render an explicit
 
 Synapse traffic is a **readout, not an ornament**:
 
-- `link.strength` (structural) sets the resting axon thickness,
-- `link.flow` (derived from record recency) sets the packet spawn rate,
+- `link.strength` (structural) sets the resting axon thickness — the wiring is
+  always visible, so the network reads as a network even at rest,
+- effective traffic is `max(link.flow, sending card activity × 0.5)`: both are
+  real signals, so an active card visibly pushes packets down its axons even
+  on edges that have no counter of their own,
+- packets carry a short comet tail (drawn additively) so the direction of the
+  exchange is unmistakable,
 - a card whose activity jumps between polls fires an immediate burst.
 
 A quiet system therefore looks quiet. `prefers-reduced-motion` slows the

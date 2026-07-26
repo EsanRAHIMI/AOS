@@ -469,28 +469,53 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       // --- axons + travelling packets (the neural network) ---------------
       // Tone lookup once per frame — the axon/packet loops must stay O(links).
       const toneOf = new Map<string, [number, number, number]>();
-      for (const c of visibleCards) toneOf.set(c.id, SCOPE_RING[c.scope].tone);
+      const actOf = new Map<string, number>();
+      for (const c of visibleCards) {
+        toneOf.set(c.id, SCOPE_RING[c.scope].tone);
+        actOf.set(c.id, c.activity);
+      }
+      // Effective traffic: the link's own flow, or the SENDING card's live
+      // activity — both are real signals, so an active card visibly pushes
+      // data down its axons even when that particular edge has no counter.
+      const flowOf = (l: (typeof links)[number]) =>
+        Math.max(0, Math.min(1, Math.max(l.flow, (actOf.get(l.from) ?? 0) * 0.5)));
 
+      ctx.lineCap = 'round';
       for (const l of links) {
         const a = projected.get(l.from);
         const b = projected.get(l.to);
         if (!a || !b || !a.visible || !b.visible) continue;
+        const flow = flowOf(l);
         const bow = Math.hypot(b.x - a.x, b.y - a.y) * 0.16;
         const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
-        const alpha = 0.05 + l.strength * 0.12 + l.flow * 0.2;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
         const mid = axonPoint(a.x, a.y, b.x, b.y, bow, 0.5);
-        ctx.quadraticCurveTo(
-          mid.x * 2 - (a.x + b.x) / 2,
-          mid.y * 2 - (a.y + b.y) / 2,
-          b.x, b.y,
-        );
-        ctx.strokeStyle = rgba(tone, alpha);
-        ctx.lineWidth = 0.7 + l.strength * 1.1 + l.flow * 0.9;
-        ctx.stroke();
+        const cxq = mid.x * 2 - (a.x + b.x) / 2;
+        const cyq = mid.y * 2 - (a.y + b.y) / 2;
+        const trace = () => {
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.quadraticCurveTo(cxq, cyq, b.x, b.y);
+          ctx.stroke();
+        };
+        // Wide, very soft underglow makes the wiring legible over the
+        // starfield without shouting; the crisp core line carries the detail.
+        ctx.strokeStyle = rgba(tone, 0.05 + flow * 0.1);
+        ctx.lineWidth = 3.2 + l.strength * 2.6 + flow * 3;
+        trace();
+        ctx.strokeStyle = rgba(tone, 0.2 + l.strength * 0.3 + flow * 0.35);
+        ctx.lineWidth = 0.9 + l.strength * 1.3 + flow * 1.2;
+        trace();
+        // Endpoint terminals — where the axon meets the card.
+        for (const [pt, isSender] of [[a, true], [b, false]] as const) {
+          const r = (isSender ? 2.6 : 2) * Math.max(0.5, pt.scale);
+          ctx.beginPath();
+          ctx.fillStyle = rgba(tone, isSender ? 0.35 + flow * 0.5 : 0.22 + flow * 0.35);
+          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
+      ctx.globalCompositeOperation = 'lighter';
       for (const pk of trafficRef.current.list()) {
         const l = links[pk.linkIndex];
         if (!l || pk.t < 0) continue;
@@ -501,15 +526,25 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         const pt = axonPoint(a.x, a.y, b.x, b.y, bow, pk.t);
         const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
         const fade = Math.sin(Math.min(1, pk.t) * Math.PI) * pk.life;
-        const r = (pk.size + 0.6) * Math.max(0.5, (a.scale + b.scale) / 2);
-        const g = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r * 3.2);
-        g.addColorStop(0, rgba(tone, 0.85 * fade));
+        const r = (pk.size + 1.1) * Math.max(0.55, (a.scale + b.scale) / 2);
+        // Short comet tail so direction of travel is unmistakable.
+        const tail = axonPoint(a.x, a.y, b.x, b.y, bow, Math.max(0, pk.t - 0.06));
+        ctx.strokeStyle = rgba(tone, 0.5 * fade);
+        ctx.lineWidth = r * 1.1;
+        ctx.beginPath();
+        ctx.moveTo(tail.x, tail.y);
+        ctx.lineTo(pt.x, pt.y);
+        ctx.stroke();
+        const g = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r * 3.4);
+        g.addColorStop(0, rgba(tone, 0.95 * fade));
+        g.addColorStop(0.35, rgba(tone, 0.4 * fade));
         g.addColorStop(1, rgba(tone, 0));
         ctx.beginPath();
         ctx.fillStyle = g;
-        ctx.arc(pt.x, pt.y, r * 3.2, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, r * 3.4, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.globalCompositeOperation = 'source-over';
 
       // Sort back-to-front so nearer cards overlap farther ones correctly.
       out.sort((p, q) => q.depth - p.depth);

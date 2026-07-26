@@ -524,7 +524,13 @@ button { font: inherit; }
 .jboard--dim .jboard-canvas,
 .jboard--dim .jboard-cards { opacity: 0.55; }
 .jboard-canvas, .jboard-cards { transition: opacity 260ms var(--ease); }
-.jboard-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
+/* z-index 1 is LOAD-BEARING: .jarvis-live-canvas hard-clears with an OPAQUE
+   #070a12 fill every frame, so an unlayered board canvas (DOM-order below it)
+   gets painted over — rings and synapses vanish entirely. Sitting at z 1, the
+   board canvas draws above that clear but still below the Gargantua canvas
+   (also z 1, later in DOM), which keeps the singularity occluding the axons
+   that pass behind it. */
+.jboard-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 
 .jboard-cards { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .jboard-card {
