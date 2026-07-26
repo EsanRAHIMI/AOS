@@ -165,9 +165,12 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     | null
   >(null);
 
-  /** Live pointers for two-finger pinch (touch + trackpad-as-touch). */
+  /** Live pointers for two-finger pinch. Driven by the stage-level capture
+   *  listener (see the wheel/pinch effect) so a pinch centred on the black
+   *  hole is not swallowed by the GL canvas. */
   const pinchRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchDistRef = useRef(0);
+  const pinchingRef = useRef(false);
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     const target = e.target as HTMLElement;
@@ -181,13 +184,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     }
     const cardEl = target.closest('[data-card-id]') as HTMLElement | null;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinchRef.current.size === 2) {
-      const [a, b] = [...pinchRef.current.values()];
-      pinchDistRef.current = Math.hypot(b.x - a.x, b.y - a.y);
-      dragRef.current = null; // pinch wins over pan
-      return;
-    }
+    if (pinchingRef.current) { dragRef.current = null; return; }
     if (cardEl && !cardEl.dataset.cardFixed) {
       dragRef.current = { mode: 'card', id: cardEl.dataset.cardId!, lastX: e.clientX, lastY: e.clientY, moved: false };
       return;
@@ -198,23 +195,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   }, []);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
-    // Two-finger pinch: zoom about the midpoint, exactly like the wheel does.
-    if (pinchRef.current.has(e.pointerId)) pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinchRef.current.size === 2) {
-      const [a, b] = [...pinchRef.current.values()];
-      const dist = Math.hypot(b.x - a.x, b.y - a.y);
-      const prev = pinchDistRef.current;
-      pinchDistRef.current = dist;
-      if (prev > 0 && dist > 0) {
-        const rect = wrapRef.current?.getBoundingClientRect();
-        const mx = (a.x + b.x) / 2 - (rect?.left ?? 0);
-        const my = (a.y + b.y) / 2 - (rect?.top ?? 0);
-        // PINCH_GAIN > 1: a physical 1:1 pinch feels sluggish on a board this
-        // large, so fingers move the zoom faster than the raw distance ratio.
-        cameraRef.current.zoomAt(Math.log2(dist / prev) * PINCH_GAIN, mx, my);
-      }
-      return;
-    }
+    if (pinchingRef.current) return; // the stage-level pinch owns this gesture
     const d = dragRef.current;
     if (!d) return;
     const dx = e.clientX - d.lastX;
@@ -243,8 +224,6 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   }, []);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
-    pinchRef.current.delete(e.pointerId);
-    if (pinchRef.current.size < 2) pinchDistRef.current = 0;
     const d = dragRef.current;
     dragRef.current = null;
     if (d?.mode === 'card' && d.moved) {
@@ -265,11 +244,18 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
    */
   useEffect(() => {
     const el = wrapRef.current;
-    if (!el) return;
+    // Listen on the STAGE in the CAPTURE phase, not on the board itself: the
+    // Gargantua canvas is a SIBLING of the board with its own wheel handler
+    // that moves the black hole's private camera distance. Without capturing
+    // here, a wheel over the centre only resized the singularity and never
+    // reached the board — the whole world must zoom as one instead (D-183.5).
+    const stage = (el?.parentElement ?? null) as HTMLElement | null;
+    if (!el || !stage) return;
     const onWheelNative = (e: WheelEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.closest('.jboard-panel')) return; // let the panel scroll
       e.preventDefault();
+      e.stopPropagation(); // the singularity must not zoom itself
       const rect = el.getBoundingClientRect();
       // Normalise line/page delta modes to pixels so a notch feels the same
       // in every browser.
@@ -278,8 +264,59 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       const step = Math.max(-MAX_ZOOM_STEP, Math.min(MAX_ZOOM_STEP, -e.deltaY * unit * gain));
       cameraRef.current.zoomAt(step, e.clientX - rect.left, e.clientY - rect.top);
     };
-    el.addEventListener('wheel', onWheelNative, { passive: false });
-    return () => el.removeEventListener('wheel', onWheelNative);
+    // Two-finger pinch, also captured at the stage and for the same reason:
+    // a pinch centred on the singularity would otherwise be swallowed by the
+    // GL canvas's own pointer capture. Single-pointer gestures are untouched,
+    // so drag-to-orbit the black hole still behaves exactly as before.
+    const pts = pinchRef.current;
+    const onDownCap = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.jboard-hud, .jboard-panel')) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinchDistRef.current = Math.hypot(b.x - a.x, b.y - a.y);
+        pinchingRef.current = true;
+        dragRef.current = null; // pinch wins over pan / card drag
+        e.stopPropagation();
+      }
+    };
+    const onMoveCap = (e: PointerEvent) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!pinchingRef.current || pts.size < 2) return;
+      e.stopPropagation();
+      const [a, b] = [...pts.values()];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      const prev = pinchDistRef.current;
+      pinchDistRef.current = dist;
+      if (prev > 0 && dist > 0) {
+        const rect = el.getBoundingClientRect();
+        cameraRef.current.zoomAt(
+          Math.log2(dist / prev) * PINCH_GAIN,
+          (a.x + b.x) / 2 - rect.left,
+          (a.y + b.y) / 2 - rect.top,
+        );
+      }
+    };
+    const onUpCap = (e: PointerEvent) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) { pinchDistRef.current = 0; pinchingRef.current = false; }
+    };
+
+    stage.addEventListener('wheel', onWheelNative, { capture: true, passive: false });
+    stage.addEventListener('pointerdown', onDownCap, true);
+    stage.addEventListener('pointermove', onMoveCap, true);
+    stage.addEventListener('pointerup', onUpCap, true);
+    stage.addEventListener('pointercancel', onUpCap, true);
+    return () => {
+      const cap = { capture: true } as EventListenerOptions;
+      stage.removeEventListener('wheel', onWheelNative, cap);
+      stage.removeEventListener('pointerdown', onDownCap, true);
+      stage.removeEventListener('pointermove', onMoveCap, true);
+      stage.removeEventListener('pointerup', onUpCap, true);
+      stage.removeEventListener('pointercancel', onUpCap, true);
+    };
   }, []);
 
   const focusCard = useCallback((id: string) => {

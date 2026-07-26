@@ -70,6 +70,18 @@ transform) creates a stacking context that traps the cards and the zoom HUD
 *below* the Gargantua canvas — they vanish behind the black hole. Dimming is
 therefore applied to `.jboard-canvas`/`.jboard-cards`, never the wrapper.
 
+**Wheel and pinch are captured at the STAGE, not the board (D-183.5).** The GL
+canvas is a *sibling* of `.jboard` and carries its own `wheel` handler that
+moves the black hole's private camera distance. A wheel over the centre
+therefore never reached the board — only the singularity resized, which is
+exactly the "black hole scales on its own" bug. The board now registers
+`wheel` + `pointerdown/move/up` listeners on the stage element in the
+**capture phase** (`{ capture: true, passive: false }`) and calls
+`preventDefault()` + `stopPropagation()`, so zoom always drives the world and
+the singularity only ever changes size as part of it. Single-pointer gestures
+are deliberately left alone, which is why drag-to-orbit the black hole still
+works.
+
 **Pointer arbitration (why the black hole still drags):** the GL canvas keeps
 its own `pointerdown/wheel/dblclick` handlers, but each frame the stage sets
 `clip-path: circle(R at cx cy)` on it. The disc is far wider than the drawn
