@@ -55,9 +55,10 @@ export class BoardCamera {
     this.h = Math.max(1, h);
   }
 
-  /** Ease the rendered view toward the target each frame (dt in seconds). */
+  /** Ease the rendered view toward the target each frame (dt in seconds).
+   *  Fast enough that wheel/pinch feels direct, slow enough to stay smooth. */
   update(dt: number): void {
-    const k = 1 - Math.exp(-dt * 9);
+    const k = 1 - Math.exp(-dt * 14);
     this.view.tx += (this.state.tx - this.view.tx) * k;
     this.view.ty += (this.state.ty - this.view.ty) * k;
     this.view.zoom += (this.state.zoom - this.view.zoom) * k;

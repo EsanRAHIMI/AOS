@@ -108,8 +108,9 @@ simulation instead of faking calm.
 | Action | Result |
 |---|---|
 | drag empty space | pan (infinite) |
-| wheel | zoom about the cursor |
-| two-finger pinch | zoom about the pinch midpoint |
+| wheel | zoom about the cursor (`WHEEL_GAIN`, delta-mode normalised) |
+| trackpad pinch | zoom about the cursor — arrives as ctrl+wheel, handled with a **non-passive native listener** so it never triggers browser zoom (`TRACKPAD_GAIN`) |
+| two-finger pinch (touch) | zoom about the pinch midpoint (`PINCH_GAIN`, faster than 1:1 finger distance) |
 | `+` / `−` buttons, `+` / `−` keys | zoom about the viewport centre |
 | zoom slider | direct zoom, with a live % readout |
 | **«کل فضا» button / `F` key** | **fit everything on screen** — centres on the content's centroid and picks the zoom that contains the farthest card (works no matter how far cards were dragged out) |
@@ -119,6 +120,13 @@ simulation instead of faking calm.
 | double-click a card | focus + reveal its actions |
 | drag over the black hole | orbit Gargantua (unchanged) |
 | «چیدمان» button | personalisation panel |
+
+**Controls inside the board never start a board gesture.** `onPointerDown`
+returns early for `button, a, select, input, textarea, label, .jboard-hud,
+.jboard-panel`. This is not cosmetic: Chrome delivers `click` to the pointer
+CAPTURE target, so capturing on the wrapper silently swallows every click on
+the zoom HUD, the layout panel and the card actions. Any new control added to
+the board must sit inside one of those selectors (or add its own).
 
 Zoom range is `2^-3.2 … 2^3.4` (≈ 11 % … 1055 %), so the whole `world` shell
 fits comfortably at the low end and a single card fills the screen at the high

@@ -33,6 +33,15 @@ import { loadBoardGraphAction } from './boardSources';
 
 const REFRESH_MS = 12_000;
 
+/* Zoom feel. WHEEL_GAIN is per pixel of wheel delta (a mouse notch is ~100px);
+ * TRACKPAD_GAIN applies to ctrl+wheel, which is how a trackpad pinch arrives —
+ * its deltas are tiny, so it needs a much larger multiplier to track fingers.
+ * PINCH_GAIN scales the raw finger-distance ratio on touch screens. */
+const WHEEL_GAIN = 0.0055;
+const TRACKPAD_GAIN = 0.022;
+const PINCH_GAIN = 1.9;
+const MAX_ZOOM_STEP = 1.1;
+
 type ScreenCard = {
   card: BoardCard;
   x: number;
@@ -159,6 +168,14 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     const target = e.target as HTMLElement;
+    // Chrome delivers `click` to the CAPTURE target, so capturing the pointer
+    // on this wrapper silently eats clicks on any control inside it (the zoom
+    // HUD, the layout panel, card actions). Never start a board gesture — and
+    // never capture — when the gesture began on a real control.
+    if (target.closest('button, a, select, input, textarea, label, .jboard-hud, .jboard-panel')) {
+      dragRef.current = null;
+      return;
+    }
     const cardEl = target.closest('[data-card-id]') as HTMLElement | null;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -189,7 +206,9 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         const rect = wrapRef.current?.getBoundingClientRect();
         const mx = (a.x + b.x) / 2 - (rect?.left ?? 0);
         const my = (a.y + b.y) / 2 - (rect?.top ?? 0);
-        cameraRef.current.zoomAt(Math.log2(dist / prev), mx, my);
+        // PINCH_GAIN > 1: a physical 1:1 pinch feels sluggish on a board this
+        // large, so fingers move the zoom faster than the raw distance ratio.
+        cameraRef.current.zoomAt(Math.log2(dist / prev) * PINCH_GAIN, mx, my);
       }
       return;
     }
@@ -235,10 +254,29 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* already released */ }
   }, [setProfile]);
 
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    cameraRef.current.zoomAt(-e.deltaY * 0.0016, e.clientX - rect.left, e.clientY - rect.top);
+  /**
+   * Wheel + trackpad pinch. Registered natively with `{ passive: false }`:
+   * React's synthetic onWheel is passive, so `preventDefault()` there is
+   * ignored and a trackpad pinch (which arrives as ctrl+wheel) would zoom the
+   * whole BROWSER instead of the board.
+   */
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.jboard-panel')) return; // let the panel scroll
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      // Normalise line/page delta modes to pixels so a notch feels the same
+      // in every browser.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1;
+      const gain = e.ctrlKey ? TRACKPAD_GAIN : WHEEL_GAIN;
+      const step = Math.max(-MAX_ZOOM_STEP, Math.min(MAX_ZOOM_STEP, -e.deltaY * unit * gain));
+      cameraRef.current.zoomAt(step, e.clientX - rect.left, e.clientY - rect.top);
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
   }, []);
 
   const focusCard = useCallback((id: string) => {
@@ -458,7 +496,6 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
     >
       <canvas ref={canvasRef} className="jboard-canvas" />
