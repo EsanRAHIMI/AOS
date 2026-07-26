@@ -71,6 +71,11 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const [focusId, setFocusId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [zoomPct, setZoomPct] = useState(100);
+  /** Slider mirrors the camera's TARGET zoom; while the owner drags it we stop
+   *  syncing so the eased camera can never fight the thumb. */
+  const [sliderZoom, setSliderZoom] = useState(-0.35);
+  const sliderHeldRef = useRef(false);
 
   const setProfile = useCallback((next: BoardProfile) => {
     profileRef.current = next;
@@ -148,10 +153,21 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     | null
   >(null);
 
+  /** Live pointers for two-finger pinch (touch + trackpad-as-touch). */
+  const pinchRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchDistRef = useRef(0);
+
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     const target = e.target as HTMLElement;
     const cardEl = target.closest('[data-card-id]') as HTMLElement | null;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinchRef.current.size === 2) {
+      const [a, b] = [...pinchRef.current.values()];
+      pinchDistRef.current = Math.hypot(b.x - a.x, b.y - a.y);
+      dragRef.current = null; // pinch wins over pan
+      return;
+    }
     if (cardEl && !cardEl.dataset.cardFixed) {
       dragRef.current = { mode: 'card', id: cardEl.dataset.cardId!, lastX: e.clientX, lastY: e.clientY, moved: false };
       return;
@@ -162,6 +178,21 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   }, []);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
+    // Two-finger pinch: zoom about the midpoint, exactly like the wheel does.
+    if (pinchRef.current.has(e.pointerId)) pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinchRef.current.size === 2) {
+      const [a, b] = [...pinchRef.current.values()];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      const prev = pinchDistRef.current;
+      pinchDistRef.current = dist;
+      if (prev > 0 && dist > 0) {
+        const rect = wrapRef.current?.getBoundingClientRect();
+        const mx = (a.x + b.x) / 2 - (rect?.left ?? 0);
+        const my = (a.y + b.y) / 2 - (rect?.top ?? 0);
+        cameraRef.current.zoomAt(Math.log2(dist / prev), mx, my);
+      }
+      return;
+    }
     const d = dragRef.current;
     if (!d) return;
     const dx = e.clientX - d.lastX;
@@ -190,6 +221,8 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   }, []);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
+    pinchRef.current.delete(e.pointerId);
+    if (pinchRef.current.size < 2) pinchDistRef.current = 0;
     const d = dragRef.current;
     dragRef.current = null;
     if (d?.mode === 'card' && d.moved) {
@@ -219,6 +252,49 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     setFocusId(null);
     cameraRef.current.resetTo(0, 0, -0.35);
   }, []);
+
+  /** Frame the entire board — every card, however far it was dragged out. */
+  const fitAll = useCallback(() => {
+    setFocusId(null);
+    const places = [...placementsRef.current.values()];
+    if (places.length === 0) {
+      cameraRef.current.resetTo(0, 0, -0.35);
+      return;
+    }
+    // Centroid of the actual content (hand-placed cards can be anywhere), then
+    // the radius that still contains the farthest card + its own half-width.
+    let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+    for (const p of places) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    let radius = 1;
+    for (const p of places) radius = Math.max(radius, Math.hypot(p.x - cx, p.y - cy));
+    // + a card's own footprint in world units so edge cards aren't clipped.
+    cameraRef.current.fitRadius(radius + 4.5, { cx, cy, paddingPx: 110 });
+  }, []);
+
+  const zoomStep = useCallback((delta: number) => {
+    cameraRef.current.zoomBy(delta);
+  }, []);
+
+  /* Keyboard: +/− zoom, 0 reset, F fit. Ignored while typing a command. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '+' || e.key === '=') { zoomStep(0.35); e.preventDefault(); }
+      else if (e.key === '-' || e.key === '_') { zoomStep(-0.35); e.preventDefault(); }
+      else if (e.key === '0') { resetView(); e.preventDefault(); }
+      else if (e.key === 'f' || e.key === 'F') { fitAll(); e.preventDefault(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zoomStep, resetView, fitAll]);
 
   /* ------------------------------- the frame ----------------------------- */
   useEffect(() => {
@@ -356,6 +432,8 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       if (now - syncAt > 33) {
         syncAt = now;
         setScreen(out);
+        setZoomPct(Math.round(cam.zoomFactor * 100));
+        if (!sliderHeldRef.current) setSliderZoom(cam.zoomTarget);
       }
       raf = requestAnimationFrame(frame);
     };
@@ -452,7 +530,31 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       </div>
 
       <div className="jboard-hud">
-        <button type="button" className="jboard-btn" onClick={resetView} title="بازگشت به مرکز">مرکز</button>
+        <div className="jboard-zoom" role="group" aria-label="زوم برد">
+          <button type="button" className="jboard-zbtn" onClick={() => zoomStep(-0.35)} title="کوچک‌نمایی (−)" aria-label="کوچک‌نمایی">−</button>
+          <input
+            className="jboard-zslider"
+            type="range"
+            min={cameraRef.current.zoomRange.min}
+            max={cameraRef.current.zoomRange.max}
+            step={0.05}
+            value={sliderZoom}
+            onChange={(e) => {
+              const z = Number(e.target.value);
+              setSliderZoom(z);
+              cameraRef.current.setZoom(z);
+            }}
+            onPointerDown={(e) => { e.stopPropagation(); sliderHeldRef.current = true; }}
+            onPointerUp={() => { sliderHeldRef.current = false; }}
+            onPointerCancel={() => { sliderHeldRef.current = false; }}
+            aria-label="میزان زوم"
+            title="زوم"
+          />
+          <button type="button" className="jboard-zbtn" onClick={() => zoomStep(0.35)} title="بزرگ‌نمایی (+)" aria-label="بزرگ‌نمایی">+</button>
+          <span className="jboard-zpct" title="سطح زوم">{zoomPct}%</span>
+        </div>
+        <button type="button" className="jboard-btn" onClick={fitAll} title="نمایش کل فضا (F)">کل فضا</button>
+        <button type="button" className="jboard-btn" onClick={resetView} title="بازگشت به مرکز (0)">مرکز</button>
         <button type="button" className="jboard-btn" onClick={() => setPanelOpen((v) => !v)} title="شخصی‌سازی برد">
           چیدمان
         </button>

@@ -95,6 +95,11 @@ export class BoardCamera {
     this.state.ty += before.y - after.y;
   }
 
+  /** Zoom about the viewport centre — what the +/− buttons and keys use. */
+  zoomBy(deltaZoom: number): void {
+    this.zoomAt(deltaZoom, this.w * 0.5, this.h * 0.5);
+  }
+
   orbitBy(dYaw: number, dPitch: number): void {
     this.state.yaw += dYaw;
     this.state.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.state.pitch + dPitch));
@@ -103,6 +108,39 @@ export class BoardCamera {
   resetTo(tx: number, ty: number, zoom: number): void {
     this.state.tx = tx;
     this.state.ty = ty;
+    this.state.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
+  }
+
+  /**
+   * Frame everything: centre on the content's centroid and pick the zoom that
+   * fits `radius` world units inside the viewport with a pixel margin. Used by
+   * "fit all" so the owner can always get the whole space back on screen, no
+   * matter how far they have panned or zoomed.
+   */
+  fitRadius(radius: number, opts: { cx?: number; cy?: number; paddingPx?: number } = {}): void {
+    const pad = opts.paddingPx ?? 96;
+    const r = Math.max(1, radius);
+    const half = Math.max(60, Math.min(this.w, this.h) * 0.5 - pad);
+    const targetPxPerUnit = half / r;
+    this.state.tx = opts.cx ?? 0;
+    this.state.ty = opts.cy ?? 0;
+    this.state.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.log2(targetPxPerUnit / BASE_PX_PER_UNIT)));
+  }
+
+  /** 1 = the reference scale; shown as a percentage in the HUD. */
+  get zoomFactor(): number {
+    return Math.pow(2, this.view.zoom);
+  }
+
+  get zoomRange(): { min: number; max: number } {
+    return { min: MIN_ZOOM, max: MAX_ZOOM };
+  }
+
+  get zoomTarget(): number {
+    return this.state.zoom;
+  }
+
+  setZoom(zoom: number): void {
     this.state.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
   }
 

@@ -97,13 +97,21 @@ simulation instead of faking calm.
 | Action | Result |
 |---|---|
 | drag empty space | pan (infinite) |
-| wheel / pinch | zoom about the cursor |
+| wheel | zoom about the cursor |
+| two-finger pinch | zoom about the pinch midpoint |
+| `+` / `−` buttons, `+` / `−` keys | zoom about the viewport centre |
+| zoom slider | direct zoom, with a live % readout |
+| **«کل فضا» button / `F` key** | **fit everything on screen** — centres on the content's centroid and picks the zoom that contains the farthest card (works no matter how far cards were dragged out) |
+| «مرکز» button / `0` key | return to the singularity at default zoom |
 | Alt+drag or right-drag | orbit the board (yaw/pitch) |
 | drag a card | hand-place it permanently |
 | double-click a card | focus + reveal its actions |
 | drag over the black hole | orbit Gargantua (unchanged) |
-| «مرکز» button | return to origin |
 | «چیدمان» button | personalisation panel |
+
+Zoom range is `2^-3.2 … 2^3.4` (≈ 11 % … 1055 %), so the whole `world` shell
+fits comfortably at the low end and a single card fills the screen at the high
+end. Keyboard shortcuts are ignored while the command bar has focus.
 
 ## 7. Visual baselines are untouched
 
