@@ -46,7 +46,10 @@ type ScreenCard = {
   card: BoardCard;
   x: number;
   y: number;
+  /** World scale = perspective x board zoom (drives card size). */
   scale: number;
+  /** Perspective only (drives the depth fade, independent of zoom). */
+  persp: number;
   depth: number;
   visible: boolean;
 };
@@ -406,13 +409,24 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       // --- project cards -------------------------------------------------
       const projected = new Map<string, { x: number; y: number; scale: number; depth: number; visible: boolean }>();
       const out: ScreenCard[] = [];
+      // Cards are part of the WORLD, not the chrome: their size follows the
+      // board zoom exactly like ring radii and the singularity do. Without
+      // this the board only spread cards apart while the black hole alone
+      // changed size. The clamp is a readability floor/ceiling, not a
+      // different scaling law.
+      const worldScale = cam.zoomScale;
       for (const card of visibleCards) {
         const p = placementsRef.current.get(card.id);
         if (!p) continue;
         const d = reduced || p.manual ? { dx: 0, dy: 0, dz: 0 } : driftOffset(card.id, t);
         const pr = cam.project(p.x + d.dx, p.y + d.dy, p.z + d.dz);
         projected.set(card.id, pr);
-        out.push({ card, x: pr.x, y: pr.y, scale: pr.scale, depth: pr.depth, visible: pr.visible });
+        out.push({
+          card, x: pr.x, y: pr.y,
+          scale: Math.max(0.3, Math.min(2.4, pr.scale * worldScale)),
+          persp: pr.scale,
+          depth: pr.depth, visible: pr.visible,
+        });
       }
 
       // --- axons + travelling packets (the neural network) ---------------
@@ -501,24 +515,27 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       <canvas ref={canvasRef} className="jboard-canvas" />
 
       <div className="jboard-cards">
-        {screen.map(({ card, x, y, scale, visible }) => {
+        {screen.map(({ card, x, y, scale, persp, visible }) => {
           if (!visible) return null;
           const isSelf = card.id === 'self';
           const focus = focusId === card.id;
-          const s = Math.max(0.42, Math.min(1.5, scale));
+          const s = scale;
           const pinned = Boolean(profile.pinned[card.id]);
+          // Level of detail: zoomed far out a card collapses to a labelled
+          // chip so the whole space stays readable instead of a wall of text.
+          const lod = s < 0.5 ? ' jboard-card--chip' : s < 0.8 ? ' jboard-card--tight' : '';
           return (
             <article
               key={card.id}
               data-card-id={card.id}
               {...(isSelf ? { 'data-card-fixed': 'true' } : {})}
-              className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}`}
+              className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}${lod}`}
               style={{
                 // The self nameplate hangs below the singularity (offset is
                 // inside the scaled transform, so it tracks the black hole as
                 // the board zooms); every other card sits on its own point.
                 transform: `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${s})${isSelf ? ' translateY(150px)' : ''}`,
-                opacity: Math.max(0.25, Math.min(1, scale * 1.15)),
+                opacity: Math.max(0.35, Math.min(1, persp * 1.15)),
                 borderColor: rgba(card.accent, 0.35 + card.activity * 0.4),
                 boxShadow: `0 0 ${12 + card.activity * 34}px ${rgba(card.accent, 0.1 + card.activity * 0.22)}`,
                 zIndex: Math.round(1000 - (1 - scale) * 500),

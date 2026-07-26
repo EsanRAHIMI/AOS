@@ -647,3 +647,12 @@ button { font: inherit; }
   .jboard-zslider { width: 64px; }
   .jboard-hud { flex-wrap: wrap; justify-content: center; max-width: calc(100% - 24px); }
 }
+
+/* CIN-2c.2 — card level-of-detail. Cards scale with the world, so far-out
+   views collapse them to chips instead of unreadable walls of text. */
+.jboard-card--tight .jboard-card-sub { display: none; }
+.jboard-card--chip { width: 150px; padding: 7px 9px; }
+.jboard-card--chip .jboard-card-sub,
+.jboard-card--chip .jboard-card-metrics,
+.jboard-card--chip .jboard-card-actions { display: none; }
+.jboard-card--chip .jboard-card-h { margin-bottom: 0; }

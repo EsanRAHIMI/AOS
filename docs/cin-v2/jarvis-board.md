@@ -52,6 +52,15 @@ the neural cage and the concept threads all travel and scale with the board as
 one organism. Omit `boardOrigin` and the stage renders exactly as it did
 before the board existed — that is the rollback path.
 
+**One world, one scale.** Ring radii, card size and the singularity's radius
+all multiply by the same `cam.zoomScale` (= `2^(zoom − DEFAULT_ZOOM)`, so it is
+exactly 1 at the opening view). Cards are objects *on* the board, not chrome —
+if only the black hole scaled, zooming would just spread fixed-size cards apart
+while the horizon grew, which is the bug fixed in D-183.4. Two deliberate
+exceptions: card **opacity** follows perspective only (a depth cue must not
+fade the board out when you zoom out), and card content switches to a
+level-of-detail chip below ~0.5 scale so a far view stays readable.
+
 **Layer order (fragile — read before editing CSS):** the stage paints
 `.jboard-canvas` → `.jarvis-live-canvas` → `.jarvis-gl-canvas` (z 1) →
 `.jboard-cards` (z 2) → telemetry (z 3) → caption (z 4) → `.jboard-hud` (z 5)

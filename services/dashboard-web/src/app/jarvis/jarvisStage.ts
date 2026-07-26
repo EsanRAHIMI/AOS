@@ -71,9 +71,11 @@ export function resolveJarvisEnsemble(d: JarvisEnsembleDrive): JarvisEnsemblePos
   const E = JARVIS_ENSEMBLE;
   const cx = d.boardOrigin ? d.boardOrigin.x : d.w * 0.5;
   const cy = d.boardOrigin ? d.boardOrigin.y : d.h * (d.compact ? E.centerY.compact : E.centerY.desktop);
-  // Board zoom scales the organism with the world; clamped so the singularity
-  // never collapses to nothing or swallows the viewport at extreme zoom.
-  const boardScale = d.boardOrigin ? Math.max(0.35, Math.min(2.6, d.boardOrigin.scale)) : 1;
+  // Board zoom scales the organism with the world. The singularity is an
+  // OBJECT ON the board, not chrome: it must shrink and grow exactly like the
+  // rings and the cards do, so the clamp is wide enough to stay faithful and
+  // only guards the degenerate extremes.
+  const boardScale = d.boardOrigin ? Math.max(0.1, Math.min(3, d.boardOrigin.scale)) : 1;
   const scale = Math.min(d.w, d.h) * boardScale;
   const breath = d.reducedMotion ? 1 : 1 + Math.sin(d.t * 0.55) * 0.015;
   // Speak thickens the whole organism slightly (cage + horizon footprint).
