@@ -30,14 +30,38 @@ Moving outward always means "less mine, more shared". A card's ring is
 therefore semantic — it is never decoration, and the owner can re-assign it
 (see §4) because only the owner knows what is personal to them.
 
+## 2.1 Scaling to 50–100+ cards (D-183.8)
+
+A radial board with random angles and straight chords becomes a hairball the
+moment it holds more than a dozen cards. Four mechanisms keep it readable:
+
+1. **Two semantic axes.** Radius = scope (how personal). **Angle = group**
+   (`identity · value · execution · knowledge · trust · infra`). A group owns
+   the same wedge on every ring, so a domain reads as a spoke and related
+   cards are neighbours by construction — most edges then stay inside one
+   narrow wedge instead of crossing the board.
+2. **Deterministic slots + lanes.** Inside a wedge, cards sit on evenly spaced
+   angular slots; when a wedge fills up the layout spills into concentric
+   lanes (small radius offsets) instead of letting cards overlap. Same input →
+   same seats, every reload.
+3. **Radial hierarchical edge bundling.** Edges are drawn in polar space: the
+   angle sweeps the short way while the radius dips toward the common ancestor
+   (the centre), bounded by a keepout. Parallel edges between the same regions
+   follow near-identical arcs and merge into trunks (`radialBundlePath`).
+4. **Degree of interest + edge budget.** Clicking a card focuses it: its
+   neighbourhood keeps full contrast, everything else recedes to 30 %, and all
+   of its wires are drawn regardless of budget. Unfocused and zoomed out, only
+   the structurally strongest wires are drawn (26 below 0.55 zoom, 60 below
+   0.9); the HUD reports `drawn/total` and says to zoom in for the rest.
+
 ## 3. Architecture (five independent modules + one layer)
 
 ```txt
 board/
 ├── boardModel.ts     types, scope rings, activity math   (pure data)
 ├── boardCamera.ts    infinite pan/zoom/orbit + projection (pure math)
-├── boardLayout.ts    ring placement, overlap relaxation   (pure function)
-├── boardSynapses.ts  axon curves + packet simulation      (renderer-agnostic)
+├── boardLayout.ts    scope rings x group wedges + lanes    (pure function)
+├── boardSynapses.ts  radial edge bundling + packet engine  (renderer-agnostic)
 ├── boardProfile.ts   role presets + owner overrides       (persistence seam)
 ├── boardSources.ts   'use server' — real gateway → graph  (fail-soft)
 └── JarvisBoard.tsx   the only file that touches the DOM
@@ -161,8 +185,9 @@ would be noise.
 | **«کل فضا» button / `F` key** | **fit everything on screen** — centres on the content's centroid and picks the zoom that contains the farthest card (works no matter how far cards were dragged out) |
 | «مرکز» button / `0` key | return to the singularity at default zoom |
 | Alt+drag or right-drag | orbit the board (yaw/pitch) |
+| click a card | focus it — neighbourhood stays lit, the rest recedes; click again or click empty space to release |
 | drag a card | hand-place it permanently |
-| double-click a card | focus + reveal its actions |
+| double-click a card | focus + fly the camera to it |
 | drag over the black hole | orbit Gargantua (unchanged) |
 | «چیدمان» button | personalisation panel |
 

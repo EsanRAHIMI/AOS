@@ -47,10 +47,50 @@ export interface BoardMetric {
   heat?: number;
 }
 
+/**
+ * Angular families. Rings answer "how personal is it"; GROUPS answer "what
+ * kind of thing is it". Every card of a group occupies the same angular wedge
+ * on every ring, so a domain reads as a spoke from the centre outward. This is
+ * what keeps the board legible at 50–100+ cards: related cards are neighbours
+ * by construction, and their edges stay inside a narrow wedge instead of
+ * crossing the whole board.
+ */
+export type BoardGroup = 'identity' | 'value' | 'execution' | 'knowledge' | 'trust' | 'infra';
+
+export const BOARD_GROUPS: readonly BoardGroup[] = ['identity', 'value', 'execution', 'knowledge', 'trust', 'infra'] as const;
+
+export const GROUP_LABEL_FA: Record<BoardGroup, string> = {
+  identity: 'هویت و زندگی',
+  value: 'ارزش و دارایی',
+  execution: 'اجرا و عملیات',
+  knowledge: 'دانش و تحقیق',
+  trust: 'اعتماد و روابط',
+  infra: 'زیرساخت',
+};
+
+/** Default family per source; a card may override with its own `group`. */
+export const GROUP_OF_SOURCE: Record<BoardSourceId, BoardGroup> = {
+  profile: 'identity',
+  documents: 'identity',
+  finance: 'value',
+  business: 'value',
+  missions: 'execution',
+  loop: 'execution',
+  proactive: 'execution',
+  memory: 'knowledge',
+  research: 'knowledge',
+  cin: 'trust',
+  relations: 'trust',
+  services: 'infra',
+  custom: 'infra',
+};
+
 export interface BoardCard {
   id: string;
   sourceId: BoardSourceId;
   scope: BoardScope;
+  /** Angular family (defaults to GROUP_OF_SOURCE[sourceId]). */
+  group?: BoardGroup;
   title: string;
   subtitle: string;
   metrics: BoardMetric[];
@@ -100,6 +140,10 @@ export function hash01(id: string): number {
 
 export function scopeIndex(scope: BoardScope): number {
   return BOARD_SCOPES.indexOf(scope);
+}
+
+export function groupOf(card: Pick<BoardCard, 'group' | 'sourceId'>): BoardGroup {
+  return card.group ?? GROUP_OF_SOURCE[card.sourceId] ?? 'infra';
 }
 
 /** Recency → 0..1 activity, halving every `halfLifeMs`. Used by every source

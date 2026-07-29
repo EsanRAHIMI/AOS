@@ -19,12 +19,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardCamera } from './boardCamera';
-import { layoutCards, driftOffset, type CardPlacement } from './boardLayout';
+import { layoutCards, driftOffset, wedgeCenter, type CardPlacement } from './boardLayout';
 import {
-  SCOPE_RING, BOARD_SCOPES,
+  SCOPE_RING, BOARD_SCOPES, GROUP_LABEL_FA, groupOf,
   type BoardCard, type BoardGraph, type BoardScope,
 } from './boardModel';
-import { SynapseTraffic, axonPoint } from './boardSynapses';
+import { SynapseTraffic, radialBundlePath, pointOnPath } from './boardSynapses';
 import {
   DEFAULT_PROFILE, ROLE_LABEL_FA, isSourceVisible, loadBoardProfile,
   resolveScope, saveBoardProfile, type BoardProfile, type BoardRole,
@@ -81,6 +81,14 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const [graph, setGraph] = useState<BoardGraph>(graphRef.current);
   const [screen, setScreen] = useState<ScreenCard[]>([]);
   const [focusId, setFocusId] = useState<string | null>(null);
+  /** Focus mirrored into a ref so the render loop reads it without a restart. */
+  const focusRef = useRef<string | null>(null);
+  focusRef.current = focusId;
+  /** How many wires actually survived the zoom budget (reported in the HUD). */
+  const drawnLinksRef = useRef(0);
+  const [drawnLinks, setDrawnLinks] = useState(0);
+  /** Group wedges that actually contain cards — only those get a spoke. */
+  const groupsPresentRef = useRef<import('./boardModel').BoardGroup[]>([]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [zoomPct, setZoomPct] = useState(100);
@@ -210,6 +218,17 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       .map((c) => (c.id === 'self' ? c : { ...c, scope: resolveScope(profile, c.sourceId, c.scope) }));
   }, [graph.cards, profile]);
 
+  /** Cards inside the focused card's neighbourhood — everything else recedes. */
+  const neighbourhood = useMemo(() => {
+    if (!focusId) return null;
+    const set = new Set<string>([focusId]);
+    for (const l of graph.links) {
+      if (l.from === focusId) set.add(l.to);
+      if (l.to === focusId) set.add(l.from);
+    }
+    return set;
+  }, [focusId, graph.links]);
+
   const visibleLinks = useMemo(() => {
     const ids = new Set(visibleCards.map((c) => c.id));
     return graph.links.filter((l) => ids.has(l.from) && ids.has(l.to));
@@ -219,13 +238,14 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     const placed = layoutCards(visibleCards.filter((c) => c.scope !== 'self'), profile.placements);
     const map = new Map<string, CardPlacement>();
     for (const p of placed) map.set(p.id, p);
-    map.set('self', { id: 'self', x: 0, y: 0, z: 0, r: 0, scope: 'self', manual: true });
+    map.set('self', { id: 'self', x: 0, y: 0, z: 0, r: 0, scope: 'self', group: 'identity', theta: -Math.PI / 2, manual: true });
     placementsRef.current = map;
+    groupsPresentRef.current = [...new Set(visibleCards.filter((c) => c.scope !== 'self').map((c) => groupOf(c)))];
   }, [visibleCards, profile.placements]);
 
   /* ------------------------------ interaction ---------------------------- */
   const dragRef = useRef<
-    | { mode: 'pan'; lastX: number; lastY: number }
+    | { mode: 'pan'; lastX: number; lastY: number; moved: boolean }
     | { mode: 'orbit'; lastX: number; lastY: number }
     | { mode: 'card'; id: string; lastX: number; lastY: number; moved: boolean }
     | null
@@ -257,7 +277,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     }
     dragRef.current = e.altKey || e.button === 2
       ? { mode: 'orbit', lastX: e.clientX, lastY: e.clientY }
-      : { mode: 'pan', lastX: e.clientX, lastY: e.clientY };
+      : { mode: 'pan', lastX: e.clientX, lastY: e.clientY, moved: false };
   }, []);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
@@ -268,7 +288,10 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     const dy = e.clientY - d.lastY;
     d.lastX = e.clientX;
     d.lastY = e.clientY;
-    if (d.mode === 'pan') cameraRef.current.panByScreen(dx, dy);
+    if (d.mode === 'pan') {
+      d.moved = d.moved || Math.abs(dx) + Math.abs(dy) > 2;
+      cameraRef.current.panByScreen(dx, dy);
+    }
     else if (d.mode === 'orbit') cameraRef.current.orbitBy(dx * 0.004, -dy * 0.003);
     else {
       d.moved = d.moved || Math.abs(dx) + Math.abs(dy) > 2;
@@ -292,6 +315,12 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     const d = dragRef.current;
     dragRef.current = null;
+    if (d?.mode === 'card' && !d.moved) {
+      // A plain click focuses the card: its neighbourhood stays lit, the rest
+      // of the board recedes. Clicking it again releases the focus.
+      setFocusId((cur) => (cur === d.id ? null : d.id));
+    }
+    if (d?.mode === 'pan' && !d.moved) setFocusId(null);
     if (d?.mode === 'card' && d.moved) {
       const p = placementsRef.current.get(d.id);
       if (p) {
@@ -509,6 +538,26 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         }
       }
 
+      // Group wedges: faint spokes + a caption just outside the last ring, so
+      // the angular axis (what KIND of thing) is as readable as the radial one.
+      const outer = SCOPE_RING.world.radius + 3.2;
+      for (const g of groupsPresentRef.current) {
+        const ang = wedgeCenter(g);
+        const p0 = cam.project(Math.cos(ang) * SCOPE_RING.personal.radius * 0.6, Math.sin(ang) * SCOPE_RING.personal.radius * 0.6, 0);
+        const p1 = cam.project(Math.cos(ang) * outer, Math.sin(ang) * outer, 0);
+        if (!p0.visible || !p1.visible) continue;
+        ctx.strokeStyle = 'rgba(190,205,235,0.05)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+        ctx.font = '9.5px ui-monospace, monospace';
+        ctx.fillStyle = 'rgba(190,205,235,0.34)';
+        ctx.textAlign = 'center';
+        ctx.fillText(GROUP_LABEL_FA[g], p1.x, p1.y);
+      }
+
       // --- project cards -------------------------------------------------
       const projected = new Map<string, { x: number; y: number; scale: number; depth: number; visible: boolean }>();
       const out: ScreenCard[] = [];
@@ -533,77 +582,105 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       }
 
       // --- axons + travelling packets (the neural network) ---------------
-      // Tone lookup once per frame — the axon/packet loops must stay O(links).
       const toneOf = new Map<string, [number, number, number]>();
       for (const c of visibleCards) toneOf.set(c.id, SCOPE_RING[c.scope].tone);
-      // The wire itself is STABLE — its weight comes from structural strength
-      // only. Brightness above that baseline is `heat`: a decaying afterglow
-      // set when a REAL exchange was observed on that exact edge. No traffic,
-      // no glow; the wiring stays fully visible either way.
       const heatOf = (l: (typeof links)[number]) => trafficRef.current.heatOf(l.from, l.to);
 
+      // Degree of interest: with a card focused, its neighbourhood keeps full
+      // contrast and everything else recedes. This — not prettier curves — is
+      // what makes a 100-card board actually usable.
+      const doi = focusRef.current;
+      const near = new Set<string>();
+      if (doi) {
+        near.add(doi);
+        for (const l of links) {
+          if (l.from === doi) near.add(l.to);
+          if (l.to === doi) near.add(l.from);
+        }
+      }
+      const linkFocus = (l: (typeof links)[number]) => !doi || l.from === doi || l.to === doi;
+
+      // Edge budget: zoomed far out, drawing every wire is noise. Keep the
+      // structurally strongest (and anything hot or focused) and drop the
+      // rest until the owner zooms in — the count is reported in the HUD.
+      const budget = doi ? links.length : cam.zoomScale < 0.55 ? 26 : cam.zoomScale < 0.9 ? 60 : links.length;
+      const ranked = links.map((l, idx) => ({ l, idx, w: l.strength + heatOf(l) * 2 + (linkFocus(l) ? 5 : 0) }));
+      if (ranked.length > budget) ranked.sort((u, v) => v.w - u.w);
+      const drawn = ranked.slice(0, budget);
+      drawnLinksRef.current = drawn.length;
+
+      // World-space bundled path per link, reused by the packet pass so the
+      // packets ride exactly the wire the owner sees.
+      const pathOf = new Map<number, Array<{ x: number; y: number }>>();
+      const projectPath = (pts: Array<{ x: number; y: number }>) => {
+        const out: Array<{ x: number; y: number; ok: boolean }> = [];
+        for (const w of pts) {
+          const pr = cam.project(w.x, w.y, 0);
+          out.push({ x: pr.x, y: pr.y, ok: pr.visible });
+        }
+        return out;
+      };
+
       ctx.lineCap = 'round';
-      for (const l of links) {
-        const a = projected.get(l.from);
-        const b = projected.get(l.to);
-        if (!a || !b || !a.visible || !b.visible) continue;
+      ctx.lineJoin = 'round';
+      for (const { l, idx } of drawn) {
+        const pa = placementsRef.current.get(l.from);
+        const pb = placementsRef.current.get(l.to);
+        if (!pa || !pb) continue;
+        const path = radialBundlePath(
+          { r: pa.r || 0.001, theta: pa.theta },
+          { r: pb.r || 0.001, theta: pb.theta },
+          { minRadius: SCOPE_RING.personal.radius * 0.42 },
+        );
+        pathOf.set(idx, path);
+        const screen = projectPath(path);
+        if (!screen.some((q) => q.ok)) continue;
+
         const heat = heatOf(l);
-        const bow = Math.hypot(b.x - a.x, b.y - a.y) * 0.16;
         const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
-        const mid = axonPoint(a.x, a.y, b.x, b.y, bow, 0.5);
-        const cxq = mid.x * 2 - (a.x + b.x) / 2;
-        const cyq = mid.y * 2 - (a.y + b.y) / 2;
+        const dim = doi && !linkFocus(l) ? 0.18 : 1;
         const trace = () => {
           ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.quadraticCurveTo(cxq, cyq, b.x, b.y);
+          ctx.moveTo(screen[0].x, screen[0].y);
+          for (let k = 1; k < screen.length; k += 1) ctx.lineTo(screen[k].x, screen[k].y);
           ctx.stroke();
         };
-        // Wide, very soft underglow makes the wiring legible over the
-        // starfield without shouting; the crisp core line carries the detail.
-        ctx.strokeStyle = rgba(tone, 0.05 + heat * 0.12);
-        ctx.lineWidth = 3.2 + l.strength * 2.6 + heat * 3;
+        ctx.strokeStyle = rgba(tone, (0.045 + heat * 0.12) * dim);
+        ctx.lineWidth = 3 + l.strength * 2.4 + heat * 3;
         trace();
-        ctx.strokeStyle = rgba(tone, 0.2 + l.strength * 0.3 + heat * 0.4);
-        ctx.lineWidth = 0.9 + l.strength * 1.3 + heat * 1.3;
+        ctx.strokeStyle = rgba(tone, (0.17 + l.strength * 0.3 + heat * 0.4) * dim);
+        ctx.lineWidth = 0.85 + l.strength * 1.2 + heat * 1.3;
         trace();
-        // Endpoint terminals — where the axon meets the card.
-        for (const [pt, isSender] of [[a, true], [b, false]] as const) {
-          const r = (isSender ? 2.6 : 2) * Math.max(0.5, pt.scale);
-          ctx.beginPath();
-          ctx.fillStyle = rgba(tone, isSender ? 0.35 + heat * 0.5 : 0.22 + heat * 0.35);
-          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
       }
 
       ctx.globalCompositeOperation = 'lighter';
       for (const pk of trafficRef.current.list()) {
         const l = links[pk.linkIndex];
         if (!l || pk.t < 0) continue;
-        const a = projected.get(l.from);
-        const b = projected.get(l.to);
-        if (!a || !b || !a.visible || !b.visible) continue;
-        const bow = Math.hypot(b.x - a.x, b.y - a.y) * 0.16;
-        const pt = axonPoint(a.x, a.y, b.x, b.y, bow, pk.t);
+        const path = pathOf.get(pk.linkIndex);
+        if (!path) continue; // wire not drawn at this zoom — no ghost packets
+        const dim = doi && !linkFocus(l) ? 0.2 : 1;
+        const w = pointOnPath(path, pk.t);
+        const wTail = pointOnPath(path, Math.max(0, pk.t - 0.05));
+        const pr = cam.project(w.x, w.y, 0);
+        const prTail = cam.project(wTail.x, wTail.y, 0);
+        if (!pr.visible) continue;
         const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
-        const fade = Math.sin(Math.min(1, pk.t) * Math.PI) * pk.life;
-        const r = (pk.size + 1.1) * Math.max(0.55, (a.scale + b.scale) / 2);
-        // Short comet tail so direction of travel is unmistakable.
-        const tail = axonPoint(a.x, a.y, b.x, b.y, bow, Math.max(0, pk.t - 0.06));
-        ctx.strokeStyle = rgba(tone, 0.5 * fade);
-        ctx.lineWidth = r * 1.1;
+        const fade = Math.sin(Math.min(1, pk.t) * Math.PI) * pk.life * dim;
+        const r = (pk.size + 1) * Math.max(0.5, pr.scale * cam.zoomScale);
+        ctx.strokeStyle = rgba(tone, 0.45 * fade);
+        ctx.lineWidth = r * 1.05;
         ctx.beginPath();
-        ctx.moveTo(tail.x, tail.y);
-        ctx.lineTo(pt.x, pt.y);
+        ctx.moveTo(prTail.x, prTail.y);
+        ctx.lineTo(pr.x, pr.y);
         ctx.stroke();
-        const g = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r * 3.4);
+        const g = ctx.createRadialGradient(pr.x, pr.y, 0, pr.x, pr.y, r * 3.2);
         g.addColorStop(0, rgba(tone, 0.95 * fade));
         g.addColorStop(0.35, rgba(tone, 0.4 * fade));
         g.addColorStop(1, rgba(tone, 0));
         ctx.beginPath();
         ctx.fillStyle = g;
-        ctx.arc(pt.x, pt.y, r * 3.4, 0, Math.PI * 2);
+        ctx.arc(pr.x, pr.y, r * 3.2, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalCompositeOperation = 'source-over';
@@ -621,6 +698,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         syncAt = now;
         setScreen(out);
         setZoomPct(Math.round(cam.zoomFactor * 100));
+        setDrawnLinks(drawnLinksRef.current);
         if (!sliderHeldRef.current) setSliderZoom(cam.zoomTarget);
       }
       raf = requestAnimationFrame(frame);
@@ -658,18 +736,19 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
           // Level of detail: zoomed far out a card collapses to a labelled
           // chip so the whole space stays readable instead of a wall of text.
           const lod = s < 0.5 ? ' jboard-card--chip' : s < 0.8 ? ' jboard-card--tight' : '';
+          const far = neighbourhood && !neighbourhood.has(card.id);
           return (
             <article
               key={card.id}
               data-card-id={card.id}
               {...(isSelf ? { 'data-card-fixed': 'true' } : {})}
-              className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}${lod}`}
+              className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}${lod}${far ? ' jboard-card--far' : ''}`}
               style={{
                 // The self nameplate hangs below the singularity (offset is
                 // inside the scaled transform, so it tracks the black hole as
                 // the board zooms); every other card sits on its own point.
                 transform: `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${s})${isSelf ? ' translateY(150px)' : ''}`,
-                opacity: Math.max(0.35, Math.min(1, persp * 1.15)),
+                opacity: Math.max(0.35, Math.min(1, persp * 1.15)) * (far ? 0.3 : 1),
                 borderColor: rgba(card.accent, 0.35 + card.activity * 0.4),
                 boxShadow: `0 0 ${12 + card.activity * 34}px ${rgba(card.accent, 0.1 + card.activity * 0.22)}`,
                 zIndex: Math.round(1000 - (1 - scale) * 500),
@@ -752,7 +831,9 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
           چیدمان
         </button>
         <span className="jboard-stat">
-          {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${visibleLinks.length} سیناپس`}
+          {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${drawnLinks < visibleLinks.length ? `${drawnLinks}/${visibleLinks.length}` : visibleLinks.length} سیناپس`}
+          {!loading && drawnLinks < visibleLinks.length ? ' (زوم کنید تا همه دیده شوند)' : ''}
+          {focusId ? ' · فوکوس روی یک کارت — کلیک روی فضای خالی برای خروج' : ''}
           {!loading && (() => {
             void nowTick; // re-render each second so the age stays truthful
             if (!lastExchange) return ' · بدون تبادل داده تا این لحظه';

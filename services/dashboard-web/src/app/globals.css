@@ -662,3 +662,11 @@ button { font: inherit; }
 .jboard-card--chip .jboard-card-metrics,
 .jboard-card--chip .jboard-card-actions { display: none; }
 .jboard-card--chip .jboard-card-h { margin-bottom: 0; }
+
+/* CIN-2c.3 — degree-of-interest. Focusing a card keeps its neighbourhood lit
+   and lets the rest of the board recede; essential once the board carries
+   dozens of cards. */
+.jboard-card--far { filter: saturate(0.35); }
+.jboard-card--far .jboard-card-metrics,
+.jboard-card--far .jboard-card-sub { opacity: 0.5; }
+.jboard-card--focus { border-color: rgba(255, 255, 255, 0.45) !important; }
