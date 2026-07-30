@@ -1628,3 +1628,28 @@ button { font: inherit; }
   .calx-week-body, .calx-week-head { grid-template-columns: 34px repeat(7, minmax(38px, 1fr)); }
   .calx-week-body { overflow-x: auto; }
 }
+
+/* ------------------------------------------- D-193e: calendar switchboard */
+.calx-picker { padding: 16px 18px; }
+.calpick-wrap h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 620; }
+.calpick-wrap h3 + p { margin-bottom: 8px; }
+.calpick-wrap > h3:not(:first-child) { margin-top: 16px; }
+.calpick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.calpick-row {
+  width: 100%; display: flex; align-items: center; gap: 9px; cursor: pointer; font: inherit;
+  padding: 8px 10px; border-radius: var(--r-sm); text-align: start; color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.06); background: rgba(255, 255, 255, 0.02);
+}
+.calpick-row:hover { border-color: rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.05); }
+.calpick li.on .calpick-row { background: rgba(110, 168, 255, 0.08); border-color: rgba(110, 168, 255, 0.28); }
+.calpick-row:disabled { opacity: 0.5; cursor: default; }
+.calpick-box {
+  flex: none; width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center;
+  font-size: 10px; color: #0a0f1c; border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.calpick-box.on { background: var(--accent); border-color: transparent; }
+.calpick-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.calpick-name { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calpick-name em { font-style: normal; font-size: 10px; color: var(--muted-2); }
+.calpick-role { flex: none; font-size: 10px; color: var(--muted); }
+.calx-day-src { font-size: 10.5px; color: var(--accent); opacity: 0.85; text-align: start; }

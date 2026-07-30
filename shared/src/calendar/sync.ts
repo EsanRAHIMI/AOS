@@ -47,6 +47,15 @@ export const CalendarRefSchema = z.object({
   backgroundColor: z.string().default(''),
   /** True for the calendar this system creates and may write to freely. */
   isAosCalendar: z.boolean().default(false),
+  /**
+   * Whether THIS system syncs and shows it. Deliberately separate from
+   * Google's `selected`: that flag reflects what is ticked in Google's own UI,
+   * which is a different decision from what the owner wants their assistant
+   * working with. Defaults to calendars they own — a calendar shared with you
+   * is someone else's, and pulling it in unasked is how this system ended up
+   * displaying another person's schedule.
+   */
+  enabled: z.boolean().default(false),
   updatedAt: z.string(),
 });
 export type CalendarRef = z.infer<typeof CalendarRefSchema>;
@@ -216,7 +225,9 @@ export async function purgeMirror(actorId: string): Promise<{ events: number; ta
 export async function syncCalendarList(actorId: string, env: NodeJS.ProcessEnv = process.env): Promise<CalendarRef[]> {
   const account = (await getGrant(actorId))?.accountEmail ?? '';
   const res = await googleCall<{ items?: Array<Record<string, unknown>> }>(
-    actorId, CALENDAR_API, '/users/me/calendarList', { query: { maxResults: 250, showHidden: false }, env },
+    actorId, CALENDAR_API, '/users/me/calendarList', // showHidden: the owner must see every calendar they have, not just
+    // the ones currently ticked in Google's own UI.
+    { query: { maxResults: 250, showHidden: true }, env },
   );
   const now = nowIso();
   const refs: CalendarRef[] = (res.items ?? []).map((c) => CalendarRefSchema.parse({
@@ -231,13 +242,45 @@ export async function syncCalendarList(actorId: string, env: NodeJS.ProcessEnv =
     selected: c.selected !== false,
     backgroundColor: String(c.backgroundColor ?? ''),
     isAosCalendar: String(c.summary ?? '') === AOS_CALENDAR_SUMMARY,
+    enabled: false,      // replaced below by the owner's stored choice
     updatedAt: now,
   }));
 
+  /* Preserve the owner's choice across syncs. A refresh of the calendar list
+   * must never silently re-enable something they turned off, nor disable
+   * something they turned on. */
+  const existing = new Map(
+    (await calendarsCol().find({ actorId }, { projection: { _id: 0 } as never }).toArray())
+      .map((c) => [c.calendarId, c.enabled]),
+  );
+
   for (const ref of refs) {
+    const prior = existing.get(ref.calendarId);
+    ref.enabled = prior !== undefined
+      ? prior
+      // First time we see it: on if the owner owns it, off if it is someone
+      // else's calendar shared with them.
+      : ref.accessRole === 'owner' || ref.isAosCalendar;
     await calendarsCol().updateOne({ actorId, calendarId: ref.calendarId }, { $set: ref }, { upsert: true });
   }
   return refs;
+}
+
+/**
+ * Turn a calendar on or off for this system. Disabling drops its mirrored
+ * events immediately — leaving them would show a calendar the owner just said
+ * they did not want.
+ */
+export async function setCalendarEnabled(
+  actorId: string, calendarId: string, enabled: boolean,
+): Promise<{ calendarId: string; enabled: boolean; removed: number }> {
+  await calendarsCol().updateOne({ actorId, calendarId }, { $set: { enabled, updatedAt: nowIso() } });
+  if (enabled) return { calendarId, enabled, removed: 0 };
+
+  const res = await eventsCol().deleteMany({ actorId, calendarId });
+  // Its sync token described a mirror that no longer exists.
+  await stateCol().deleteMany({ actorId, resourceId: calendarId });
+  return { calendarId, enabled, removed: res.deletedCount ?? 0 };
 }
 
 export async function listCalendars(actorId: string): Promise<CalendarRef[]> {
@@ -474,7 +517,16 @@ export async function readAgenda(q: AgendaQuery): Promise<CalendarEvent[]> {
     status: { $ne: 'cancelled' },
     start: { $gte: q.fromIso, $lte: q.toIso },
   };
-  if (q.calendarIds?.length) filter.calendarId = { $in: q.calendarIds };
+  if (q.calendarIds?.length) {
+    filter.calendarId = { $in: q.calendarIds };
+  } else {
+    /* Only enabled calendars. Belt-and-braces with the delete-on-disable
+     * above: a row that outlived its calendar must still never render. */
+    const enabled = (await calendarsCol()
+      .find({ actorId: q.actorId, account, enabled: true }, { projection: { _id: 0 } as never }).toArray())
+      .map((c) => c.calendarId);
+    filter.calendarId = { $in: enabled };
+  }
   const docs = await eventsCol()
     .find(filter as never, { projection: { _id: 0 } as never })
     .sort({ start: 1 })
@@ -504,7 +556,7 @@ export async function syncStates(actorId: string): Promise<SyncState[]> {
 export async function syncAll(actorId: string, env: NodeJS.ProcessEnv = process.env): Promise<SyncResult[]> {
   const calendars = await syncCalendarList(actorId, env);
   const results: SyncResult[] = [];
-  for (const cal of calendars.filter((c) => c.selected)) {
+  for (const cal of calendars.filter((c) => c.enabled)) {
     results.push(await syncEvents(actorId, cal.calendarId, env));
   }
   results.push(await syncTasks(actorId, '@default', env));

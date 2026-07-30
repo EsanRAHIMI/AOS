@@ -186,7 +186,9 @@ export function Agenda({ events, selected, anchor, view }: {
 
 /* -------------------------------------------------------------- day panel */
 
-export function DayPanel({ dayKey, events }: { dayKey: string; events: CalEvent[] }) {
+export function DayPanel({ dayKey, events, calendars }: {
+  dayKey: string; events: CalEvent[]; calendars?: Record<string, string>;
+}) {
   const j = toJalali(dayKey);
   const list = (indexByDay(events).get(dayKey) ?? []);
   const weekday = WEEKDAY_FA[(new Date(`${dayKey}T12:00:00Z`).getDay() + 1) % 7];
@@ -211,6 +213,11 @@ export function DayPanel({ dayKey, events }: { dayKey: string; events: CalEvent[
                 {e.createdByAos && <span className="calx-aos">AOS</span>}
               </div>
               <div className="calx-day-s" {...bidiProps(e.summary)}>{e.summary || '(بدون عنوان)'}</div>
+              {/* Which calendar this came from — with several enabled, an
+                * event without a source is an event you cannot act on. */}
+              {calendars?.[e.calendarId] && (
+                <div className="calx-day-src" {...bidiProps(calendars[e.calendarId])}>{calendars[e.calendarId]}</div>
+              )}
               {e.location && <div className="calx-day-m" {...bidiProps(e.location)}>{e.location}</div>}
               {(e.attendees?.length ?? 0) > 0 && (
                 <div className="calx-day-m">{e.attendees!.length} مهمان</div>

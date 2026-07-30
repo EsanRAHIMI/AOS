@@ -2,6 +2,40 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — The owner picks which calendars this system works with (D-193e)
+
+Owner: only one calendar was showing, and only partly; they want to see every
+calendar on the account and choose which are active.
+
+Two separate mistakes, pulling in opposite directions:
+
+- `calendarList` was fetched with `showHidden: false`, so calendars not
+  currently ticked in Google's own UI were never even listed.
+- Sync then filtered on Google's `selected` flag — which reflects what is
+  ticked in Google's calendar UI, a different question from what the owner
+  wants their assistant working with.
+
+Between them, some calendars were invisible and others were pulled in unasked
+(that is how another account's schedule appeared).
+
+- **All calendars are listed** (`showHidden: true`), grouped in the UI by
+  «تقویم‌های من» and «به اشتراک گذاشته‌شده با من», each showing its access role.
+- **A local `enabled` flag**, separate from Google's `selected`, decides what
+  this system syncs and shows. First-seen default: on for calendars the account
+  OWNS, off for ones shared by other people — a calendar someone shared is
+  theirs, and importing it silently is the bug that started this.
+- **The owner's choice survives every list refresh.** A resync must never
+  re-enable what they turned off.
+- **Disabling deletes that calendar's mirrored events and its sync token.**
+  Leaving rows behind would keep showing a calendar they just switched off; the
+  token described a mirror that no longer exists.
+- **Enabling syncs in the background**, so a large calendar cannot time out the
+  toggle — the same lesson as D-193d.
+- Events in the day panel now name their source calendar. With several enabled,
+  an event you cannot attribute is an event you cannot act on.
+
+3 new contract tests. 307/307 shared, 131/131 dashboard, all typecheck.
+
 ## 2026-07-31 — A slow success reported as a failure (D-193d)
 
 The redirect now lands correctly, but the page said `exchange_failed` — while

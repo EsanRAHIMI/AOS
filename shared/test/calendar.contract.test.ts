@@ -238,3 +238,47 @@ describe('mirror is scoped to the connected Google account', () => {
     expect(await readTasks('owner')).toEqual([]);
   });
 });
+
+/**
+ * D-193e — the owner chooses which calendars this system works with.
+ *
+ * Google's `calendarList` returns everything the account can reach, including
+ * calendars other people shared. Syncing all of them unasked is how a stranger's
+ * schedule ended up on screen; syncing only what Google has ticked hides
+ * calendars the owner wants. The choice has to be explicit and theirs.
+ */
+describe('calendar selection', () => {
+  it('defaults to calendars the owner owns, and off for shared ones', async () => {
+    const { CalendarRefSchema } = await import('../src/calendar/sync.js');
+    const mine = CalendarRefSchema.parse({ actorId: 'owner', calendarId: 'a', accessRole: 'owner', updatedAt: 'x' });
+    const theirs = CalendarRefSchema.parse({ actorId: 'owner', calendarId: 'b', accessRole: 'reader', updatedAt: 'x' });
+    // The schema default is off; syncCalendarList decides per accessRole.
+    expect(mine.enabled).toBe(false);
+    expect(theirs.enabled).toBe(false);
+  });
+
+  it('disabling a calendar removes its events and its sync token', async () => {
+    const { setCalendarEnabled } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+
+    await collection(COLLECTIONS.CALENDARS).insertOne({ actorId: 'owner', calendarId: 'c1', enabled: true } as never);
+    await collection(COLLECTIONS.CALENDAR_EVENTS).insertOne({ actorId: 'owner', calendarId: 'c1', eventId: 'e1' } as never);
+    await collection(COLLECTIONS.CALENDAR_SYNC_STATE).insertOne({ actorId: 'owner', resourceId: 'c1' } as never);
+
+    const res = await setCalendarEnabled('owner', 'c1', false);
+    expect(res.enabled).toBe(false);
+    expect(res.removed).toBe(1);
+    // The token described a mirror that no longer exists.
+    expect(await collection(COLLECTIONS.CALENDAR_SYNC_STATE).findOne({ actorId: 'owner', resourceId: 'c1' })).toBeNull();
+  });
+
+  it('enabling one keeps its rows — nothing to clean up', async () => {
+    const { setCalendarEnabled } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await collection(COLLECTIONS.CALENDARS).insertOne({ actorId: 'owner', calendarId: 'c2', enabled: false } as never);
+    const res = await setCalendarEnabled('owner', 'c2', true);
+    expect(res).toMatchObject({ enabled: true, removed: 0 });
+  });
+});

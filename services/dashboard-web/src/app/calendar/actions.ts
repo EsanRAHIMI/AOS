@@ -52,3 +52,13 @@ export async function createTaskAction(body: Record<string, unknown>) {
     return { ok: false, error: e instanceof Error ? e.message : 'خطا' };
   }
 }
+
+export async function toggleCalendarAction(calendarId: string, enabled: boolean) {
+  try {
+    await gateway.calendarToggle(calendarId, enabled);
+    revalidatePath('/calendar');
+    return { ok: true, error: '' };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'خطا' };
+  }
+}

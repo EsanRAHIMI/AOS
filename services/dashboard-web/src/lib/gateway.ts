@@ -384,6 +384,9 @@ export const gateway = {
     call<{ accountEmail: string; synced: number }>('/v1/calendar/oauth/exchange',
       { method: 'POST', body: JSON.stringify({ code, state }) }),
   calendarDisconnect: () => call<{ removed: boolean }>('/v1/calendar/disconnect', { method: 'POST', body: '{}' }),
+  calendarToggle: (calendarId: string, enabled: boolean) =>
+    call<{ calendarId: string; enabled: boolean; removed: number }>('/v1/calendar/calendars/toggle',
+      { method: 'POST', body: JSON.stringify({ calendarId, enabled }) }),
   calendarSync: () => call<{ results: Array<Record<string, unknown>> }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
   calendarAgenda: (from?: string, to?: string) => call<{ events: Array<Record<string, unknown>> }>(
     `/v1/calendar/agenda${from ? `?from=${encodeURIComponent(from)}${to ? `&to=${encodeURIComponent(to)}` : ''}` : ''}`),

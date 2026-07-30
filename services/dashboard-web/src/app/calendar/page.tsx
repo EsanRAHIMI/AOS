@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
-import { CalendarControls, ConnectButton } from './controls';
+import { CalendarControls, ConnectButton, CalendarPicker, type CalendarRow } from './controls';
 import { MonthGrid, WeekGrid, Agenda, DayPanel, CalendarNav } from './views';
 import { toJalali, shiftMonth, addDays, todayKey, buildWeek, type CalEvent, type CalView } from './format';
 import { bidiProps } from '@/lib/rtl';
@@ -98,6 +98,12 @@ export default async function CalendarPage({ searchParams }: {
 
   const overdue = tasks.filter((t) => t.due && t.due.slice(0, 10) < todayKey());
 
+  /** calendarId → display name, so an event can say where it came from. */
+  const calendarNames = Object.fromEntries(
+    ((status?.calendars ?? []) as Array<{ calendarId?: string; summary?: string }>)
+      .map((c) => [String(c.calendarId ?? ''), String(c.summary ?? c.calendarId ?? '')]),
+  );
+
   return (
     <div className="cal" dir="rtl">
       <header className="cal-head">
@@ -173,7 +179,11 @@ export default async function CalendarPage({ searchParams }: {
             </section>
 
             <div className="calx-side">
-              <DayPanel dayKey={selected} events={events} />
+              <DayPanel dayKey={selected} events={events} calendars={calendarNames} />
+
+              <section className="cal-glass calx-picker">
+                <CalendarPicker calendars={(status?.calendars ?? []) as unknown as CalendarRow[]} />
+              </section>
 
               <section className="cal-glass cal-tasks">
                 <h2>کارها و یادآوری‌ها</h2>

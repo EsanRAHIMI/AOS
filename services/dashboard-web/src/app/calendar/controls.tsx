@@ -7,7 +7,7 @@
  * server, and the state must be minted where it will later be verified.
  */
 import { useState } from 'react';
-import { calendarAuthUrlAction, syncCalendarAction, disconnectCalendarAction } from './actions';
+import { calendarAuthUrlAction, syncCalendarAction, disconnectCalendarAction, toggleCalendarAction } from './actions';
 import { bidiProps } from '@/lib/rtl';
 
 export function ConnectButton({ disabled }: { disabled?: boolean }) {
@@ -69,6 +69,97 @@ export function CalendarControls({ connected }: { connected: boolean }) {
       >قطع اتصال</button>
 
       {msg && <span className="cal-msg" {...bidiProps(msg)}>{msg}</span>}
+    </div>
+  );
+}
+
+export interface CalendarRow {
+  calendarId: string;
+  summary: string;
+  accessRole: string;
+  primary: boolean;
+  enabled: boolean;
+  isAosCalendar: boolean;
+  backgroundColor: string;
+}
+
+const ROLE_FA: Record<string, string> = {
+  owner: 'مال شما',
+  writer: 'اجازهٔ نوشتن',
+  reader: 'فقط خواندن',
+  freeBusyReader: 'فقط مشغول/آزاد',
+  writerWithoutPrivateAccess: 'نوشتن (بدون رویداد خصوصی)',
+};
+
+/**
+ * The calendar switchboard (D-193e).
+ *
+ * Google's `calendarList` returns every calendar the account can reach —
+ * including ones other people shared. Syncing all of them unasked is how this
+ * system ended up showing someone else's schedule, and syncing only the ones
+ * Google has ticked hides calendars the owner actually wants. So the choice is
+ * explicit and theirs, defaulting to the calendars they own.
+ */
+export function CalendarPicker({ calendars }: { calendars: CalendarRow[] }) {
+  const [busy, setBusy] = useState('');
+  const [rows, setRows] = useState(calendars);
+
+  const toggle = async (row: CalendarRow) => {
+    setBusy(row.calendarId);
+    const next = !row.enabled;
+    // Optimistic: the switch must feel like a switch, not a form submission.
+    setRows((r) => r.map((c) => (c.calendarId === row.calendarId ? { ...c, enabled: next } : c)));
+    const res = await toggleCalendarAction(row.calendarId, next);
+    setBusy('');
+    if (!res.ok) setRows((r) => r.map((c) => (c.calendarId === row.calendarId ? { ...c, enabled: row.enabled } : c)));
+  };
+
+  if (rows.length === 0) {
+    return <p className="calx-empty">هنوز تقویمی خوانده نشده — «همگام‌سازی» را بزنید.</p>;
+  }
+
+  const mine = rows.filter((c) => c.accessRole === 'owner' || c.isAosCalendar);
+  const shared = rows.filter((c) => !(c.accessRole === 'owner' || c.isAosCalendar));
+
+  const list = (items: CalendarRow[]) => (
+    <ul className="calpick">
+      {items.map((c) => (
+        <li key={c.calendarId} className={c.enabled ? 'on' : ''}>
+          <button
+            type="button"
+            className="calpick-row"
+            disabled={busy === c.calendarId}
+            onClick={() => void toggle(c)}
+            aria-pressed={c.enabled}
+          >
+            <span className={`calpick-box${c.enabled ? ' on' : ''}`} aria-hidden>{c.enabled ? '✓' : ''}</span>
+            <span className="calpick-dot" style={{ background: c.backgroundColor || 'var(--muted)' }} aria-hidden />
+            <span className="calpick-name" {...bidiProps(c.summary)}>
+              {c.summary || c.calendarId}
+              {c.primary && <em> · اصلی</em>}
+              {c.isAosCalendar && <em> · AOS</em>}
+            </span>
+            <span className="calpick-role">{ROLE_FA[c.accessRole] ?? c.accessRole}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+
+  return (
+    <div className="calpick-wrap">
+      <h3>تقویم‌های من</h3>
+      {mine.length ? list(mine) : <p className="calx-empty">تقویمی که مال خودتان باشد پیدا نشد.</p>}
+
+      {shared.length > 0 && (
+        <>
+          <h3>به اشتراک گذاشته‌شده با من</h3>
+          <p className="cal-note">
+            این‌ها مال حساب‌های دیگرند و پیش‌فرض خاموش‌اند. با روشن‌کردن، محتوایشان وارد این سیستم می‌شود.
+          </p>
+          {list(shared)}
+        </>
+      )}
     </div>
   );
 }

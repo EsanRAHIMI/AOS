@@ -13,7 +13,7 @@ import {
   storeGrant, getGrant, deleteGrant, vaultAvailability,
   rememberOAuthState, consumeOAuthState,
   syncAll, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
-  ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror,
+  ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -240,6 +240,28 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
   app.post('/v1/calendar/sync', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     return handle(reply, async () => ({ results: await syncAll(OWNER) }));
+  });
+
+  /**
+   * Turn a calendar on or off for this system. Separate from Google's own
+   * "selected" flag: what the owner ticks in Google is about their calendar UI;
+   * this is about what their assistant works with.
+   */
+  app.post('/v1/calendar/calendars/toggle', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const body = req.body as { calendarId?: string; enabled?: boolean };
+    if (!body?.calendarId || typeof body.enabled !== 'boolean') {
+      return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'calendarId and enabled are required'));
+    }
+    return handle(reply, async () => {
+      const res = await setCalendarEnabled(OWNER, body.calendarId!, body.enabled!);
+      // Enabling means it has never been synced; pull it now, in the background
+      // so a big calendar cannot time the request out.
+      if (res.enabled) {
+        void syncAll(OWNER).catch((err) => deps.ctx.log.error({ err }, 'calendar sync after enable failed'));
+      }
+      return res;
+    });
   });
 
   app.post('/v1/calendar/calendars/refresh', async (req, reply) => {
