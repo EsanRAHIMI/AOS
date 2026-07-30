@@ -1385,3 +1385,107 @@ button { font: inherit; }
   .jrud--open .jrud-glass { max-height: 80vh; }
   .jconv--rudder .jconv-scroll { max-height: 56vh; }
 }
+
+/* ==========================================================================
+   D-192b — /calendar. Same Liquid Glass material as the rudder, so the
+   calendar reads as part of the system rather than a bolted-on integration.
+   ========================================================================== */
+
+.cal { display: flex; flex-direction: column; gap: 18px; padding-bottom: 90px; }
+.cal-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.cal-head h1 { margin: 0; font-size: 24px; font-weight: 660; letter-spacing: -0.2px; }
+.cal-sub { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.8; max-width: 72ch; text-align: start; }
+.cal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cal-msg, .cal-err { font-size: 11.5px; color: var(--muted); }
+.cal-err { color: var(--err); }
+
+/* The material: same recipe as .jrud-glass — translucency over a saturated
+   blur, specular top edge, depth from shadow rather than a hard border. */
+.cal-glass {
+  border-radius: 22px; padding: 20px 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02) 44%),
+    linear-gradient(180deg, rgba(22, 28, 46, 0.6), rgba(10, 14, 24, 0.78));
+  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.18) inset,
+    0 18px 50px -20px rgba(0, 0, 0, 0.7);
+}
+.cal-glass h2 { margin: 0 0 14px; font-size: 15px; font-weight: 640; text-align: start; }
+
+.cal-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+
+/* --------------------------------------------------------------- agenda */
+.cal-day + .cal-day { margin-top: 18px; }
+.cal-day-h {
+  margin: 0 0 8px; font-size: 12px; font-weight: 620; color: var(--accent);
+  text-align: start; letter-spacing: 0.2px;
+}
+.cal-events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cal-events li {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 10px 12px; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cal-events li.aos { border-inline-start: 2px solid var(--accent); }
+.cal-time { flex: none; min-width: 46px; font-size: 11.5px; color: var(--muted); padding-top: 1px; }
+.cal-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cal-title { font-size: 13px; text-align: start; overflow-wrap: anywhere; }
+.cal-meta { font-size: 11px; color: var(--muted); text-align: start; overflow-wrap: anywhere; }
+.cal-tag {
+  flex: none; font-size: 9px; letter-spacing: 0.6px; padding: 2px 7px; border-radius: var(--r-pill);
+  color: var(--accent); border: 1px solid rgba(110, 168, 255, 0.35); background: rgba(110, 168, 255, 0.1);
+}
+.cal-meet { flex: none; font-size: 11px; color: var(--accent); }
+
+/* ---------------------------------------------------------------- tasks */
+.cal-tasklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cal-tasklist li {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cal-tasklist li.late { border-color: rgba(255, 107, 129, 0.35); background: rgba(255, 107, 129, 0.07); }
+.cal-overdue-h {
+  background: transparent !important; border: 0 !important; padding: 0 0 4px !important;
+  font-size: 11.5px; color: var(--err);
+}
+.cal-task-t { flex: 1; min-width: 0; font-size: 12.5px; text-align: start; overflow-wrap: anywhere; }
+.cal-task-d { flex: none; font-size: 11px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- setup */
+.cal-setup { max-width: 760px; }
+.cal-steps { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: step; }
+.cal-steps li {
+  position: relative; padding: 11px 14px; padding-inline-start: 42px; border-radius: var(--r-sm);
+  border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.025);
+  display: flex; flex-direction: column; gap: 3px; text-align: start;
+}
+.cal-steps li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; inset-inline-start: 12px; top: 11px;
+  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 10.5px; color: var(--muted); border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.cal-steps li.done::before { content: '✓'; color: #0a0f1c; background: var(--ok); border-color: transparent; }
+.cal-steps strong { font-size: 13px; font-weight: 600; }
+.cal-ok { font-size: 11.5px; color: var(--ok); }
+.cal-miss { font-size: 11.5px; color: var(--warn); overflow-wrap: anywhere; }
+.cal-note { margin: 0 0 14px; font-size: 11.5px; color: var(--muted); line-height: 1.9; text-align: start; }
+.cal-note code { font-size: 11px; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); }
+.cal-connect { align-self: flex-start; }
+
+.cal-empty { margin: 0; font-size: 12.5px; color: var(--muted); text-align: start; }
+.cal-alert {
+  padding: 12px 16px; border-radius: var(--r-sm); font-size: 12.5px; text-align: start;
+  border: 1px solid rgba(255, 107, 129, 0.35); background: rgba(255, 107, 129, 0.08);
+}
+.cal-foot { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.9; text-align: start; }
+.cal-foot a { color: var(--accent); }
+
+.cal :where(p, h1, h2, h3, span, li, a, div, strong) { text-align: start; }
+
+@media (max-width: 900px) {
+  .cal-grid { grid-template-columns: 1fr; }
+}

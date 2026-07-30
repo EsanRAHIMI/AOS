@@ -2,6 +2,29 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — Calendar becomes reachable: routes, page, sidebar (D-192b)
+
+The sync core landed with no way to reach it — no route, no page, no link. The
+owner had a feature they could not open, which is the same as not having it.
+
+- **Gateway `/v1/calendar/*`**: status, oauth start/callback, disconnect, sync,
+  agenda, tasks, and event/task creation. The OAuth callback is the one route
+  that cannot sit behind the internal guard — Google's browser redirect carries
+  no header of ours — so it is authenticated by a single-use, time-boxed
+  `state` minted at start and consumed on return.
+- **The write policy is enforced at the gateway too**, not only in the agent
+  tools. Anything reachable with an internal token must obey the same rule, or
+  the rule only exists for the one caller that happens to implement it.
+- **`/calendar` reads the local mirror, never Google.** That is the point of
+  the sync engine: the page renders instantly, survives a rate limit or an
+  outage, and spends no API quota on a refresh.
+- **When nothing is connected it shows the remaining setup steps**, naming the
+  exact missing environment variables, instead of an error. An integration that
+  says "failed" when it means "not configured yet" costs the owner an afternoon.
+- Sidebar entry added — the actual missing piece.
+
+98/98 dashboard tests, all three packages typecheck.
+
 ## 2026-07-30 — Google Calendar & Tasks: the sync core (D-192, part 1)
 
 Owner's requirement: a calendar/tasks/reminders surface connected to Google,

@@ -250,6 +250,7 @@ import { registerPersonalRoutes } from './routes/personal.js';
 import { registerOperatorRoutes } from './routes/operator.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerCinRoutes } from './routes/cin.js';
+import { registerCalendarRoutes } from './routes/calendar.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerLoopRoutes } from './routes/loop.js';
 import type { GatewayDeps } from './routes/deps.js';
@@ -1892,6 +1893,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       registerOperatorRoutes(app, deps);
       registerJarvisRoutes(app, deps); // K2 D-177 — persistent Jarvis on the shared agent loop
       registerCinRoutes(app, deps); // CIN-1 D-179 — entity graph + claims + ledger
+      registerCalendarRoutes(app, deps); // D-192b — Google Calendar + Tasks
       registerStreamRoutes(app, deps); // CIN-2 D-180 — owner stream + heartbeat
       registerLoopRoutes(app, deps); // CIN-2b D-181 — autonomous living loop
       registerSystemRoutes(app, deps);

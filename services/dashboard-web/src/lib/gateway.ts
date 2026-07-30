@@ -373,6 +373,24 @@ export const gateway = {
     call<Record<string, unknown>>(`/v1/cin/entities/${entityId}/sections/${section}`, {
       method: 'PUT', body: JSON.stringify({ data, ...(visibility ? { visibility } : {}) }),
     }),
+  // --- D-192b: Google Calendar + Tasks ---
+  calendarStatus: () => call<{
+    setup: { oauthConfigured: boolean; oauthMissing: string[]; vaultConfigured: boolean; vaultReason: string };
+    connected: boolean; accountEmail: string; scopes: string[]; revokedAt: string | null; lastError: string;
+    calendars: Array<Record<string, unknown>>; sync: Array<Record<string, unknown>>;
+  }>('/v1/calendar/status'),
+  calendarAuthUrl: () => call<{ url: string }>('/v1/calendar/oauth/start'),
+  calendarDisconnect: () => call<{ removed: boolean }>('/v1/calendar/disconnect', { method: 'POST', body: '{}' }),
+  calendarSync: () => call<{ results: Array<Record<string, unknown>> }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
+  calendarAgenda: (from?: string, to?: string) => call<{ events: Array<Record<string, unknown>> }>(
+    `/v1/calendar/agenda${from ? `?from=${encodeURIComponent(from)}${to ? `&to=${encodeURIComponent(to)}` : ''}` : ''}`),
+  calendarTasks: () => call<{ tasks: Array<Record<string, unknown>> }>('/v1/calendar/tasks'),
+  createCalendarEvent: (body: Record<string, unknown>) =>
+    call<{ event?: Record<string, unknown>; requiresApproval: boolean; reason?: string }>(
+      '/v1/calendar/events', { method: 'POST', body: JSON.stringify(body) }),
+  createCalendarTask: (body: Record<string, unknown>) =>
+    call<{ task: Record<string, unknown> }>('/v1/calendar/tasks', { method: 'POST', body: JSON.stringify(body) }),
+
   cinLedgerVerify: () => call<{ chainId: string; ok: boolean; length: number; headHash: string | null; brokenAtSeq: number | null; reason: string | null }>('/v1/cin/ledger/verify'),
 
   // --- CIN-2b Autonomous Living Loop (D-181) ---
