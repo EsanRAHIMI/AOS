@@ -26,11 +26,15 @@ interface LoginEnvelope {
   data?: { token?: string; expiresAt?: string };
 }
 
+/** Hard cap so a stuck gateway/Redis never freezes the login button on "Signing in…". */
+const GATEWAY_AUTH_TIMEOUT_MS = 3_000;
+
 /**
  * Attempt a real gateway login with the same credentials the dashboard just
  * verified locally. Returns null (never throws) if the gateway has no
  * matching, active `user_accounts` row — expected for dev-only demo logins
  * and any operator not yet provisioned via `POST /v1/auth/users`.
+ * Also returns null on timeout/network errors (legacy role auth still works).
  */
 export async function gatewayLogin(email: string, password: string): Promise<GatewaySession | null> {
   try {
@@ -39,6 +43,7 @@ export async function gatewayLogin(email: string, password: string): Promise<Gat
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email, password }),
       cache: 'no-store',
+      signal: AbortSignal.timeout(GATEWAY_AUTH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as LoginEnvelope;
@@ -60,6 +65,7 @@ export async function gatewayLogout(token: string): Promise<void> {
       method: 'POST',
       headers: { [SESSION_TOKEN_HEADER]: token },
       cache: 'no-store',
+      signal: AbortSignal.timeout(GATEWAY_AUTH_TIMEOUT_MS),
     });
   } catch {
     // best-effort, see above.

@@ -168,15 +168,29 @@ export function createRedisBackbone(opts: RedisBackboneOptions): RedisBackbone {
  * truthy).
  */
 function createIoredisClient(url: string): RedisLike {
-  const cmd = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
+  // Timeouts are mandatory: without them a blip on REDIS_URL freezes every
+  // rate-limited route (including POST /v1/auth/login) forever, which in turn
+  // freezes dashboard login on "Signing in…".
+  const cmd = new Redis(url, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+    connectTimeout: 2_000,
+    commandTimeout: 2_000,
+  });
   let sub: Redis | null = null;
   const handlers = new Map<string, (message: string) => void>();
   let connected = false;
+  let connecting: Promise<void> | null = null;
 
   const ensureConnected = async (): Promise<void> => {
     if (connected) return;
-    await cmd.connect();
-    connected = true;
+    if (!connecting) {
+      connecting = cmd.connect()
+        .then(() => { connected = true; })
+        .finally(() => { connecting = null; });
+    }
+    await connecting;
   };
 
   return {

@@ -53,7 +53,16 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
   // falls through to the legacy admin-token + role-header path unchanged.
   const bridged = await gatewayLogin(email, password);
   await createSessionCookie(user.email, user.role, bridged?.token);
-  await gateway.reportSecurityEvent({ eventType: 'login.succeeded', actorId: user.email, role: user.role, result: 'success', target: 'dashboard', riskLevel: 'low', detail: `signed in as ${user.role}${bridged ? ' (real gateway session)' : ' (legacy role auth)'}` });
+  // Fire-and-forget: a hung gateway must never keep the UI on "Signing in…".
+  void gateway.reportSecurityEvent({
+    eventType: 'login.succeeded',
+    actorId: user.email,
+    role: user.role,
+    result: 'success',
+    target: 'dashboard',
+    riskLevel: 'low',
+    detail: `signed in as ${user.role}${bridged ? ' (real gateway session)' : ' (legacy role auth)'}`,
+  });
   redirect(next);
 }
 

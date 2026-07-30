@@ -77,6 +77,18 @@ describe('gatewayLogin', () => {
     expect(result).toBeNull();
   });
 
+  it('aborts and returns null when the gateway never answers (no hung Signing in…)', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      }),
+    );
+    const result = await gatewayLogin('a@example.com', 'secret');
+    expect(result).toBeNull();
+    const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[1].signal).toBeDefined();
+  });
+
   it('returns null on a malformed success envelope (missing token)', async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, json: async () => ({ ok: true, data: {} }) });
     const result = await gatewayLogin('a@example.com', 'secret');
