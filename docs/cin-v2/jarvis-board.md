@@ -31,17 +31,22 @@ The self is the singularity itself. Moving outward always means "less mine,
 more shared". `scope` survives as a secondary hint: inside its own track a
 more personal instance rides slightly to the inside.
 
-**Why orbits instead of a web of edges (D-183.9).** Cards on one orbit are
-visibly related *because they share a track* — no chord has to say it for
-them. That removes most of the lines from the board outright, and it makes the
-space metaphor do real work: the singularity at the centre, life orbiting it
-in ordered shells. What remains drawn is only what actually moves:
+**Why orbits instead of a web of edges (D-183.9), and no connectors at all
+(D-183.10).** Cards on one orbit are visibly related *because they share a
+track* — no line has to say it for them, so **no connectors are drawn,
+anywhere**. Two rules carry all of the meaning:
 
-- **same-orbit exchange** → a whisper-light arc riding the track itself,
-- **cross-orbit exchange** → a **transfer arc** whose radius eases from one
-  track to the other while the angle sweeps the short way, exactly like a
-  transfer burn. Transfers between the same pair of orbits run parallel and
-  read as one lane of traffic instead of a tangle.
+- **a card wears the colour of its orbit**, so which family it belongs to is
+  readable at a glance, at any zoom, without following anything;
+- **a relationship becomes visible only when it is used.** One piece of data =
+  **one small comet** flying from the sending card to the receiving one, with
+  a short tail and a bright head, followed by a brief expanding pulse on the
+  card where it lands.
+
+Comets fly along the orbital geometry: within a track they ride the arc of the
+orbit; between tracks they follow a transfer arc whose radius eases from one
+orbit to the other. The board is therefore empty and clean at rest, and every
+mark on it means "this actually happened, just now".
 
 ### Staying legible at 50–100+ cards
 
@@ -49,12 +54,12 @@ in ordered shells. What remains drawn is only what actually moves:
 2. **Deterministic slots + lanes.** Cards are spaced evenly around their whole
    track; a crowded orbit adds interleaved lanes rather than letting cards
    overlap. Same input → same seats, every reload.
-3. **Orbital routing** replaces chords, so lines follow the geometry the eye
-   already understands.
-4. **Degree of interest + budget.** Clicking a card focuses it: its
-   neighbourhood keeps full contrast, other orbits dim, and all of its arcs
-   are drawn. Unfocused and zoomed out, only the strongest arcs are drawn (26
-   below 0.55 zoom, 60 below 0.9) and the HUD reports `drawn/total`.
+3. **No connectors** — the only moving marks are comets carrying real data, so
+   the board cannot become a hairball no matter how many cards it holds.
+4. **Degree of interest.** Clicking a card focuses it: its neighbourhood keeps
+   full contrast, the rest of the board recedes, and comets that do not
+   involve it are muted. The HUD reports cards, orbits and how many pieces of
+   data are in flight right now.
 
 ## 3. Architecture (five independent modules + one layer)
 
@@ -152,17 +157,19 @@ rather than a fabricated one. Cards with nothing yet render an explicit
 Synapse traffic is a **readout, not an ornament** (D-183.7 — there is no
 free-running spawner anywhere in the renderer):
 
-- **the wires are permanent.** An axon's weight comes from `link.strength`
-  alone, so the network is always readable as a network, even at total rest.
-- **a packet exists only because a real exchange was observed.** Two sources
+- **nothing is drawn at rest.** There are no wires to keep permanently lit;
+  the orbits and the shared colours already carry the structure.
+- **a comet exists only because a real exchange was observed.** Two sources
   feed it: the 12s snapshot diff (a card's metric value, `updatedAt` or
   activity actually changed) and the persistent owner SSE stream, which fires
   the moment the kernel raises a proactive event.
-- **direction is truthful:** change in a card sends packets outward along its
-  own axons, and inward only on edges whose sender also changed.
-- **afterglow:** a wire that just carried data brightens and decays with a
-  3.5s half-life (`SynapseTraffic.heatOf`), so recent exchanges are visible
-  for a moment after the packet lands.
+- **count is truthful:** the number of comets equals the number of distinct
+  changes observed (`magnitude`), and a live proactive event sends exactly one.
+- **direction is truthful:** comets leave the card whose records changed and
+  fly to the cards it feeds.
+- **arrival is visible:** landing a comet triggers a 0.9s expanding pulse on
+  the destination card (`SynapseTraffic.arrivalOf`), so the owner sees *where*
+  data went, not just that something moved.
 - the HUD prints the age of the last real exchange, so a still board reads as
   "nothing moved", never as "the animation is broken".
 

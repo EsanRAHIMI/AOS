@@ -84,7 +84,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   /** Focus mirrored into a ref so the render loop reads it without a restart. */
   const focusRef = useRef<string | null>(null);
   focusRef.current = focusId;
-  /** How many wires actually survived the zoom budget (reported in the HUD). */
+  /** Comets currently in flight (reported in the HUD). */
   const drawnLinksRef = useRef(0);
   const [drawnLinks, setDrawnLinks] = useState(0);
   /** Group wedges that actually contain cards — only those get a spoke. */
@@ -147,15 +147,12 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
           if (magnitude > 0) changed.set(c.id, magnitude);
         }
         for (const [cardId, magnitude] of changed) {
-          // New data in a card travels outward along its own axons…
+          // ONE comet per piece of data (D-183.10): `magnitude` counts the
+          // distinct changes observed on this card, and that many meteors fly
+          // from it to each card it feeds.
           for (const l of next.links) {
             if (l.from === cardId) {
-              trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: 1 + magnitude });
-            }
-            // …and inward on edges that feed it, because the sender is the
-            // one whose record produced the change we can see here.
-            else if (l.to === cardId && changed.has(l.from)) {
-              trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: 1 + magnitude });
+              trafficRef.current.burst(next.links, { from: l.from, to: l.to, count: magnitude });
             }
           }
         }
@@ -190,7 +187,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       let sent = false;
       for (const l of links) {
         if (l.from === fromId || l.to === fromId) {
-          trafficRef.current.burst(links, { from: l.from, to: l.to, count: 4 });
+          trafficRef.current.burst(links, { from: l.from, to: l.to, count: 1 });
           sent = true;
         }
       }
@@ -215,11 +212,18 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const visibleCards = useMemo(() => {
     return graph.cards
       .filter((c) => c.id === 'self' || (isSourceVisible(profile, c.sourceId) && !profile.hiddenCards[c.id]))
-      .map((c) => (c.id === 'self' ? c : {
-        ...c,
-        scope: resolveScope(profile, c.sourceId, c.scope),
-        group: resolveOrbit(profile, c.sourceId, groupOf(c)),
-      }));
+      .map((c) => {
+        if (c.id === 'self') return c;
+        const group = resolveOrbit(profile, c.sourceId, groupOf(c));
+        // A card wears the colour of the orbit it rides (D-183.10), so the
+        // family a card belongs to is readable without following any line.
+        return {
+          ...c,
+          scope: resolveScope(profile, c.sourceId, c.scope),
+          group,
+          accent: ORBIT[group].tone,
+        };
+      });
   }, [graph.cards, profile]);
 
   /** Cards inside the focused card's neighbourhood — everything else recedes. */
@@ -232,6 +236,12 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     }
     return set;
   }, [focusId, graph.links]);
+
+  /** How many orbits actually carry cards right now. */
+  const orbitsInUse = useMemo(
+    () => new Set(visibleCards.filter((c) => c.id !== 'self').map((c) => groupOf(c))).size,
+    [visibleCards],
+  );
 
   const visibleLinks = useMemo(() => {
     const ids = new Set(visibleCards.map((c) => c.id));
@@ -579,14 +589,14 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         });
       }
 
-      // --- axons + travelling packets (the neural network) ---------------
+      // --- comets: the only mark a data exchange leaves ------------------
+      // No connectors are drawn at all (D-183.10). The orbits already say
+      // which cards belong together, so a relationship becomes visible only
+      // when it is USED: one small comet per piece of data, flying from the
+      // sending card to the receiving one, then a brief pulse where it lands.
       const toneOf = new Map<string, [number, number, number]>();
       for (const c of visibleCards) toneOf.set(c.id, ORBIT[groupOf(c)].tone);
-      const heatOf = (l: (typeof links)[number]) => trafficRef.current.heatOf(l.from, l.to);
 
-      // Degree of interest: with a card focused, its neighbourhood keeps full
-      // contrast and everything else recedes. This — not prettier curves — is
-      // what makes a 100-card board actually usable.
       const doi = focusRef.current;
       const near = new Set<string>();
       if (doi) {
@@ -596,95 +606,90 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
           if (l.to === doi) near.add(l.from);
         }
       }
-      const linkFocus = (l: (typeof links)[number]) => !doi || l.from === doi || l.to === doi;
 
-      // Edge budget: zoomed far out, drawing every wire is noise. Keep the
-      // structurally strongest (and anything hot or focused) and drop the
-      // rest until the owner zooms in — the count is reported in the HUD.
-      const budget = doi ? links.length : cam.zoomScale < 0.55 ? 26 : cam.zoomScale < 0.9 ? 60 : links.length;
-      const ranked = links.map((l, idx) => ({ l, idx, w: l.strength + heatOf(l) * 2 + (linkFocus(l) ? 5 : 0) }));
-      if (ranked.length > budget) ranked.sort((u, v) => v.w - u.w);
-      const drawn = ranked.slice(0, budget);
-      drawnLinksRef.current = drawn.length;
-
-      // World-space bundled path per link, reused by the packet pass so the
-      // packets ride exactly the wire the owner sees.
+      // Flight paths are computed only for links that actually have a comet
+      // in the air — nothing is drawn for idle relationships.
       const pathOf = new Map<number, Array<{ x: number; y: number }>>();
-      const projectPath = (pts: Array<{ x: number; y: number }>) => {
-        const out: Array<{ x: number; y: number; ok: boolean }> = [];
-        for (const w of pts) {
-          const pr = cam.project(w.x, w.y, 0);
-          out.push({ x: pr.x, y: pr.y, ok: pr.visible });
-        }
-        return out;
-      };
-
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      for (const { l, idx } of drawn) {
+      const pathFor = (linkIndex: number) => {
+        const cached = pathOf.get(linkIndex);
+        if (cached) return cached;
+        const l = links[linkIndex];
+        if (!l) return null;
         const pa = placementsRef.current.get(l.from);
         const pb = placementsRef.current.get(l.to);
-        if (!pa || !pb) continue;
+        if (!pa || !pb) return null;
         const path = orbitalPath(
           { r: pa.r || 0.001, theta: pa.theta, orbitRadius: pa.orbitRadius },
           { r: pb.r || 0.001, theta: pb.theta, orbitRadius: pb.orbitRadius },
         );
-        pathOf.set(idx, path);
-        const screen = projectPath(path);
-        if (!screen.some((q) => q.ok)) continue;
+        pathOf.set(linkIndex, path);
+        return path;
+      };
 
-        const heat = heatOf(l);
-        const tone = toneOf.get(l.from) ?? ORBIT.infra.tone;
-        const dim = doi && !linkFocus(l) ? 0.18 : 1;
-        // Cards on the same track are already visibly related, so their arc is
-        // a whisper; a TRANSFER between two orbits is the real event and gets
-        // the weight.
-        const transfer = Math.abs(pa.orbitRadius - pb.orbitRadius) > 0.001 ? 1 : 0.4;
-        const trace = () => {
-          ctx.beginPath();
-          ctx.moveTo(screen[0].x, screen[0].y);
-          for (let k = 1; k < screen.length; k += 1) ctx.lineTo(screen[k].x, screen[k].y);
-          ctx.stroke();
-        };
-        ctx.strokeStyle = rgba(tone, (0.04 + heat * 0.12) * dim * transfer);
-        ctx.lineWidth = (2.6 + l.strength * 2.2 + heat * 3) * transfer;
-        trace();
-        ctx.strokeStyle = rgba(tone, (0.13 + l.strength * 0.26 + heat * 0.42) * dim * transfer);
-        ctx.lineWidth = (0.8 + l.strength * 1.1 + heat * 1.3) * transfer;
-        trace();
-      }
-
+      ctx.lineCap = 'round';
       ctx.globalCompositeOperation = 'lighter';
+      let inFlight = 0;
       for (const pk of trafficRef.current.list()) {
         const l = links[pk.linkIndex];
         if (!l || pk.t < 0) continue;
-        const path = pathOf.get(pk.linkIndex);
-        if (!path) continue; // wire not drawn at this zoom — no ghost packets
-        const dim = doi && !linkFocus(l) ? 0.2 : 1;
-        const w = pointOnPath(path, pk.t);
-        const wTail = pointOnPath(path, Math.max(0, pk.t - 0.05));
-        const pr = cam.project(w.x, w.y, 0);
-        const prTail = cam.project(wTail.x, wTail.y, 0);
+        const path = pathFor(pk.linkIndex);
+        if (!path) continue;
+        const dim = doi && !(near.has(l.from) && near.has(l.to)) ? 0.25 : 1;
+        const head = pointOnPath(path, pk.t);
+        const pr = cam.project(head.x, head.y, 0);
         if (!pr.visible) continue;
+        inFlight += 1;
         const tone = toneOf.get(l.from) ?? ORBIT.infra.tone;
         const fade = Math.sin(Math.min(1, pk.t) * Math.PI) * pk.life * dim;
-        const r = (pk.size + 1) * Math.max(0.5, pr.scale * cam.zoomScale);
-        ctx.strokeStyle = rgba(tone, 0.45 * fade);
-        ctx.lineWidth = r * 1.05;
-        ctx.beginPath();
-        ctx.moveTo(prTail.x, prTail.y);
-        ctx.lineTo(pr.x, pr.y);
-        ctx.stroke();
-        const g = ctx.createRadialGradient(pr.x, pr.y, 0, pr.x, pr.y, r * 3.2);
-        g.addColorStop(0, rgba(tone, 0.95 * fade));
-        g.addColorStop(0.35, rgba(tone, 0.4 * fade));
+        const r = (0.9 + pk.size * 0.5) * Math.max(0.45, pr.scale * cam.zoomScale);
+
+        // Tail: a few samples behind the head, thinning as it goes — a small
+        // meteor, not a laser beam.
+        const TAIL = 5;
+        for (let k = TAIL; k >= 1; k -= 1) {
+          const t0 = Math.max(0, pk.t - k * 0.022);
+          const t1 = Math.max(0, pk.t - (k - 1) * 0.022);
+          if (t1 <= 0) continue;
+          const w0 = cam.project(pointOnPath(path, t0).x, pointOnPath(path, t0).y, 0);
+          const w1 = cam.project(pointOnPath(path, t1).x, pointOnPath(path, t1).y, 0);
+          if (!w0.visible || !w1.visible) continue;
+          ctx.strokeStyle = rgba(tone, fade * 0.34 * (1 - (k - 1) / TAIL));
+          ctx.lineWidth = r * 0.9 * (1 - (k - 1) / TAIL) + 0.3;
+          ctx.beginPath();
+          ctx.moveTo(w0.x, w0.y);
+          ctx.lineTo(w1.x, w1.y);
+          ctx.stroke();
+        }
+
+        // Head: a bright core with a soft corona.
+        const g = ctx.createRadialGradient(pr.x, pr.y, 0, pr.x, pr.y, r * 3.6);
+        g.addColorStop(0, rgba([255, 255, 255], 0.9 * fade));
+        g.addColorStop(0.25, rgba(tone, 0.85 * fade));
         g.addColorStop(1, rgba(tone, 0));
         ctx.beginPath();
         ctx.fillStyle = g;
-        ctx.arc(pr.x, pr.y, r * 3.2, 0, Math.PI * 2);
+        ctx.arc(pr.x, pr.y, r * 3.6, 0, Math.PI * 2);
         ctx.fill();
       }
+
+      // Arrival pulses — an expanding ring on the card that just received data.
+      for (const [cardId, strength] of visibleCards.map((c) => [c.id, trafficRef.current.arrivalOf(c.id)] as const)) {
+        if (strength <= 0.03) continue;
+        const pl = placementsRef.current.get(cardId);
+        if (!pl) continue;
+        const pr = cam.project(pl.x, pl.y, pl.z);
+        if (!pr.visible) continue;
+        const tone = toneOf.get(cardId) ?? ORBIT.infra.tone;
+        const grow = 1 - strength; // strength decays, so the ring expands
+        const radius = (8 + grow * 34) * Math.max(0.45, pr.scale * cam.zoomScale);
+        ctx.strokeStyle = rgba(tone, strength * 0.55);
+        ctx.lineWidth = 1.6 * strength + 0.4;
+        ctx.beginPath();
+        ctx.arc(pr.x, pr.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       ctx.globalCompositeOperation = 'source-over';
+      drawnLinksRef.current = inFlight;
 
       // Sort back-to-front so nearer cards overlap farther ones correctly.
       out.sort((p, q) => q.depth - p.depth);
@@ -832,8 +837,8 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
           چیدمان
         </button>
         <span className="jboard-stat">
-          {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${drawnLinks < visibleLinks.length ? `${drawnLinks}/${visibleLinks.length}` : visibleLinks.length} سیناپس`}
-          {!loading && drawnLinks < visibleLinks.length ? ' (زوم کنید تا همه دیده شوند)' : ''}
+          {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${orbitsInUse} مدار`}
+          {!loading && drawnLinks > 0 ? ` · ${drawnLinks} داده در پرواز` : ''}
           {focusId ? ' · فوکوس روی یک کارت — کلیک روی فضای خالی برای خروج' : ''}
           {!loading && (() => {
             void nowTick; // re-render each second so the age stays truthful
