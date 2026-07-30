@@ -41,6 +41,18 @@ describe('identity header', () => {
     expect(out).toContain('4 بخش پایه باقی مانده');
   });
 
+  it('is an ltr box by design, so avatar/name/counters never swap sides (D-187c)', () => {
+    const out = html(
+      <IdentityHeader name="احسان رحیمی" entityId="e1" status="active" since="2026-07-01"
+        completeness={completeness({ identity: {} })} attention={0} attestations={0} documents={0} />,
+    );
+    expect(out).toContain('<header class="prof-id" dir="ltr">');
+    // The name must NOT carry its own rtl, or it would right-align inside the
+    // ltr box and break the exception. CSS `plaintext` keeps it script-correct.
+    expect(out).toContain('<h1 class="prof-name">احسان رحیمی</h1>');
+    expect(out).not.toContain('class="prof-name" dir=');
+  });
+
   it('says the base is complete instead of nagging at 100%', () => {
     const full = completeness({ identity: {}, contact: {}, education: {}, employment: {}, skills: {}, goals: {} });
     const out = html(

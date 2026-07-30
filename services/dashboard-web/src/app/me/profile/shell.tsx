@@ -29,12 +29,19 @@ export function IdentityHeader({
   documents: number;
 }) {
   return (
-    <header className="prof-id">
+    /* Deliberate exception to the rtl shell (D-187c, owner's call): the header
+     * is a fixed dashboard of positions — avatar, name, then counters — and
+     * mirroring it moved those anchors on every visit, which is harder to scan
+     * than reading Persian left-aligned. So the BOX is ltr (stable order,
+     * left-aligned), while each text node keeps `unicode-bidi: plaintext` so
+     * Persian still renders with correct internal word order. Layout ltr,
+     * script-correct text: the two are separable, and here they should be. */
+    <header className="prof-id" dir="ltr">
       <div className="prof-id-main">
         <div className="prof-avatar" aria-hidden>{initials(name)}</div>
 
         <div className="prof-id-text">
-          <h1 className="prof-name" dir="auto">{name}</h1>
+          <h1 className="prof-name">{name}</h1>
           <p className="prof-id-sub">
             <span className={`badge ${status === 'active' ? 'ok' : ''}`}>{STATUS_LABEL[status] ?? status}</span>
             <span className="prof-dot">·</span>

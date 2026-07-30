@@ -1036,3 +1036,15 @@ button { font: inherit; }
    Persian line cannot reorder the punctuation around it. */
 .prof-field dd, .prof-doc-meta dd, .prof-tl-detail, .prof-claim-m,
 .prof-attn-t, .prof-tech-grid dd { unicode-bidi: isolate; }
+
+/* ------------------------------------------------- identity header: ltr box
+   D-187c — the header is `dir="ltr"` so the avatar → name → counters order is
+   fixed and everything left-aligns (owner's call: a mirrored header moves the
+   anchors you scan for). `plaintext` keeps Persian internally correct inside
+   that ltr box — each line still resolves its own script direction, it is only
+   the ALIGNMENT and the layout order that are pinned to ltr. */
+.prof-id :where(h1, p, span, div, a) { text-align: left; }
+.prof-name, .prof-id-sub, .prof-complete-t, .prof-stat-l, .prof-eid { unicode-bidi: plaintext; }
+.prof-stat, .prof-stat-l, .prof-stat-v, .prof-avatar { text-align: center; }
+/* The aura sits behind the avatar, which is now always on the left. */
+.prof-id::before { inset-inline-start: -10%; }
