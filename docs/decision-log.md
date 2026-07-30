@@ -2,6 +2,46 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Jarvis could not see the owner (D-188)
+
+Owner's screenshot: a profile holding full name (fa + en), national id,
+passport number, birth date, nationality, military status and blood type, next
+to Jarvis answering «هیچ داده شخصی… ثبت نشده است». The model was not lying —
+it was reporting its context accurately. Three separate defects, not one:
+
+1. **The turn context never touched the CIN entity.** `assembleTurnContext`
+   assembled memory + missions + transcript + research coverage. Identity was
+   simply not in the list, so the assistant had no idea a profile existed.
+2. **No tool could resolve the owner.** The cin family had entity search/get,
+   claims and ledger — but nothing that answered "who am I talking to", and
+   nothing at all for documents. Even a willing agent could not go looking.
+3. **The dock never loaded history.** Turns were persisted all along
+   (`beginTurn`/`completeTurn`) and the model kept seeing them through the
+   transcript context — but the panel mounted with an empty list and never
+   fetched them, so to the owner every page load looked like amnesia.
+
+Fixes: `shared/src/cin/context.ts` builds an owner-identity block now included
+in every turn; `cin_me` and `cin_documents_list` join the tool family; the dock
+loads the tail of the real session on first open.
+
+The judgement call worth recording is what the identity block CONTAINS. It
+lists field names and open values, but deliberately withholds the values of
+identifiers and health data (national id, passport, IBAN, medications…) and of
+the `financial`/`health_ref` sections wholesale, marking them
+`recorded, fetch with cin_entity_get if needed`. Shipping a copy of the owner's
+identity documents to a model provider on every single message buys nothing:
+the assistant needs to KNOW the passport number exists to answer well, and
+needs its value only on the rare turn that actually uses it — which a tool call
+covers. Context says what is known and where; tools fetch specifics. Document
+expiry dates are the deliberate exception and are always included in full,
+because they are the most actionable thing in the profile and are not sensitive
+in the way an id number is. The withholding is a denylist, not an allowlist, so
+a new profile field becomes visible to the assistant by default.
+
+12 new contract tests, including ones asserting the identifiers do NOT appear
+in the context or the tool output. 280/280 shared, 78/78 dashboard, all three
+packages typecheck, `next build` passes.
+
 ## 2026-07-30 — Field keys are a shared vocabulary, not per-user text (D-187f)
 
 Owner's question, and it was the right one: why is the field NAME editable —

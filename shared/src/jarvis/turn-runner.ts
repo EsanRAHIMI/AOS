@@ -24,6 +24,7 @@ import {
   type JarvisSessionTurn, type SessionActor,
 } from './session.js';
 import { classifyIntentFallback, composeJarvisResponseFallback, buildJarvisContextPacket, detectLanguage } from './index.js';
+import { buildOwnerIdentityContext } from '../cin/context.js';
 import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
@@ -79,8 +80,13 @@ export async function assembleTurnContext(actor: SessionActor, sessionId: string
   const missions = await buildMissionContext({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null }, { limit: 10 });
   const transcript = await buildTranscriptContext(actor, sessionId, { tokenBudget: 1100 });
   const coverage = researchCoverageStatus(env);
+  /* D-188 — who the owner actually is. Without this the assistant had memory,
+   * missions and a transcript but no identity, so it truthfully reported that
+   * nothing personal was on file while the CIN entity held a full profile. */
+  const identity = await buildOwnerIdentityContext();
   const parts = [
     transcript.text,
+    identity.text,
     mem.text ? `OWNER MEMORY (provenance-tagged — [CONFIRMED] owner-stated, [INFERRED] concluded, [TEMP] conversational):\n${mem.text}` : 'OWNER MEMORY: none recorded yet.',
     missions.text ? `ACTIVE MISSION HIERARCHY (today's work connects upward through these):\n${missions.text}` : 'ACTIVE MISSIONS: none yet.',
     `SYSTEM STATUS: research coverage=${coverage.coverage}${coverage.searxng ? '' : ' (SearXNG not configured)'}.`,

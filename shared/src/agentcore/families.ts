@@ -30,6 +30,8 @@ import {
 } from '../cin/entities.js';
 import { issueClaim, verifyClaim } from '../cin/trust.js';
 import { verifyChain } from '../cin/ledger.js';
+import { listDocuments } from '../cin/documents.js';
+import { buildOwnerIdentityContext } from '../cin/context.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -522,6 +524,43 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
       const sections = Object.entries(graph.entity.sections).map(([n, s]) => `${n} v${s.version} (${s.visibility})`).join(', ') || 'none';
       const rels = graph.relations.map((r) => `${r.fromEntityId === graph.entity.entityId ? '→' : '←'} ${r.relationType} ${r.fromEntityId === graph.entity.entityId ? r.toEntityId : r.fromEntityId}`).join('; ') || 'none';
       return { ok: true, summary: `${graph.entity.displayName || graph.entity.name} [${graph.entity.entityType}/${graph.entity.status}] sections: ${sections}; relations: ${rels}`, data: graph };
+    },
+  });
+
+  /* D-188 — the two reads that were missing, which is why the assistant could
+   * not answer "what do you know about me?" even with a full profile on file:
+   * there was no tool that resolved the OWNER, and none at all for documents. */
+  registry.register({
+    definition: cinDef('cin_me', "Read the owner's own identity: profile sections on file, and registered documents with their expiry. Use this whenever the question is about the user themselves."),
+    inputSchema: z.object({}),
+    executor: async (): Promise<ToolResult> => {
+      const ctx = await buildOwnerIdentityContext();
+      if (!ctx.entityId) return { ok: true, summary: 'No owner entity exists in the CIN graph yet.' };
+      return {
+        ok: true,
+        summary: ctx.text,
+        data: { entityId: ctx.entityId, sectionCount: ctx.sectionCount, documentCount: ctx.documentCount },
+      };
+    },
+  });
+
+  registry.register({
+    definition: cinDef('cin_documents_list', 'List registered documents (passport, contracts, certificates…) with type, issuer, expiry date and derived status. Expiry is actionable.'),
+    inputSchema: z.object({ ownerEntityId: z.string().optional(), docType: z.string().optional() }),
+    executor: async (args): Promise<ToolResult> => {
+      let ownerEntityId = args.ownerEntityId as string | undefined;
+      if (!ownerEntityId) {
+        const ctx = await buildOwnerIdentityContext();
+        ownerEntityId = ctx.entityId ?? undefined;
+      }
+      if (!ownerEntityId) return { ok: true, summary: 'No owner entity exists yet, so no documents can be listed.' };
+      const docs = await listDocuments({ ownerEntityId, docType: args.docType as never });
+      if (!docs.length) return { ok: true, summary: 'No documents registered.' };
+      return {
+        ok: true,
+        summary: docs.map((d) => `${d.title} [${d.docType}] ${d.expiresAt ? `expires ${d.expiresAt.slice(0, 10)}` : 'no expiry'} (${d.status})${d.file ? ' +file' : ''}`).join('\n'),
+        data: docs.map((d) => ({ docId: d.docId, title: d.title, docType: d.docType, issuer: d.issuer, expiresAt: d.expiresAt, status: d.status, hasFile: Boolean(d.file) })),
+      };
     },
   });
 

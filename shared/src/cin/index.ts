@@ -11,3 +11,4 @@ export * from './entities.js';
 export * from './documents.js';
 export * from './storage.js';
 export * from './api.js';
+export * from './context.js';

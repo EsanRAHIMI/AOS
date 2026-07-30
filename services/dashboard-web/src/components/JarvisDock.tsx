@@ -23,8 +23,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import {
-  createSessionAction, decideApprovalAction, getBriefingAction, listSessionsAction,
-  sendTurnAction, type JarvisBriefingView,
+  createSessionAction, decideApprovalAction, getBriefingAction, getSessionAction,
+  listSessionsAction, sendTurnAction, type JarvisBriefingView,
 } from '@/app/jarvis/actions';
 import { invalidateBlocks } from '@/components/UniverseProvider';
 import { blocksForApprovalDecision } from '@/lib/realtimeBlocks';
@@ -40,6 +40,8 @@ interface Msg {
 }
 
 const BRIEFING_REFRESH_MS = 120_000;
+/** Enough to recognise the conversation without re-rendering a whole archive. */
+const HISTORY_TURNS = 20;
 
 export function JarvisDock({ role }: { role: string }) {
   const pathname = usePathname() ?? '/';
@@ -52,6 +54,7 @@ export function JarvisDock({ role }: { role: string }) {
   const [pending, setPending] = useState<{ approvalId: string; runId: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const sessionRef = useRef<string | null>(null);
+  const historyLoaded = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   /** `/jarvis` is this same agent full-screen — never show two inputs. */
@@ -102,6 +105,38 @@ export function JarvisDock({ role }: { role: string }) {
       return sessionRef.current;
     } catch { return null; }
   }, []);
+
+  /* --------------------------- history on open --------------------------- */
+  /**
+   * D-188 — every turn was already persisted server-side (and the model kept
+   * seeing them through the transcript context), but this panel mounted empty
+   * and never fetched them, so to the owner the conversation looked erased on
+   * every page. Load the tail of the real session the first time it opens.
+   */
+  useEffect(() => {
+    if (!open || hidden || historyLoaded.current) return;
+    historyLoaded.current = true;
+    let alive = true;
+    void (async () => {
+      const sessionId = await ensureSession();
+      if (!sessionId || !alive) return;
+      try {
+        const { turns } = await getSessionAction(sessionId);
+        if (!alive || turns.length === 0) return;
+        const restored: Msg[] = [];
+        for (const t of turns.slice(-HISTORY_TURNS)) {
+          if (t.userText) restored.push({ who: 'you', text: t.userText });
+          if (t.replyText) restored.push({ who: 'jarvis', text: t.replyText });
+        }
+        // Anything typed while the fetch was in flight stays at the bottom.
+        setMsgs((live) => [...restored, ...live]);
+      } catch {
+        // History is a convenience; failing to load it must not block the input.
+        historyLoaded.current = false;
+      }
+    })();
+    return () => { alive = false; };
+  }, [open, hidden, ensureSession]);
 
   const send = useCallback(async (raw: string) => {
     const text = raw.trim();
