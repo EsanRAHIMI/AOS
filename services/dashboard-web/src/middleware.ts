@@ -2,7 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from '@/lib/session';
 
 /** Routes reachable without a session cookie. */
-const PUBLIC_PATHS = ['/login'];
+const PUBLIC_PATHS = [
+  '/login',
+  /* Google redirects the browser here after consent. It carries Google's
+   * `code`, not our session, and bouncing it to /login would drop the code and
+   * strand the owner. The route itself exchanges server-side and redirects. */
+  '/api/calendar/callback',
+];
 
 /**
  * Lightweight gate: only checks that the session cookie exists.

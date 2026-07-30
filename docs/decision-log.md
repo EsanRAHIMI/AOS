@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — The OAuth redirect lands on the app, not the API server (D-193c)
+
+Consent kept succeeding and never returning; the owner navigated back to
+`/calendar` by hand every time. My landing-page patch (D-192d) treated the
+symptom. The cause was the design.
+
+The registered redirect URI pointed at the **gateway**, `localhost:4101`. That
+asks the browser to navigate cross-origin, to a different port, served by an
+API process rather than a web app. Every way that can fail — a blocked
+navigation, an embedded browser view, a proxy, a browser that will not render a
+bare API response — strands the owner on Google's page. Handing the browser to
+an API server was the mistake.
+
+- **The redirect now targets the dashboard**: `/api/calendar/callback`, the
+  same origin the owner is already on. It exchanges the code server-side
+  against a new guarded `POST /v1/calendar/oauth/exchange`, then returns with
+  an ordinary Next redirect — an in-app navigation that cannot fail the way a
+  cross-origin hop can. The browser never touches the gateway or an internal
+  token.
+- **Every branch returns to `/calendar`** with a reason in the query, so there
+  is no path that ends nowhere.
+- **Middleware allows the callback without a session.** Google's redirect
+  carries Google's `code`, not our cookie; bouncing it to `/login` would drop
+  the code and strand the owner in a second way.
+
+The owner must re-register the URI in the Google console — the old one now
+points at nothing. Google warns client changes can take 5 minutes to a few
+hours to propagate.
+
+Five structural tests: the route exists, exchanges server-side, redirects only
+within its own origin, always goes home, and is reachable unauthenticated.
+129/129 dashboard tests, all packages typecheck.
+
 ## 2026-07-31 — The mirror showed another account's calendar (D-193b)
 
 Owner: signed into AOS as `ehsanrahimi8@`, consented as `ehsanrahimi8@`, page

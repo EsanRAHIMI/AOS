@@ -167,6 +167,52 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     }
   });
 
+  /**
+   * Server-to-server code exchange (D-193c).
+   *
+   * The browser used to be sent to the GATEWAY's callback on port 4101 — a
+   * different origin from the app, and an API server rather than a web app.
+   * Every way that can go wrong (a blocked cross-port navigation, an embedded
+   * view, a proxy, a browser that will not render a bare API response) leaves
+   * the owner stranded on Google's page. It did, repeatedly.
+   *
+   * The redirect now lands on the DASHBOARD, same origin as the app, and the
+   * dashboard calls this route server-side. The browser never touches the
+   * gateway, and the return trip is an ordinary in-app navigation that cannot
+   * fail to land.
+   */
+  app.post('/v1/calendar/oauth/exchange', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const body = req.body as { code?: string; state?: string };
+    if (!body?.code || !body.state) {
+      return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'code and state are required'));
+    }
+    if (!(await consumeOAuthState(body.state))) {
+      return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'bad_state'));
+    }
+    const cfg = googleConfig();
+    if (!cfg) return reply.code(501).send(failure(ERROR_CODES.VALIDATION, googleAvailability().reason));
+
+    return handle(reply, async () => {
+      const tok = await exchangeCode(cfg, body.code!);
+      const email = await fetchAccountEmail(tok.access_token);
+      const grant = await storeGrant({
+        actorId: OWNER,
+        refreshToken: tok.refresh_token ?? '',
+        accessToken: tok.access_token,
+        expiresInSec: tok.expires_in,
+        scopes: (tok.scope ?? '').split(' ').filter(Boolean),
+        accountEmail: email,
+      });
+      if (grant.accountChanged) {
+        const purged = await purgeMirror(OWNER);
+        deps.ctx.log.warn({ account: email, purged }, 'google account changed — local mirror purged');
+      }
+      const results = await syncAll(OWNER).catch(() => []);
+      return { accountEmail: email, synced: results.reduce((n, r) => n + r.upserted, 0) };
+    });
+  });
+
   app.post('/v1/calendar/disconnect', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     // Disconnecting must take the data with it, not just the token.

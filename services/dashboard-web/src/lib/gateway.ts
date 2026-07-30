@@ -380,6 +380,9 @@ export const gateway = {
     calendars: Array<Record<string, unknown>>; sync: Array<Record<string, unknown>>;
   }>('/v1/calendar/status'),
   calendarAuthUrl: () => call<{ url: string }>('/v1/calendar/oauth/start'),
+  calendarExchange: (code: string, state: string) =>
+    call<{ accountEmail: string; synced: number }>('/v1/calendar/oauth/exchange',
+      { method: 'POST', body: JSON.stringify({ code, state }) }),
   calendarDisconnect: () => call<{ removed: boolean }>('/v1/calendar/disconnect', { method: 'POST', body: '{}' }),
   calendarSync: () => call<{ results: Array<Record<string, unknown>> }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
   calendarAgenda: (from?: string, to?: string) => call<{ events: Array<Record<string, unknown>> }>(

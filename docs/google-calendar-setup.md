@@ -72,9 +72,15 @@ Verification is only needed if you later distribute this to other people.
 - **Authorised redirect URIs** — add both, exactly:
 
 ```
-http://localhost:4101/v1/calendar/oauth/callback
-https://api.<your-domain>/v1/calendar/oauth/callback
+http://localhost:4100/api/calendar/callback
+https://<your-dashboard-domain>/api/calendar/callback
 ```
+
+> These point at the **dashboard**, not the gateway. Sending the browser to the
+> API server on another port is what made consent hang without returning: the
+> browser was asked to navigate cross-origin to something that is not a web
+> app. The dashboard receives the code and exchanges it server-side, so the
+> trip home is an ordinary in-app redirect.
 
 Copy the **Client ID** and **Client secret**.
 
@@ -98,13 +104,14 @@ Add to `.env` and `services/gateway-api/.env`:
 ```env
 GOOGLE_CLIENT_ID=<from step 4>
 GOOGLE_CLIENT_SECRET=<from step 4>
-GOOGLE_REDIRECT_URI=http://localhost:4101/v1/calendar/oauth/callback
+GOOGLE_REDIRECT_URI=http://localhost:4100/api/calendar/callback
 GOOGLE_TOKEN_ENC_KEY=<64 hex chars from step 5>
 ```
 
-For production, set `GOOGLE_REDIRECT_URI` to the `https://api.…` variant you
-registered — it must match **byte for byte**, or Google returns
-`redirect_uri_mismatch`.
+For production, set `GOOGLE_REDIRECT_URI` to the `https://` dashboard variant
+you registered — it must match **byte for byte**, or Google returns
+`redirect_uri_mismatch`. Google also warns that client changes can take
+**5 minutes to a few hours** to take effect.
 
 ## 7. Connect
 
