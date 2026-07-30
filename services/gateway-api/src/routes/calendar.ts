@@ -208,8 +208,20 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
         const purged = await purgeMirror(OWNER);
         deps.ctx.log.warn({ account: email, purged }, 'google account changed — local mirror purged');
       }
-      const results = await syncAll(OWNER).catch(() => []);
-      return { accountEmail: email, synced: results.reduce((n, r) => n + r.upserted, 0) };
+
+      /* The first sync runs in the BACKGROUND, deliberately.
+       *
+       * It used to be awaited here, and that is what produced `exchange_failed`
+       * on a connection that had actually succeeded: a first sync walks every
+       * calendar and can take far longer than the dashboard's 12s gateway
+       * timeout, so the caller gave up and reported failure while the grant was
+       * already stored and the sync was still running. The exchange is the
+       * thing the owner is waiting on; the sync is not. */
+      void syncAll(OWNER)
+        .then((r) => deps.ctx.log.info({ synced: r.reduce((n, x) => n + x.upserted, 0) }, 'calendar initial sync done'))
+        .catch((err) => deps.ctx.log.error({ err }, 'calendar initial sync failed'));
+
+      return { accountEmail: email, syncStarted: true };
     });
   });
 

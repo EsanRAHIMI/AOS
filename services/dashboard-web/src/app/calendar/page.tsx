@@ -27,7 +27,20 @@ export const dynamic = 'force-dynamic';
  */
 function connectMessage(code: string): { tone: 'err' | 'ok'; title: string; detail: string } | null {
   if (!code) return null;
-  if (code === 'ok') return { tone: 'ok', title: 'اتصال برقرار شد', detail: 'اولین همگام‌سازی انجام شد.' };
+  if (code === 'ok') {
+    return {
+      tone: 'ok',
+      title: 'اتصال برقرار شد',
+      detail: 'اولین همگام‌سازی در پس‌زمینه در حال اجراست. چند لحظه بعد صفحه را تازه کنید — یا دکمهٔ «همگام‌سازی» را بزنید.',
+    };
+  }
+  if (code === 'exchange_failed') {
+    return {
+      tone: 'err',
+      title: 'تبادل توکن کامل نشد',
+      detail: 'اگر بالای صفحه ایمیل حسابتان را می‌بینید، اتصال در واقع برقرار شده و فقط پاسخ دیر رسیده — «همگام‌سازی» را بزنید. در غیر این صورت دوباره وصل شوید.',
+    };
+  }
   if (code === 'access_denied') {
     return {
       tone: 'err',

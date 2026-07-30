@@ -46,3 +46,27 @@ describe('oauth callback lives on the dashboard', () => {
     expect(env).not.toContain('4101/v1/calendar/oauth/callback');
   });
 });
+
+/**
+ * D-193d — a slow success must not be reported as a failure.
+ *
+ * The first sync walks every calendar and can outlast the dashboard's fixed
+ * 12s gateway timeout. Awaiting it inside the exchange made a CONNECTED
+ * account report `exchange_failed` — the grant was stored, the sync was still
+ * running, and the owner was told it broke.
+ */
+describe('exchange does not block on the first sync', () => {
+  it('the gateway starts the sync in the background, not in the request', () => {
+    const route = read('../gateway-api/src/routes/calendar.ts');
+    const exchange = route.slice(route.indexOf("app.post('/v1/calendar/oauth/exchange'"));
+    const body = exchange.slice(0, exchange.indexOf("app.post('/v1/calendar/disconnect'"));
+    expect(body).toContain('void syncAll(');
+    expect(body).not.toContain('await syncAll(');
+  });
+
+  it('the callback re-checks real state before claiming failure', () => {
+    const route = read('src/app/api/calendar/callback/route.ts');
+    expect(route).toContain('calendarStatus');
+    expect(route).toContain("status?.connected ? 'ok' : 'exchange_failed'");
+  });
+});

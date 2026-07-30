@@ -35,7 +35,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const res = await gateway.calendarExchange(code, state);
-    return back(res ? 'ok' : 'exchange_failed');
+    if (res) return back('ok');
+
+    /* A null response is not proof of failure — the gateway client aborts at a
+     * fixed timeout, and a slow-but-successful exchange looks identical to a
+     * broken one from here. So ask the source of truth: if a grant now exists,
+     * the connection worked and reporting failure would be a lie. */
+    const status = await gateway.calendarStatus();
+    return back(status?.connected ? 'ok' : 'exchange_failed');
   } catch (e) {
     const message = e instanceof Error ? e.message : 'exchange_failed';
     return back(message.includes('bad_state') ? 'bad_state' : message.slice(0, 80));

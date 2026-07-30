@@ -2,6 +2,32 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — A slow success reported as a failure (D-193d)
+
+The redirect now lands correctly, but the page said `exchange_failed` — while
+the account was connected and the events appeared after a manual sync. The
+connection had worked; the report was wrong.
+
+I had awaited the first full sync **inside** the exchange request. A first sync
+walks every calendar and can easily outlast the dashboard's fixed 12-second
+gateway timeout, so the client aborted and returned null while the gateway
+carried on and finished successfully. Null was then treated as failure.
+
+- **The first sync moved off the request path.** The exchange stores the grant
+  and returns; the sync runs in the background and logs its result. The owner
+  is waiting on the connection, not on the sync — putting both in one request
+  made the fast thing inherit the slow thing's failure modes.
+- **The callback no longer treats a null response as proof of failure.** It
+  asks the source of truth — does a grant now exist? — before claiming
+  anything. Reporting failure on a working connection is worse than a slow
+  answer.
+- The success message now says the sync is still running, so an empty grid in
+  the first seconds reads as "not yet" rather than "broken".
+
+Two structural tests: the gateway must not `await syncAll` in the exchange, and
+the callback must re-check status before reporting failure. 129/129 dashboard
+tests, all packages typecheck.
+
 ## 2026-07-31 — The OAuth redirect lands on the app, not the API server (D-193c)
 
 Consent kept succeeding and never returning; the owner navigated back to
