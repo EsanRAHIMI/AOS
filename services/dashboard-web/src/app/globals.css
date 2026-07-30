@@ -1489,3 +1489,6 @@ button { font: inherit; }
 @media (max-width: 900px) {
   .cal-grid { grid-template-columns: 1fr; }
 }
+.cal-alert strong { display: block; font-size: 13px; margin-bottom: 4px; }
+.cal-alert p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.9; }
+.cal-alert.ok { border-color: rgba(69, 224, 168, 0.35); background: rgba(69, 224, 168, 0.08); }

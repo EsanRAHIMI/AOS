@@ -38,10 +38,30 @@ In the same project:
 - **Developer contact:** your address.
 - **Audience → Test users:** add **your own Google account**.
 
-> While the app is in *Testing*, only listed test users can authorize it, and
-> refresh tokens expire after 7 days. That is fine for a personal system, but
-> it is why the connection will ask you to reconnect weekly until you press
-> **Publish app** (no verification review is required for your own account).
+> **This step is the one that blocks people.** While the app is in *Testing*,
+> Google refuses consent for ANY account that is not in the Test users list —
+> including the account that owns the Cloud project. The error looks like:
+>
+> ```
+> Access blocked: AOS-kernel has not completed the Google verification process
+> Error 403: access_denied
+> ```
+>
+> Add the **exact address you sign in with**. And note that a test user's
+> authorization expires **7 days** after consent, so you would reconnect
+> weekly — see step 3b to stop that.
+
+## 3b. Publish, so you stop reconnecting every 7 days
+
+<https://console.cloud.google.com/auth/audience> → **Publish app**
+
+Publishing does not require a Google review for your own use. With sensitive
+scopes and no verification, Google shows a "Google hasn't verified this app"
+interstitial once — choose **Advanced → Go to AOS Kernel (unsafe)** — and the
+grant then behaves normally, with no 7-day expiry. Unverified published apps
+are capped at 100 users, which is not a constraint for a personal system.
+
+Verification is only needed if you later distribute this to other people.
 
 ## 4. Create the OAuth client
 

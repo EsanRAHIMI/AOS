@@ -44,7 +44,35 @@ function clock(iso: string, allDay: boolean): string {
   return t || '—';
 }
 
-export default async function CalendarPage() {
+/**
+ * Google reports the outcome of consent by redirecting back with `?connect=`.
+ * Ignoring it — as the first version did — leaves the owner staring at an
+ * unchanged page after Google has just told them exactly what went wrong.
+ */
+function connectMessage(code: string): { tone: 'err' | 'ok'; title: string; detail: string } | null {
+  if (!code) return null;
+  if (code === 'ok') return { tone: 'ok', title: 'اتصال برقرار شد', detail: 'اولین همگام‌سازی انجام شد.' };
+  if (code === 'access_denied') {
+    return {
+      tone: 'err',
+      title: 'گوگل اجازه نداد — حساب شما در فهرست Test users نیست',
+      detail: 'اپ در حالت Testing است و فقط حساب‌هایی که خودتان به‌عنوان test user اضافه کرده‌اید می‌توانند اجازه بدهند. '
+        + 'در کنسول گوگل → Google Auth Platform → Audience → Test users، همان ایمیلی را که با آن وارد می‌شوید اضافه کنید. '
+        + 'برای رفع دائمی (و اینکه توکن هر ۷ روز باطل نشود) همان‌جا Publish app را بزنید.',
+    };
+  }
+  if (code === 'bad_state') {
+    return { tone: 'err', title: 'درخواست منقضی یا تکراری بود', detail: 'دوباره «اتصال به گوگل» را بزنید — هر درخواست فقط یک‌بار معتبر است.' };
+  }
+  if (code === 'redirect_uri_mismatch') {
+    return { tone: 'err', title: 'آدرس بازگشت با کنسول یکی نیست', detail: 'مقدار GOOGLE_REDIRECT_URI باید حرف‌به‌حرف با Authorised redirect URI در کنسول یکسان باشد.' };
+  }
+  return { tone: 'err', title: 'اتصال ناموفق بود', detail: code };
+}
+
+export default async function CalendarPage({ searchParams }: { searchParams: Promise<{ connect?: string }> }) {
+  const sp = await searchParams;
+  const connectMsg = connectMessage(sp.connect ?? '');
   const status = await gateway.calendarStatus();
   const setup = status?.setup;
   const connected = Boolean(status?.connected);
@@ -112,6 +140,13 @@ export default async function CalendarPage() {
 
           <ConnectButton disabled={!setup?.oauthConfigured || !setup?.vaultConfigured} />
         </section>
+      )}
+
+      {connectMsg && (
+        <div className={`cal-alert${connectMsg.tone === 'ok' ? ' ok' : ''}`}>
+          <strong>{connectMsg.title}</strong>
+          <p>{connectMsg.detail}</p>
+        </div>
       )}
 
       {status?.revokedAt && (
