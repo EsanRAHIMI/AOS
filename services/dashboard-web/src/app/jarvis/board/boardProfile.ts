@@ -14,7 +14,7 @@
  * drop-in change behind `loadBoardProfile` / `saveBoardProfile` — no consumer
  * of this module needs to know where the bytes live.
  */
-import type { BoardScope, BoardSourceId } from './boardModel';
+import type { BoardGroup, BoardScope, BoardSourceId } from './boardModel';
 import type { PlacementOverrides } from './boardLayout';
 
 export type BoardRole = 'founder' | 'operator' | 'engineer' | 'analyst' | 'custom';
@@ -28,6 +28,8 @@ export interface BoardProfile {
   hiddenCards: Record<string, true>;
   /** Ring reassignment per source — the owner's own sense of "how personal". */
   scopeOverrides: Partial<Record<BoardSourceId, BoardScope>>;
+  /** ORBIT reassignment per source (D-183.9) — which track a family rides. */
+  orbitOverrides: Partial<Record<BoardSourceId, BoardGroup>>;
   /** Hand-placed cards; these never move again. */
   placements: PlacementOverrides;
   /** Cards the owner pinned to always stay expanded. */
@@ -42,6 +44,7 @@ export const DEFAULT_PROFILE: BoardProfile = {
   hiddenSources: [],
   hiddenCards: {},
   scopeOverrides: {},
+  orbitOverrides: {},
   placements: {},
   pinned: {},
 };
@@ -102,6 +105,15 @@ export function resolveScope(
   return fallback;
 }
 
+/** Which orbit a card rides: owner override → the card/source default. */
+export function resolveOrbit(
+  profile: BoardProfile,
+  sourceId: BoardSourceId,
+  fallback: BoardGroup,
+): BoardGroup {
+  return profile.orbitOverrides[sourceId] ?? fallback;
+}
+
 export function isSourceVisible(profile: BoardProfile, sourceId: BoardSourceId): boolean {
   if (profile.hiddenSources.includes(sourceId)) return false;
   if (profile.role !== 'custom') {
@@ -126,6 +138,7 @@ export function loadBoardProfile(): BoardProfile {
       hiddenSources: parsed.hiddenSources ?? [],
       hiddenCards: parsed.hiddenCards ?? {},
       scopeOverrides: parsed.scopeOverrides ?? {},
+      orbitOverrides: parsed.orbitOverrides ?? {},
       placements: parsed.placements ?? {},
       pinned: parsed.pinned ?? {},
     };

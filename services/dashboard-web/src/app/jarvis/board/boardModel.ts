@@ -21,8 +21,10 @@ export type BoardScope = 'self' | 'personal' | 'work' | 'org' | 'network' | 'wor
 
 export const BOARD_SCOPES: readonly BoardScope[] = ['self', 'personal', 'work', 'org', 'network', 'world'] as const;
 
-/** Ring geometry in world units (singularity radius ≈ 1). Tuned so a default
- *  camera frames `personal` + `work` and the outer shells invite exploration. */
+/** Legacy scope table. Since D-183.9 the ORBIT (family) decides the radius;
+ *  scope now only nudges a card to an inner/outer LANE of its own orbit — the
+ *  more personal an instance is, the closer to the inside of its track it
+ *  rides. Tones are still used for card accents and ring captions. */
 export const SCOPE_RING: Record<BoardScope, { radius: number; label: string; labelFa: string; tone: [number, number, number] }> = {
   self:     { radius: 0,    label: 'SELF',     labelFa: 'خود',            tone: [255, 214, 140] },
   personal: { radius: 6.2,  label: 'PERSONAL', labelFa: 'شخصی',           tone: [255, 176, 108] },
@@ -48,12 +50,18 @@ export interface BoardMetric {
 }
 
 /**
- * Angular families. Rings answer "how personal is it"; GROUPS answer "what
- * kind of thing is it". Every card of a group occupies the same angular wedge
- * on every ring, so a domain reads as a spoke from the centre outward. This is
- * what keeps the board legible at 50–100+ cards: related cards are neighbours
- * by construction, and their edges stay inside a narrow wedge instead of
- * crossing the whole board.
+ * ORBITS (D-183.9 — the board's primary structure).
+ *
+ * Each family of things gets its OWN ORBIT around the singularity, and the
+ * orbits are ordered by how personal the family is: the innermost orbit is
+ * the owner's own identity and life, the outermost is shared infrastructure
+ * and the public world. Every card of a family is a body ON that orbit.
+ *
+ * This replaces the earlier "ring × wedge" grid because it says the same
+ * thing with one axis instead of two: the orbit you are on IS your family,
+ * and how far out you sit IS how shared you are. It also makes the connection
+ * between related cards implicit — they literally share a track — so the
+ * board stops needing a web of chords to express "these belong together".
  */
 export type BoardGroup = 'identity' | 'value' | 'execution' | 'knowledge' | 'trust' | 'infra';
 
@@ -65,8 +73,27 @@ export const GROUP_LABEL_FA: Record<BoardGroup, string> = {
   execution: 'اجرا و عملیات',
   knowledge: 'دانش و تحقیق',
   trust: 'اعتماد و روابط',
-  infra: 'زیرساخت',
+  infra: 'زیرساخت و جهان',
 };
+
+/**
+ * The orbit table — the single source of truth for the board's geometry.
+ * `index` is the distance order from the singularity (0 = closest, most
+ * personal). Radii are spaced so a card sitting on one orbit never visually
+ * belongs to its neighbour.
+ */
+export const ORBIT: Record<BoardGroup, { index: number; radius: number; label: string; labelFa: string; tone: [number, number, number] }> = {
+  identity:  { index: 0, radius: 7.4,  label: 'IDENTITY',  labelFa: 'هویت و زندگی',      tone: [255, 196, 128] },
+  value:     { index: 1, radius: 12.2, label: 'VALUE',     labelFa: 'ارزش و دارایی',     tone: [126, 231, 168] },
+  execution: { index: 2, radius: 17.2, label: 'EXECUTION', labelFa: 'اجرا و عملیات',     tone: [155, 160, 255] },
+  knowledge: { index: 3, radius: 22.4, label: 'KNOWLEDGE', labelFa: 'دانش و تحقیق',      tone: [110, 205, 255] },
+  trust:     { index: 4, radius: 27.8, label: 'TRUST',     labelFa: 'اعتماد و روابط',    tone: [255, 190, 96] },
+  infra:     { index: 5, radius: 33.4, label: 'INFRA',     labelFa: 'زیرساخت و جهان',    tone: [176, 190, 216] },
+};
+
+/** Orbits ordered from the singularity outward. */
+export const ORBIT_ORDER: readonly BoardGroup[] =
+  [...BOARD_GROUPS].sort((a, b) => ORBIT[a].index - ORBIT[b].index);
 
 /** Default family per source; a card may override with its own `group`. */
 export const GROUP_OF_SOURCE: Record<BoardSourceId, BoardGroup> = {

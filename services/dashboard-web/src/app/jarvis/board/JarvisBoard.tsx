@@ -19,15 +19,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardCamera } from './boardCamera';
-import { layoutCards, driftOffset, wedgeCenter, type CardPlacement } from './boardLayout';
+import { layoutCards, driftOffset, type CardPlacement } from './boardLayout';
 import {
-  SCOPE_RING, BOARD_SCOPES, GROUP_LABEL_FA, groupOf,
-  type BoardCard, type BoardGraph, type BoardScope,
+  SCOPE_RING, BOARD_SCOPES, ORBIT, ORBIT_ORDER, groupOf,
+  type BoardCard, type BoardGraph, type BoardGroup, type BoardScope,
 } from './boardModel';
-import { SynapseTraffic, radialBundlePath, pointOnPath } from './boardSynapses';
+import { SynapseTraffic, orbitalPath, pointOnPath } from './boardSynapses';
 import {
   DEFAULT_PROFILE, ROLE_LABEL_FA, isSourceVisible, loadBoardProfile,
-  resolveScope, saveBoardProfile, type BoardProfile, type BoardRole,
+  resolveScope, resolveOrbit, saveBoardProfile, type BoardProfile, type BoardRole,
 } from './boardProfile';
 import { loadBoardGraphAction } from './boardSources';
 
@@ -88,7 +88,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const drawnLinksRef = useRef(0);
   const [drawnLinks, setDrawnLinks] = useState(0);
   /** Group wedges that actually contain cards — only those get a spoke. */
-  const groupsPresentRef = useRef<import('./boardModel').BoardGroup[]>([]);
+  const groupsPresentRef = useRef<BoardGroup[]>([]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [zoomPct, setZoomPct] = useState(100);
@@ -215,7 +215,11 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
   const visibleCards = useMemo(() => {
     return graph.cards
       .filter((c) => c.id === 'self' || (isSourceVisible(profile, c.sourceId) && !profile.hiddenCards[c.id]))
-      .map((c) => (c.id === 'self' ? c : { ...c, scope: resolveScope(profile, c.sourceId, c.scope) }));
+      .map((c) => (c.id === 'self' ? c : {
+        ...c,
+        scope: resolveScope(profile, c.sourceId, c.scope),
+        group: resolveOrbit(profile, c.sourceId, groupOf(c)),
+      }));
   }, [graph.cards, profile]);
 
   /** Cards inside the focused card's neighbourhood — everything else recedes. */
@@ -238,7 +242,10 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     const placed = layoutCards(visibleCards.filter((c) => c.scope !== 'self'), profile.placements);
     const map = new Map<string, CardPlacement>();
     for (const p of placed) map.set(p.id, p);
-    map.set('self', { id: 'self', x: 0, y: 0, z: 0, r: 0, scope: 'self', group: 'identity', theta: -Math.PI / 2, manual: true });
+    map.set('self', {
+      id: 'self', x: 0, y: 0, z: 0, r: 0, orbitRadius: 0,
+      scope: 'self', group: 'identity', theta: -Math.PI / 2, manual: true,
+    });
     placementsRef.current = map;
     groupsPresentRef.current = [...new Set(visibleCards.filter((c) => c.scope !== 'self').map((c) => groupOf(c)))];
   }, [visibleCards, profile.placements]);
@@ -513,49 +520,40 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       const links = visibleLinks;
       trafficRef.current.update(links, dt, reduced ? 0.4 : 1);
 
-      // --- orbital rings: the visual grammar of "how personal is this" ----
+      // --- the orbits: the board's primary structure ----------------------
+      // Each family rides its own track, ordered outward from the singularity.
+      // Cards on one orbit are visibly related BECAUSE they share the track —
+      // no chord has to say it for them.
       const origin = cam.project(0, 0, 0);
-      for (const scope of BOARD_SCOPES) {
-        const ring = SCOPE_RING[scope];
-        if (ring.radius <= 0) continue;
+      const present = new Set(groupsPresentRef.current);
+      for (const g of ORBIT_ORDER) {
+        const track = ORBIT[g];
+        const inhabited = present.has(g);
+        const focusGroup = focusRef.current
+          ? placementsRef.current.get(focusRef.current)?.group
+          : null;
+        const lit = !focusGroup || focusGroup === g;
+        // The track itself.
         ctx.beginPath();
-        for (let i = 0; i <= 96; i += 1) {
-          const a = (i / 96) * Math.PI * 2;
-          const p = cam.project(Math.cos(a) * ring.radius, Math.sin(a) * ring.radius, 0);
-          if (!p.visible) continue;
-          if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        let started = false;
+        for (let i2 = 0; i2 <= 132; i2 += 1) {
+          const a2 = (i2 / 132) * Math.PI * 2;
+          const q = cam.project(Math.cos(a2) * track.radius, Math.sin(a2) * track.radius, 0);
+          if (!q.visible) { started = false; continue; }
+          if (!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y);
         }
-        ctx.strokeStyle = rgba(ring.tone, 0.07);
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = rgba(track.tone, (inhabited ? 0.16 : 0.05) * (lit ? 1 : 0.3));
+        ctx.lineWidth = inhabited ? 1.15 : 0.7;
         ctx.stroke();
-        // Ring caption sits at the far side so it never fights the cards.
-        const lp = cam.project(0, -ring.radius, 0);
-        if (lp.visible) {
-          ctx.font = '9px ui-monospace, monospace';
-          ctx.fillStyle = rgba(ring.tone, 0.3);
-          ctx.textAlign = 'center';
-          ctx.fillText(ring.label, lp.x, lp.y - 4);
-        }
-      }
 
-      // Group wedges: faint spokes + a caption just outside the last ring, so
-      // the angular axis (what KIND of thing) is as readable as the radial one.
-      const outer = SCOPE_RING.world.radius + 3.2;
-      for (const g of groupsPresentRef.current) {
-        const ang = wedgeCenter(g);
-        const p0 = cam.project(Math.cos(ang) * SCOPE_RING.personal.radius * 0.6, Math.sin(ang) * SCOPE_RING.personal.radius * 0.6, 0);
-        const p1 = cam.project(Math.cos(ang) * outer, Math.sin(ang) * outer, 0);
-        if (!p0.visible || !p1.visible) continue;
-        ctx.strokeStyle = 'rgba(190,205,235,0.05)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(p1.x, p1.y);
-        ctx.stroke();
-        ctx.font = '9.5px ui-monospace, monospace';
-        ctx.fillStyle = 'rgba(190,205,235,0.34)';
-        ctx.textAlign = 'center';
-        ctx.fillText(GROUP_LABEL_FA[g], p1.x, p1.y);
+        // Track label, riding the orbit at 12 o'clock.
+        const lp = cam.project(0, -track.radius, 0);
+        if (lp.visible && inhabited) {
+          ctx.font = '9.5px ui-monospace, monospace';
+          ctx.fillStyle = rgba(track.tone, (lit ? 0.42 : 0.16));
+          ctx.textAlign = 'center';
+          ctx.fillText(track.label, lp.x, lp.y - 6);
+        }
       }
 
       // --- project cards -------------------------------------------------
@@ -583,7 +581,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
 
       // --- axons + travelling packets (the neural network) ---------------
       const toneOf = new Map<string, [number, number, number]>();
-      for (const c of visibleCards) toneOf.set(c.id, SCOPE_RING[c.scope].tone);
+      for (const c of visibleCards) toneOf.set(c.id, ORBIT[groupOf(c)].tone);
       const heatOf = (l: (typeof links)[number]) => trafficRef.current.heatOf(l.from, l.to);
 
       // Degree of interest: with a card focused, its neighbourhood keeps full
@@ -627,29 +625,32 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         const pa = placementsRef.current.get(l.from);
         const pb = placementsRef.current.get(l.to);
         if (!pa || !pb) continue;
-        const path = radialBundlePath(
-          { r: pa.r || 0.001, theta: pa.theta },
-          { r: pb.r || 0.001, theta: pb.theta },
-          { minRadius: SCOPE_RING.personal.radius * 0.42 },
+        const path = orbitalPath(
+          { r: pa.r || 0.001, theta: pa.theta, orbitRadius: pa.orbitRadius },
+          { r: pb.r || 0.001, theta: pb.theta, orbitRadius: pb.orbitRadius },
         );
         pathOf.set(idx, path);
         const screen = projectPath(path);
         if (!screen.some((q) => q.ok)) continue;
 
         const heat = heatOf(l);
-        const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
+        const tone = toneOf.get(l.from) ?? ORBIT.infra.tone;
         const dim = doi && !linkFocus(l) ? 0.18 : 1;
+        // Cards on the same track are already visibly related, so their arc is
+        // a whisper; a TRANSFER between two orbits is the real event and gets
+        // the weight.
+        const transfer = Math.abs(pa.orbitRadius - pb.orbitRadius) > 0.001 ? 1 : 0.4;
         const trace = () => {
           ctx.beginPath();
           ctx.moveTo(screen[0].x, screen[0].y);
           for (let k = 1; k < screen.length; k += 1) ctx.lineTo(screen[k].x, screen[k].y);
           ctx.stroke();
         };
-        ctx.strokeStyle = rgba(tone, (0.045 + heat * 0.12) * dim);
-        ctx.lineWidth = 3 + l.strength * 2.4 + heat * 3;
+        ctx.strokeStyle = rgba(tone, (0.04 + heat * 0.12) * dim * transfer);
+        ctx.lineWidth = (2.6 + l.strength * 2.2 + heat * 3) * transfer;
         trace();
-        ctx.strokeStyle = rgba(tone, (0.17 + l.strength * 0.3 + heat * 0.4) * dim);
-        ctx.lineWidth = 0.85 + l.strength * 1.2 + heat * 1.3;
+        ctx.strokeStyle = rgba(tone, (0.13 + l.strength * 0.26 + heat * 0.42) * dim * transfer);
+        ctx.lineWidth = (0.8 + l.strength * 1.1 + heat * 1.3) * transfer;
         trace();
       }
 
@@ -665,7 +666,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         const pr = cam.project(w.x, w.y, 0);
         const prTail = cam.project(wTail.x, wTail.y, 0);
         if (!pr.visible) continue;
-        const tone = toneOf.get(l.from) ?? SCOPE_RING.work.tone;
+        const tone = toneOf.get(l.from) ?? ORBIT.infra.tone;
         const fade = Math.sin(Math.min(1, pk.t) * Math.PI) * pk.life * dim;
         const r = (pk.size + 1) * Math.max(0.5, pr.scale * cam.zoomScale);
         ctx.strokeStyle = rgba(tone, 0.45 * fade);
@@ -857,13 +858,15 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
             </select>
           </label>
           <p className="jboard-note">
-            هرچه موضوع شخصی‌تر است نزدیک‌تر به مرکز می‌نشیند و هرچه عمومی‌تر، دورتر.
-            حلقه‌ها: {BOARD_SCOPES.map((sc) => SCOPE_RING[sc].labelFa).join(' → ')}
+            هر دسته یک مدار دارد و مدارها به‌ترتیب از سیاه‌چاله دورتر می‌شوند.
+            کارت‌های یک مدار به‌هم مرتبط‌اند چون در یک مسیر می‌چرخند.
+            <br />
+            {ORBIT_ORDER.map((g) => ORBIT[g].labelFa).join(' ← ')}
           </p>
           <div className="jboard-sources">
             {graph.cards.filter((c) => c.id !== 'self').map((c) => {
               const hidden = Boolean(profile.hiddenCards[c.id]) || !isSourceVisible(profile, c.sourceId);
-              const scope = resolveScope(profile, c.sourceId, c.scope);
+              const orbit = resolveOrbit(profile, c.sourceId, groupOf(c));
               return (
                 <div key={c.id} className="jboard-source-row">
                   <button
@@ -879,16 +882,17 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
                     }}
                   >{c.title}</button>
                   <select
-                    value={scope}
+                    value={orbit}
                     onChange={(e) => {
                       const cur = profileRef.current;
                       setProfile({
                         ...cur,
-                        scopeOverrides: { ...cur.scopeOverrides, [c.sourceId]: e.target.value as BoardScope },
+                        orbitOverrides: { ...cur.orbitOverrides, [c.sourceId]: e.target.value as BoardGroup },
                       });
                     }}
+                    title="مدار این کارت"
                   >
-                    {BOARD_SCOPES.map((sc) => <option key={sc} value={sc}>{SCOPE_RING[sc].labelFa}</option>)}
+                    {ORBIT_ORDER.map((g) => <option key={g} value={g}>{ORBIT[g].labelFa}</option>)}
                   </select>
                 </div>
               );

@@ -15,53 +15,55 @@ axons in real time.
 
 ## 2. The orbital law (the one rule that gives the board meaning)
 
-> Distance from the centre encodes **how personal the subject is.**
+> **Every family of things has its own ORBIT around the singularity, and the
+> orbits are ordered by how personal the family is.**
 
-| Ring | Scope | What lives there |
+| Orbit | Group | What rides it |
 |---|---|---|
-| 0 | `self` | the owner — the singularity itself |
-| 1 | `personal` | profile, finance, documents & life records |
-| 2 | `work` | projects/ventures, missions, proactive findings |
-| 3 | `org` | living loop, memory, CIN identity graph |
-| 4 | `network` | counterparties, relations, services/infrastructure |
-| 5 | `world` | research and the public/macro layer |
+| 0 (innermost) | `identity` | the owner's profile, documents, life records |
+| 1 | `value` | finance, ventures, assets |
+| 2 | `execution` | missions, the living loop, proactive findings |
+| 3 | `knowledge` | memory, research |
+| 4 | `trust` | the CIN graph, counterparties, relations |
+| 5 (outermost) | `infra` | services, infrastructure, the public world |
 
-Moving outward always means "less mine, more shared". A card's ring is
-therefore semantic — it is never decoration, and the owner can re-assign it
-(see §4) because only the owner knows what is personal to them.
+The self is the singularity itself. Moving outward always means "less mine,
+more shared". `scope` survives as a secondary hint: inside its own track a
+more personal instance rides slightly to the inside.
 
-## 2.1 Scaling to 50–100+ cards (D-183.8)
+**Why orbits instead of a web of edges (D-183.9).** Cards on one orbit are
+visibly related *because they share a track* — no chord has to say it for
+them. That removes most of the lines from the board outright, and it makes the
+space metaphor do real work: the singularity at the centre, life orbiting it
+in ordered shells. What remains drawn is only what actually moves:
 
-A radial board with random angles and straight chords becomes a hairball the
-moment it holds more than a dozen cards. Four mechanisms keep it readable:
+- **same-orbit exchange** → a whisper-light arc riding the track itself,
+- **cross-orbit exchange** → a **transfer arc** whose radius eases from one
+  track to the other while the angle sweeps the short way, exactly like a
+  transfer burn. Transfers between the same pair of orbits run parallel and
+  read as one lane of traffic instead of a tangle.
 
-1. **Two semantic axes.** Radius = scope (how personal). **Angle = group**
-   (`identity · value · execution · knowledge · trust · infra`). A group owns
-   the same wedge on every ring, so a domain reads as a spoke and related
-   cards are neighbours by construction — most edges then stay inside one
-   narrow wedge instead of crossing the board.
-2. **Deterministic slots + lanes.** Inside a wedge, cards sit on evenly spaced
-   angular slots; when a wedge fills up the layout spills into concentric
-   lanes (small radius offsets) instead of letting cards overlap. Same input →
-   same seats, every reload.
-3. **Radial hierarchical edge bundling.** Edges are drawn in polar space: the
-   angle sweeps the short way while the radius dips toward the common ancestor
-   (the centre), bounded by a keepout. Parallel edges between the same regions
-   follow near-identical arcs and merge into trunks (`radialBundlePath`).
-4. **Degree of interest + edge budget.** Clicking a card focuses it: its
-   neighbourhood keeps full contrast, everything else recedes to 30 %, and all
-   of its wires are drawn regardless of budget. Unfocused and zoomed out, only
-   the structurally strongest wires are drawn (26 below 0.55 zoom, 60 below
-   0.9); the HUD reports `drawn/total` and says to zoom in for the rest.
+### Staying legible at 50–100+ cards
+
+1. **One axis, one meaning** (above) — no ring × wedge grid to decode.
+2. **Deterministic slots + lanes.** Cards are spaced evenly around their whole
+   track; a crowded orbit adds interleaved lanes rather than letting cards
+   overlap. Same input → same seats, every reload.
+3. **Orbital routing** replaces chords, so lines follow the geometry the eye
+   already understands.
+4. **Degree of interest + budget.** Clicking a card focuses it: its
+   neighbourhood keeps full contrast, other orbits dim, and all of its arcs
+   are drawn. Unfocused and zoomed out, only the strongest arcs are drawn (26
+   below 0.55 zoom, 60 below 0.9) and the HUD reports `drawn/total`.
 
 ## 3. Architecture (five independent modules + one layer)
 
 ```txt
 board/
-├── boardModel.ts     types, scope rings, activity math   (pure data)
+├── boardModel.ts     types, ORBIT table, activity math     (pure data)
 ├── boardCamera.ts    infinite pan/zoom/orbit + projection (pure math)
-├── boardLayout.ts    scope rings x group wedges + lanes    (pure function)
-├── boardSynapses.ts  radial edge bundling + packet engine  (renderer-agnostic)
+├── boardLayout.ts    orbital placement + lanes             (pure function)
+├── boardSynapses.ts  orbital routing + packet engine       (renderer-agnostic)
 ├── boardProfile.ts   role presets + owner overrides       (persistence seam)
 ├── boardSources.ts   'use server' — real gateway → graph  (fail-soft)
 └── JarvisBoard.tsx   the only file that touches the DOM
@@ -128,7 +130,7 @@ Cards are role-dependent by design. `boardProfile.ts` ships presets for
 hiding what that role does not care about). On top of the preset the owner can:
 
 - switch any card/source off,
-- re-assign a source to a different ring,
+- re-assign a source to a different **orbit**,
 - drag a card anywhere (hand-placed cards never move again),
 - pin cards to stay expanded.
 
