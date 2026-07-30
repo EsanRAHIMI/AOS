@@ -13,7 +13,7 @@ import {
   storeGrant, getGrant, deleteGrant, vaultAvailability,
   rememberOAuthState, consumeOAuthState,
   syncAll, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
-  ensureAosCalendar, createEvent, createTask, classifyWrite,
+  ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -139,7 +139,7 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     try {
       const tok = await exchangeCode(cfg, q.code);
       const email = await fetchAccountEmail(tok.access_token);
-      await storeGrant({
+      const grant = await storeGrant({
         actorId: OWNER,
         refreshToken: tok.refresh_token ?? '',
         accessToken: tok.access_token,
@@ -147,6 +147,14 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
         scopes: (tok.scope ?? '').split(' ').filter(Boolean),
         accountEmail: email,
       });
+      /* Connecting a DIFFERENT Google account must not leave the previous
+       * account's events in the mirror — the page would report this account as
+       * connected while showing someone else's calendar. */
+      if (grant.accountChanged) {
+        const purged = await purgeMirror(OWNER);
+        deps.ctx.log.warn({ account: email, purged }, 'google account changed — local mirror purged');
+      }
+
       // First sync immediately: an empty calendar page right after connecting
       // looks broken even when it is merely unsynced.
       const results = await syncAll(OWNER).catch(() => []);
@@ -161,7 +169,12 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
 
   app.post('/v1/calendar/disconnect', async (req, reply) => {
     if (!guard(req)) return deny(reply);
-    return handle(reply, async () => ({ removed: await deleteGrant(OWNER) }));
+    // Disconnecting must take the data with it, not just the token.
+    return handle(reply, async () => {
+      const removed = await deleteGrant(OWNER);
+      const purged = await purgeMirror(OWNER);
+      return { removed, purged };
+    });
   });
 
   /* --------------------------------------------------------------- sync */

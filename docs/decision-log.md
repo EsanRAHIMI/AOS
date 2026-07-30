@@ -2,6 +2,36 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — The mirror showed another account's calendar (D-193b)
+
+Owner: signed into AOS as `ehsanrahimi8@`, consented as `ehsanrahimi8@`, page
+reports `ehsanrahimi8@` — and the events shown belong to `mlbymasi@`.
+
+My bug, and a serious one. This system runs single-operator, so every mirror
+row was keyed by `actorId: 'owner'` alone. Connect account A, sync, then
+connect account B: A's events stay in the mirror forever, while the page
+truthfully reports B as connected. That is the worst failure this feature has —
+not missing data, but confidently wrong data belonging to someone else.
+
+Fixed at three levels, deliberately overlapping, because "shows a stranger's
+calendar" must fail closed:
+
+1. **Every mirror row is stamped with the Google account it came from**
+   (events, tasks, calendars).
+2. **Reads filter by the currently connected account.** A leftover row from a
+   previous grant can no longer surface even if a purge did not run. Rows
+   written before stamping have `account: ''` and are excluded — they belong to
+   an unknown grant, so they are not shown.
+3. **Reconnecting a different account purges the mirror**, sync tokens
+   included: a token from the old account would otherwise resume a stranger's
+   incremental sync against the new grant. `storeGrant` now reports
+   `accountChanged`, and the callback logs the purge. Disconnect purges too —
+   removing the token while leaving the data is not disconnecting.
+
+Three new contract tests, including one that plants exactly the reported
+situation (a stale `old@gmail.com` row under a fresh `new@gmail.com` grant) and
+asserts both agenda and tasks come back empty. 304/304 shared tests.
+
 ## 2026-07-31 — A real calendar, not a list (D-193)
 
 Owner, correctly: the page is not a calendar. It was a flat 30-day agenda, and

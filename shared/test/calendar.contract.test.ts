@@ -177,3 +177,64 @@ describe('oauth state — durable, single use, time-boxed', () => {
     expect(doc?.ttlAt instanceof Date).toBe(true);
   });
 });
+
+/**
+ * D-193b — the mirror must never show another account's calendar.
+ *
+ * This system runs single-operator, so every mirror row was keyed by
+ * `actorId: 'owner'`. Connect account A, sync, connect account B — and A's
+ * events stayed, with the page reporting B as connected. Not missing data:
+ * confidently wrong data belonging to someone else.
+ */
+describe('mirror is scoped to the connected Google account', () => {
+  it('reports when a reconnect switched accounts', async () => {
+    const first = await storeGrant({ actorId: 'owner', refreshToken: 'rt', accountEmail: 'a@gmail.com' }, ENV);
+    expect(first.accountChanged).toBe(false);
+
+    const same = await storeGrant({ actorId: 'owner', refreshToken: 'rt', accountEmail: 'a@gmail.com' }, ENV);
+    expect(same.accountChanged).toBe(false);
+
+    const other = await storeGrant({ actorId: 'owner', refreshToken: 'rt2', accountEmail: 'b@gmail.com' }, ENV);
+    expect(other.accountChanged).toBe(true);
+  });
+
+  it('purges every mirror collection, including the sync tokens', async () => {
+    const { purgeMirror } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+
+    await collection(COLLECTIONS.CALENDAR_EVENTS).insertOne({ actorId: 'owner', account: 'a@x', eventId: 'e1' } as never);
+    await collection(COLLECTIONS.CALENDAR_TASKS).insertOne({ actorId: 'owner', account: 'a@x', taskId: 't1' } as never);
+    await collection(COLLECTIONS.CALENDARS).insertOne({ actorId: 'owner', account: 'a@x', calendarId: 'c1' } as never);
+    // Sync tokens belonged to the OLD account; keeping them would resume a
+    // stranger's incremental sync against the new grant.
+    await collection(COLLECTIONS.CALENDAR_SYNC_STATE).insertOne({ actorId: 'owner', resourceId: 'c1' } as never);
+
+    const purged = await purgeMirror('owner');
+    expect(purged.events).toBe(1);
+    expect(purged.tasks).toBe(1);
+    expect(purged.calendars).toBe(1);
+    expect(await collection(COLLECTIONS.CALENDAR_SYNC_STATE).findOne({ actorId: 'owner' })).toBeNull();
+  });
+
+  it('never returns rows belonging to a different account, even unpurged', async () => {
+    const { readAgenda, readTasks } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+
+    await storeGrant({ actorId: 'owner', refreshToken: 'rt', accountEmail: 'new@gmail.com' }, ENV);
+    // A leftover row from the previous account, exactly the reported bug.
+    await collection(COLLECTIONS.CALENDAR_EVENTS).insertOne({
+      actorId: 'owner', account: 'old@gmail.com', calendarId: 'c', eventId: 'stale',
+      status: 'confirmed', start: '2026-07-31T09:00:00Z', end: '2026-07-31T10:00:00Z',
+      allDay: false, syncedAt: '2026-07-31T00:00:00Z',
+    } as never);
+    await collection(COLLECTIONS.CALENDAR_TASKS).insertOne({
+      actorId: 'owner', account: 'old@gmail.com', taskListId: '@default', taskId: 'stale',
+      status: 'needsAction', syncedAt: '2026-07-31T00:00:00Z',
+    } as never);
+
+    expect(await readAgenda({ actorId: 'owner', fromIso: '2026-01-01', toIso: '2027-01-01' })).toEqual([]);
+    expect(await readTasks('owner')).toEqual([]);
+  });
+});

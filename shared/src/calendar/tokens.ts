@@ -116,7 +116,7 @@ export interface StoreGrantInput {
  * the FIRST consent unless `prompt=consent` is forced, so a re-connect that
  * omits it must not wipe the working one.
  */
-export async function storeGrant(input: StoreGrantInput, env: NodeJS.ProcessEnv = process.env): Promise<GoogleToken> {
+export async function storeGrant(input: StoreGrantInput, env: NodeJS.ProcessEnv = process.env): Promise<GoogleToken & { accountChanged: boolean }> {
   const now = nowIso();
   const existing = await col().findOne({ actorId: input.actorId, provider: 'google' });
 
@@ -143,12 +143,19 @@ export async function storeGrant(input: StoreGrantInput, env: NodeJS.ProcessEnv 
     lastError: '',
   });
 
+  /* Did the owner just connect a DIFFERENT Google account? The caller must
+   * purge the mirror when so: rows from the previous account would otherwise
+   * remain and be rendered as this account's calendar. */
+  const accountChanged = Boolean(
+    existing?.accountEmail && record.accountEmail && existing.accountEmail !== record.accountEmail,
+  );
+
   await col().updateOne(
     { actorId: input.actorId, provider: 'google' },
     { $set: record },
     { upsert: true },
   );
-  return record;
+  return { ...record, accountChanged };
 }
 
 export async function getGrant(actorId: string): Promise<GoogleToken | null> {

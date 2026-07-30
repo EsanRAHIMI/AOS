@@ -28,11 +28,14 @@ import { collection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { nowIso } from '../utils/index.js';
 import { googleCall, GoogleApiError, CALENDAR_API, TASKS_API } from './google.js';
+import { getGrant } from './tokens.js';
 
 /* ------------------------------------------------------------------ models */
 
 export const CalendarRefSchema = z.object({
   actorId: z.string(),
+  /** The Google account this row came from. See `purgeMirror` for why. */
+  account: z.string().default(''),
   calendarId: z.string(),
   summary: z.string().default(''),
   description: z.string().default(''),
@@ -50,6 +53,7 @@ export type CalendarRef = z.infer<typeof CalendarRefSchema>;
 
 export const CalendarEventSchema = z.object({
   actorId: z.string(),
+  account: z.string().default(''),
   calendarId: z.string(),
   eventId: z.string(),
   status: z.string().default('confirmed'),
@@ -78,6 +82,7 @@ export type CalendarEvent = z.infer<typeof CalendarEventSchema>;
 
 export const CalendarTaskSchema = z.object({
   actorId: z.string(),
+  account: z.string().default(''),
   taskListId: z.string(),
   taskId: z.string(),
   title: z.string().default(''),
@@ -147,13 +152,14 @@ async function writeState(state: SyncState): Promise<void> {
   );
 }
 
-function toEvent(actorId: string, calendarId: string, raw: Record<string, unknown>): CalendarEvent {
+function toEvent(actorId: string, calendarId: string, raw: Record<string, unknown>, account: string): CalendarEvent {
   const start = raw.start as { dateTime?: string; date?: string; timeZone?: string } | undefined;
   const end = raw.end as { dateTime?: string; date?: string } | undefined;
   const allDay = Boolean(start?.date);
   const props = (raw.extendedProperties as { private?: Record<string, string> } | undefined)?.private ?? {};
   return CalendarEventSchema.parse({
     actorId,
+    account,
     calendarId,
     eventId: String(raw.id ?? ''),
     status: String(raw.status ?? 'confirmed'),
@@ -180,15 +186,42 @@ function toEvent(actorId: string, calendarId: string, raw: Record<string, unknow
   });
 }
 
+/**
+ * Erase the entire local mirror for an owner (D-193b).
+ *
+ * The mirror was keyed by `actorId` alone, and this system runs single-operator
+ * so that is always `'owner'`. Connect account A, sync, then connect account B
+ * and A's events stay in the mirror forever — the page reports B as connected
+ * while showing A's calendar. That is the worst failure this feature has: not
+ * missing data, but confidently wrong data belonging to someone else.
+ *
+ * Called whenever the connected Google account changes, and on disconnect.
+ */
+export async function purgeMirror(actorId: string): Promise<{ events: number; tasks: number; calendars: number }> {
+  const [events, tasks, calendars] = await Promise.all([
+    eventsCol().deleteMany({ actorId }),
+    tasksCol().deleteMany({ actorId }),
+    calendarsCol().deleteMany({ actorId }),
+  ]);
+  await stateCol().deleteMany({ actorId });   // sync tokens belonged to the old account
+  return {
+    events: events.deletedCount ?? 0,
+    tasks: tasks.deletedCount ?? 0,
+    calendars: calendars.deletedCount ?? 0,
+  };
+}
+
 /* ------------------------------------------------------------ calendar list */
 
 export async function syncCalendarList(actorId: string, env: NodeJS.ProcessEnv = process.env): Promise<CalendarRef[]> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
   const res = await googleCall<{ items?: Array<Record<string, unknown>> }>(
     actorId, CALENDAR_API, '/users/me/calendarList', { query: { maxResults: 250, showHidden: false }, env },
   );
   const now = nowIso();
   const refs: CalendarRef[] = (res.items ?? []).map((c) => CalendarRefSchema.parse({
     actorId,
+    account,
     calendarId: String(c.id ?? ''),
     summary: String(c.summary ?? ''),
     description: String(c.description ?? ''),
@@ -208,7 +241,8 @@ export async function syncCalendarList(actorId: string, env: NodeJS.ProcessEnv =
 }
 
 export async function listCalendars(actorId: string): Promise<CalendarRef[]> {
-  const docs = await calendarsCol().find({ actorId }, { projection: { _id: 0 } as never }).toArray();
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const docs = await calendarsCol().find({ actorId, account }, { projection: { _id: 0 } as never }).toArray();
   return docs.map((d) => CalendarRefSchema.parse(d));
 }
 
@@ -249,6 +283,7 @@ export interface SyncResult {
 export async function syncEvents(
   actorId: string, calendarId: string, env: NodeJS.ProcessEnv = process.env,
 ): Promise<SyncResult> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
   const prior = await readState(actorId, calendarId, 'events');
   let syncToken = prior?.syncToken ?? '';
   let fullSync = !syncToken;
@@ -269,7 +304,7 @@ export async function syncEvents(
       pages += 1;
 
       for (const raw of res.items ?? []) {
-        const ev = toEvent(actorId, calendarId, raw);
+        const ev = toEvent(actorId, calendarId, raw, account);
         if (!ev.eventId) continue;
         // Rule 2: cancellations arrive as items and must leave the mirror.
         if (ev.status === 'cancelled') {
@@ -344,6 +379,7 @@ export async function syncTasks(
   actorId: string, taskListId = '@default', env: NodeJS.ProcessEnv = process.env,
 ): Promise<SyncResult> {
   const resourceId = `tasks:${taskListId}`;
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
   const prior = await readState(actorId, resourceId, 'tasks');
   let upserted = 0;
   let deleted = 0;
@@ -376,7 +412,7 @@ export async function syncTasks(
         }
         const notes = String(raw.notes ?? '');
         const task = CalendarTaskSchema.parse({
-          actorId, taskListId, taskId,
+          actorId, account, taskListId, taskId,
           title: String(raw.title ?? ''),
           notes,
           status: String(raw.status ?? 'needsAction'),
@@ -426,8 +462,15 @@ export interface AgendaQuery {
 
 /** The mirror read that the page and the heartbeat both use. */
 export async function readAgenda(q: AgendaQuery): Promise<CalendarEvent[]> {
+  /* Filter by the CURRENTLY connected account, not just the actor. The purge on
+   * account change is the primary defence; this is the second one, because
+   * showing another person's calendar must fail closed even if a purge did
+   * not complete. Rows written before accounts were stamped have account:''
+   * and are excluded — they belong to an unknown grant. */
+  const account = (await getGrant(q.actorId))?.accountEmail ?? '';
   const filter: Record<string, unknown> = {
     actorId: q.actorId,
+    account,
     status: { $ne: 'cancelled' },
     start: { $gte: q.fromIso, $lte: q.toIso },
   };
@@ -441,7 +484,8 @@ export async function readAgenda(q: AgendaQuery): Promise<CalendarEvent[]> {
 }
 
 export async function readTasks(actorId: string, opts: { includeCompleted?: boolean; limit?: number } = {}): Promise<CalendarTask[]> {
-  const filter: Record<string, unknown> = { actorId };
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const filter: Record<string, unknown> = { actorId, account };
   if (!opts.includeCompleted) filter.status = { $ne: 'completed' };
   const docs = await tasksCol()
     .find(filter as never, { projection: { _id: 0 } as never })
