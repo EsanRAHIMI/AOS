@@ -219,6 +219,49 @@ export const INDEX_PLAN: IndexPlanEntry[] = [
     collection: COLLECTIONS.WATCH_FIRINGS, keys: { createdBy: 1, createdAt: -1 }, options: { name: 'owner_created' },
     reason: 'recent firings feed the heartbeat and the briefing',
   },
+  /* --- D-192: Google Calendar / Tasks mirror -------------------------- */
+  {
+    collection: COLLECTIONS.GOOGLE_TOKENS,
+    keys: { actorId: 1, provider: 1 },
+    options: { unique: true, name: 'actor_provider_unique' },
+    reason: 'CONSTRAINT: one Google grant per owner. Two rows would mean two refresh tokens racing to refresh each other into invalidity.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_SYNC_STATE,
+    keys: { actorId: 1, resourceId: 1 },
+    options: { unique: true, name: 'actor_resource_unique' },
+    reason: 'CONSTRAINT: one sync token per calendar. A duplicate row means one of them silently stops advancing and that calendar stops updating.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_EVENTS,
+    keys: { actorId: 1, calendarId: 1, eventId: 1 },
+    options: { unique: true, name: 'actor_calendar_event_unique' },
+    reason: 'CONSTRAINT: the mirror is keyed by Google id; duplicates would show the owner the same meeting twice.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_EVENTS,
+    keys: { actorId: 1, start: 1 },
+    options: { name: 'agenda_by_start' },
+    reason: 'PERFORMANCE: every agenda read is a time-range scan sorted by start — the hot path of the calendar page and the heartbeat.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_TASKS,
+    keys: { actorId: 1, taskListId: 1, taskId: 1 },
+    options: { unique: true, name: 'actor_list_task_unique' },
+    reason: 'CONSTRAINT: same reason as events — the Google task id is the identity.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_TASKS,
+    keys: { actorId: 1, due: 1 },
+    options: { name: 'tasks_by_due' },
+    reason: 'PERFORMANCE: "what is due" is the only question anyone asks of tasks.',
+  },
+  {
+    collection: COLLECTIONS.CALENDARS,
+    keys: { actorId: 1, calendarId: 1 },
+    options: { unique: true, name: 'actor_calendar_unique' },
+    reason: 'CONSTRAINT: one row per calendar in the owner list.',
+  },
 ];
 
 export interface EnsureIndexesResult {

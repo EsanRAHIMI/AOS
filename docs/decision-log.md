@@ -2,6 +2,69 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Google Calendar & Tasks: the sync core (D-192, part 1)
+
+Owner's requirement: a calendar/tasks/reminders surface connected to Google,
+built the way Google's own engineers would, current with the latest official
+methods, and reachable by Jarvis for read and write.
+
+**Three findings from the official docs (fetched 2026‑07‑30) shaped the design:**
+
+1. **Reminders no longer exist as a product.** Calendar and Assistant reminders
+   migrated to Google Tasks in 2023, Keep reminders in 2025, and there is no
+   public Reminders API. A "reminder" here is a Task with a due date — which is
+   what Google itself now renders on the calendar grid. Building a "Reminders
+   integration" would have meant building against nothing.
+2. **The official Calendar MCP server exists (April 2026) but is Developer
+   Preview**, and it is agent-only: no local mirror, so the calendar page and
+   the expiry warnings would have to ask Google live on every render. Owner
+   chose the in-house sync engine; MCP can join later as an extra tool surface
+   once it is stable.
+3. **New this year:** quota tiering (May 2026), custom labels needing
+   `eventLabelVersion=1` (July 2026), `writerWithoutPrivateAccess`, and the
+   Feb‑2026 rule to generate a **new** Meet conference per event rather than
+   reusing codes. The write layer follows the last one already.
+
+**Decisions worth recording:**
+
+- **Plain REST over `fetch`, not the `googleapis` SDK.** A dozen HTTP calls do
+  not justify that dependency tree, and the kernel's rule is to build in-house
+  and depend narrowly. The cost is that we must implement the error semantics
+  ourselves — so they are transcribed explicitly from the official guide, with
+  the reasoning next to each: 401 → refresh once then re-authorize; 403
+  rate-limit/429 → exponential backoff with jitter; 410 → the sync token is
+  dead; 400/409/412 → never retry blindly.
+- **Refresh tokens are encrypted at rest with AES‑256‑GCM** under a key that
+  lives only in the environment. GCM rather than CBC because it authenticates:
+  a tampered record fails to decrypt instead of yielding garbage we would then
+  send to Google as a token. Without the key the vault refuses to store
+  anything and says exactly which variable is missing.
+- **One constant holds the event-sync query parameters.** The sync guide
+  requires them to be identical across the initial and every incremental
+  request, and forbids `timeMin`/`q`/`orderBy`/`updatedMin` alongside a sync
+  token. Two copies of that parameter set is a bug waiting to happen — the
+  mirror would stop updating quietly.
+- **Cancellations are deletions.** Google returns cancelled events as results
+  precisely so clients can remove them; a sync that only upserts leaves
+  cancelled meetings on the owner's screen forever.
+- **`410 GONE` wipes that calendar's slice and re-runs a full sync**, rather
+  than merging stale rows into fresh data.
+- **The write policy lives in the module, not just in tool metadata.** Owner
+  chose: free writes into a dedicated **AOS · Autonomous OS** calendar, approval
+  for anything touching their own calendars. Deleting and inviting guests need
+  approval *everywhere*, including in our own calendar — a delete is
+  irreversible from here and an invitation sends real mail in the owner's name.
+  The separate calendar also gives the owner a one-toggle undo in Google
+  Calendar that no care on our side can match.
+
+Landed: `shared/src/calendar/` (vault, client, sync, write), 7 collections with
+their index-plan entries, 17 contract tests, `docs/google-calendar-setup.md`
+with the exact console steps, and `.env.example` keys. 297/297 shared tests,
+typecheck clean.
+
+**Not yet built** (next): gateway OAuth + sync routes, the Jarvis tool family,
+and the `/calendar` page in Liquid Glass.
+
 ## 2026-07-30 — The Rudder: one assistant, voice everywhere, Liquid Glass (D-191)
 
 Owner: `/jarvis` has a microphone and spoken replies but no history or

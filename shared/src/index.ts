@@ -91,3 +91,4 @@ export * from './cin/index.js';
 export * from './heartbeat/index.js';
 // CIN-2b Autonomous Living Loop (D-181) — durable observe→reason→act cycles
 export * from './livingloop/index.js';
+export * from './calendar/index.js';

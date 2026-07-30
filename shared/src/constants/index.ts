@@ -309,6 +309,18 @@ export const COLLECTIONS = {
   CIN_LEDGER: 'cin_ledger',
   // CIN-1b Documents (D-185) — the owner's records/papers as identity records.
   CIN_DOCUMENTS: 'cin_documents',
+
+  /* --- D-192: Google Calendar / Tasks integration ------------------------ */
+  /** Encrypted OAuth grants, one per owner. Never contains a plaintext token. */
+  GOOGLE_TOKENS: 'google_tokens',
+  /** Per-calendar sync state: syncToken, last full sync, watch channel. */
+  CALENDAR_SYNC_STATE: 'calendar_sync_state',
+  /** Local mirror of Google events — what the UI and heartbeat read. */
+  CALENDAR_EVENTS: 'calendar_events',
+  /** Local mirror of Google Tasks (what used to be Reminders). */
+  CALENDAR_TASKS: 'calendar_tasks',
+  /** The owner's calendar list, so we know what exists and what to sync. */
+  CALENDARS: 'calendars',
   // CIN-2 Living Personal OS (D-180) — proactive heartbeat + owner stream.
   PROACTIVE_EVENTS: 'proactive_events',
   HEARTBEAT_RUNS: 'heartbeat_runs',
