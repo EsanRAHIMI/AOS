@@ -11,6 +11,7 @@
  * button that silently does nothing. Speech synthesis is checked separately —
  * a browser can have one without the other.
  */
+import { chunkForSpeech, pickVoice, speechText, type VoiceLike } from './speech';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 type SpeechRec = {
@@ -124,20 +125,45 @@ export function useVoice(opts: { lang?: string; onFinal: (text: string) => void 
     try { rec.start(); setListening(true); } catch { setListening(false); }
   }, [lang, listening, stopListening, stopSpeaking]);
 
+  /**
+   * Speak (D-195 rewrite).
+   *
+   * The old version handed 600 raw characters of markdown to the engine with
+   * whatever default voice the browser felt like. It read the asterisks, said
+   * "ten colon thirty", and — because Chrome truncates long utterances — went
+   * quiet halfway through. Now: normalise, choose a genuinely Persian voice,
+   * and queue sentence-sized chunks.
+   */
   const speak = useCallback((text: string) => {
     if (!text || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const spoken = speechText(text);
+    if (!spoken) return;
+
     try {
       window.speechSynthesis.cancel();
-      // Cap the utterance: reading a long structured answer aloud in full is
-      // punishing, and the text is on screen anyway.
-      const u = new SpeechSynthesisUtterance(text.slice(0, 600));
-      u.lang = lang;
-      u.rate = 1.02;
-      u.onstart = () => setSpeaking(true);
-      const done = () => setSpeaking(false);
-      u.onend = done;
-      u.onerror = done;
-      window.speechSynthesis.speak(u);
+      const voices = window.speechSynthesis.getVoices() as unknown as VoiceLike[];
+      const voice = pickVoice(voices ?? [], lang);
+      /* No Persian voice installed → stay silent. An English engine reading
+       * Persian letters produces noise, not an accent, and the owner would
+       * have to sit through it to discover that. */
+      if (!voice && (voices?.length ?? 0) > 0) { setSpeaking(false); return; }
+
+      const chunks = chunkForSpeech(spoken);
+      let remaining = chunks.length;
+      chunks.forEach((chunk, i) => {
+        const u = new SpeechSynthesisUtterance(chunk);
+        u.lang = lang;
+        if (voice) u.voice = voice as unknown as SpeechSynthesisVoice;
+        // Slightly under natural pace: Persian synthesis at 1.0+ clips the
+        // ezāfe and runs words together.
+        u.rate = 0.94;
+        u.pitch = 1.0;
+        if (i === 0) u.onstart = () => setSpeaking(true);
+        const done = () => { remaining -= 1; if (remaining <= 0) setSpeaking(false); };
+        u.onend = done;
+        u.onerror = done;
+        window.speechSynthesis.speak(u);
+      });
     } catch { setSpeaking(false); }
   }, [lang]);
 

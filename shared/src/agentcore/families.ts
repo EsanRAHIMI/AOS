@@ -32,6 +32,7 @@ import { issueClaim, verifyClaim } from '../cin/trust.js';
 import { verifyChain } from '../cin/ledger.js';
 import { listDocuments } from '../cin/documents.js';
 import { buildOwnerIdentityContext } from '../cin/context.js';
+import { registerCalendarTools } from './calendar-tools.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -632,6 +633,10 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
       return { ok: check.ok, summary: check.ok ? `ledger intact: ${check.length} records, head ${check.headHash?.slice(0, 16) ?? 'empty'}` : `LEDGER BROKEN at seq ${check.brokenAtSeq}: ${check.reason}`, data: check };
     },
   });
+
+  /* ------------------------------ calendar ------------------------------- */
+  // D-195: the owner's actual week. Reads are mirror-local and free to call.
+  registerCalendarTools(registry);
 
   return registry;
 }

@@ -23,6 +23,8 @@ import { usePathname } from 'next/navigation';
 import { getBriefingAction, type JarvisBriefingView } from '@/app/jarvis/actions';
 import { JarvisConversation, type ConversationState } from '@/components/JarvisConversation';
 import { bidiProps } from '@/lib/rtl';
+import { useVoice } from '@/lib/useVoice';
+import { useEventAlerts } from '@/lib/useEventAlerts';
 
 const BRIEFING_REFRESH_MS = 120_000;
 
@@ -77,11 +79,40 @@ export function JarvisRudder({ role }: { role: string }) {
 
   const priority = briefing?.primaryPriority || briefing?.recommendedNextActions?.[0] || '';
 
+  /* Live calendar watch (D-195). The rudder owns it rather than the
+   * conversation, because it must keep working while the panel is closed —
+   * that is the entire point of a reminder. */
+  const voice = useVoice({ lang: 'fa-IR', onFinal: () => undefined });
+  const alerts = useEventAlerts(voice.speak);
+
+  const nextLabel = (() => {
+    if (!alerts.enabled || !alerts.next?.start) return '';
+    const mins = Math.round((new Date(alerts.next.start).getTime() - Date.now()) / 60_000);
+    if (mins < 0 || mins > 180) return '';
+    return `${alerts.next.summary || 'رویداد'} — ${mins} دقیقهٔ دیگر`;
+  })();
+
   return (
     <>
       {/* A click-catcher rather than a modal backdrop: the page below stays
         * readable and interactive-looking, because it is still your context. */}
       {open && <div className="jrud-scrim" onClick={() => setOpen(false)} aria-hidden />}
+
+      {/* The announcement itself. Deliberately outside the panel: a reminder
+        * that only appears when you have the assistant open is not a reminder. */}
+      {alerts.alert && (
+        <div className="jrud-alert" dir="rtl" role="status">
+          <span className="jrud-alert-dot" aria-hidden />
+          <div className="jrud-alert-body">
+            <strong {...bidiProps(alerts.alert.title)}>{alerts.alert.title}</strong>
+            <span className="jrud-alert-when">
+              {alerts.alert.minutes <= 0 ? 'همین حالا شروع می‌شود' : `${alerts.alert.minutes} دقیقهٔ دیگر`}
+            </span>
+            <p {...bidiProps(alerts.alert.sentence)}>{alerts.alert.sentence}</p>
+          </div>
+          <button type="button" className="jrud-alert-x" onClick={alerts.dismiss} aria-label="بستن">×</button>
+        </div>
+      )}
 
       <div className={`jrud${open ? ' jrud--open' : ''}`} dir="rtl">
         <div className="jrud-glass" ref={panelRef}>
@@ -91,6 +122,7 @@ export function JarvisRudder({ role }: { role: string }) {
               <strong>جارویس</strong>
               <span className="jrud-state">{STATE_LABEL[state]}</span>
               <span className="jrud-role">{role}</span>
+              <EventAlertToggle alerts={alerts} />
               <button type="button" className="jrud-x" onClick={() => setOpen(false)} aria-label="بستن">×</button>
             </header>
           )}
@@ -110,14 +142,49 @@ export function JarvisRudder({ role }: { role: string }) {
           ) : (
             <button type="button" className="jrud-bar" onClick={() => setOpen(true)} title="جارویس (⌘K)">
               <span className={`jrud-dot jrud-dot--${state}`} />
-              <span className="jrud-bar-text" {...bidiProps(priority || 'جارویس')}>
-                {priority || 'جارویس — بپرسید، بگویید یا دستور بدهید'}
+              <span className="jrud-bar-text" {...bidiProps(nextLabel || priority || 'جارویس')}>
+                {nextLabel || priority || 'جارویس — بپرسید، بگویید یا دستور بدهید'}
               </span>
+              {alerts.enabled && <span className="jrud-watch" title="مراقب تقویم" aria-hidden />}
               <kbd className="jrud-kbd" dir="ltr">⌘K</kbd>
             </button>
           )}
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The switch, and the only setting it needs.
+ *
+ * Minimal on purpose: one toggle, one number. The lead time is the single
+ * thing people actually disagree about — five minutes if you are already at
+ * your desk, thirty if you have to travel.
+ */
+function EventAlertToggle({ alerts }: { alerts: ReturnType<typeof useEventAlerts> }) {
+  return (
+    <span className="jrud-watchbox">
+      <button
+        type="button"
+        className={`jrud-watchbtn${alerts.enabled ? ' on' : ''}`}
+        onClick={() => alerts.setEnabled(!alerts.enabled)}
+        aria-pressed={alerts.enabled}
+        title={alerts.enabled ? 'مراقبت از تقویم روشن است' : 'مراقبت از تقویم خاموش است'}
+      >
+        <span className="jrud-watchdot" aria-hidden />
+        مراقب تقویم
+      </button>
+      {alerts.enabled && (
+        <select
+          className="jrud-watchlead"
+          value={alerts.leadMinutes}
+          onChange={(e) => alerts.setLeadMinutes(Number(e.target.value))}
+          aria-label="چند دقیقه قبل اطلاع بده"
+        >
+          {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} دقیقه قبل</option>)}
+        </select>
+      )}
+    </span>
   );
 }

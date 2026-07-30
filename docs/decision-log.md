@@ -4074,3 +4074,47 @@ first and are mirrored from Google's answer, never from local intent.
 later. It adds a state that can be orphaned by a crash, and `updated` already
 gives a total order from the authority. Also rejected: priming on every sync —
 correct, but it spends four reads per calendar to replace one.
+
+## D-195 — Jarvis gets the calendar, a watch, and a voice worth hearing
+
+Three gaps, one theme: the calendar existed but the assistant could not reach
+it, could not act on it unprompted, and could not say anything about it in a
+way a Persian speaker wants to hear.
+
+**1. Tool family (`shared/src/agentcore/calendar-tools.ts`).**
+`calendar_agenda`, `calendar_next`, `calendar_tasks`, `calendar_list` (read);
+`calendar_create_event`, `calendar_update_event`, `calendar_create_task`
+(write). Reads hit the local mirror, never Google — zero quota, no latency,
+and they still answer when Google is down. Every read line carries duration,
+location, guest count, Meet link, recurrence, description and **source
+calendar**, because a one-line answer costs a follow-up question per field.
+
+Writes declare `requiresApproval: true` while `classifyWrite` stays the exact
+policy underneath. The loop's gate is coarse (it asks before the call), the
+classifier is precise (free inside the AOS calendar). Declaring the coarse
+gate and reporting the precise reason means the owner is never surprised in
+the direction that matters.
+
+**2. Live pre-event alerts.** A minimal toggle in the rudder header, remembered
+across sessions, off by default. Polls the mirror every 60s, announces once
+per event inside the lead window (5/10/15/30/60 min), speaks and shows a glass
+card above the rudder. The decision logic is pure and tested (`eventAlerts.ts`)
+because both failure modes are invisible in code review: nagging (re-announcing)
+and silence (missed window). Rules: never twice, never after it started, never
+for all-day events, most imminent first, and a slept-through window still fires
+late rather than not at all. The fired-set is pruned at the only safe boundary
+— an event that has started can never fire again.
+
+**3. Persian speech.** The old `speak` handed 600 characters of raw markdown to
+whatever default voice existed. It read the asterisks, said "ten colon thirty",
+and went silent partway through because Chrome truncates long utterances.
+Now (`speech.ts`, pure and tested): strip markdown and code, expand times into
+words, normalise digits, turn blank lines into full stops, pick a genuinely
+Persian voice — preferring Google/neural over Apple's compact tier — and queue
+sentence-sized chunks at rate 0.94.
+
+**The one refusal worth stating:** if no Persian voice is installed, it says
+nothing. An English engine reading Persian text is not accented, it is noise,
+and the owner would have to sit through it to find that out.
+
+Free and in-app throughout: browser `speechSynthesis`, no cloud TTS, no cost.

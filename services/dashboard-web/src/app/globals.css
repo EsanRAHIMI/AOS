@@ -1653,3 +1653,86 @@ button { font: inherit; }
 .calpick-name em { font-style: normal; font-size: 10px; color: var(--muted-2); }
 .calpick-role { flex: none; font-size: 10px; color: var(--muted); }
 .calx-day-src { font-size: 10.5px; color: var(--accent); opacity: 0.85; text-align: start; }
+
+/* ---------------------------------------------- calendar watch (D-195) --- */
+/* The toggle lives in the rudder header, so it must read as a control and not
+ * compete with the conversation. Liquid Glass: translucent, thin rim, no fill
+ * until it is on. */
+.jrud-watchbox { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: auto; }
+
+.jrud-watchbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font: inherit; font-size: .72rem; line-height: 1;
+  color: var(--muted); cursor: pointer;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.10);
+  backdrop-filter: saturate(160%) blur(10px);
+  transition: color .18s, background .18s, border-color .18s;
+}
+.jrud-watchbtn:hover { color: var(--fg); border-color: rgba(255,255,255,.20); }
+.jrud-watchbtn.on {
+  color: #d8f6e6;
+  background: linear-gradient(180deg, rgba(52,211,153,.20), rgba(52,211,153,.08));
+  border-color: rgba(52,211,153,.45);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 2px 10px rgba(52,211,153,.18);
+}
+.jrud-watchdot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: .5;
+}
+.jrud-watchbtn.on .jrud-watchdot { opacity: 1; animation: jrudPulse 2.4s ease-in-out infinite; }
+@keyframes jrudPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.jrud-watchlead {
+  font: inherit; font-size: .7rem; color: var(--muted);
+  padding: 3px 6px; border-radius: 8px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+}
+
+/* The collapsed bar's quiet "I am watching" mark. */
+.jrud-watch {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(52,211,153,.9);
+  box-shadow: 0 0 8px rgba(52,211,153,.7);
+  animation: jrudPulse 2.4s ease-in-out infinite;
+}
+
+/* The announcement. Sits above the rudder, never over the page's own content,
+ * and disappears on demand — an alert you cannot dismiss is an alarm. */
+.jrud-alert {
+  position: fixed; inset-inline: 0; bottom: 82px;
+  z-index: 61;
+  margin-inline: auto; width: min(560px, calc(100vw - 32px));
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; border-radius: 18px;
+  background: linear-gradient(180deg, rgba(24,28,34,.86), rgba(16,19,24,.90));
+  border: 1px solid rgba(52,211,153,.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.16),
+    0 18px 44px rgba(0,0,0,.46);
+  backdrop-filter: saturate(180%) blur(22px);
+  animation: jrudAlertIn .34s cubic-bezier(.2,.9,.3,1);
+}
+@keyframes jrudAlertIn {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+.jrud-alert-dot {
+  margin-top: 5px; flex: none;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #34d399; box-shadow: 0 0 10px rgba(52,211,153,.8);
+}
+.jrud-alert-body { flex: 1 1 auto; min-width: 0; }
+.jrud-alert-body strong { display: block; font-size: .92rem; }
+.jrud-alert-when { font-size: .72rem; color: #6ee7b7; }
+.jrud-alert-body p {
+  margin: 4px 0 0; font-size: .78rem; color: var(--muted);
+  text-align: start; unicode-bidi: plaintext;
+}
+.jrud-alert-x {
+  flex: none; background: none; border: 0; cursor: pointer;
+  color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 2px 4px;
+}
+.jrud-alert-x:hover { color: var(--fg); }
