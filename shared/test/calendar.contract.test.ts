@@ -13,7 +13,7 @@ import { createFakeDb } from './helpers/fake-db.js';
 import {
   encryptSecret, decryptSecret, vaultAvailability, storeGrant, getGrant, markGrantRevoked,
   googleAvailability, buildAuthUrl, GOOGLE_SCOPES, GoogleApiError, classifyWrite,
-  AOS_CALENDAR_SUMMARY,
+  AOS_CALENDAR_SUMMARY, PRIME_WINDOWS, monthBoundary,
 } from '../src/calendar/index.js';
 
 const KEY = '0'.repeat(64);                    // 32 bytes of hex
@@ -280,5 +280,41 @@ describe('calendar selection', () => {
     await collection(COLLECTIONS.CALENDARS).insertOne({ actorId: 'owner', calendarId: 'c2', enabled: false } as never);
     const res = await setCalendarEnabled('owner', 'c2', true);
     expect(res).toMatchObject({ enabled: true, removed: 0 });
+  });
+});
+
+/**
+ * D-194 — staged loading.
+ *
+ * Two rules carry the whole design, and both fail silently if broken: the
+ * windows must arrive in the order the owner looks at them, and a slow
+ * windowed read must never overwrite a change that landed after it started.
+ */
+describe('staged month windows', () => {
+  it('orders the windows the way the owner reads them: now, next, last, next+1', () => {
+    expect(PRIME_WINDOWS.map((w) => w.fromMonth)).toEqual([0, 1, -1, 2]);
+    // Each window is exactly one month wide — no gaps, no overlap.
+    for (const w of PRIME_WINDOWS) expect(w.toMonth - w.fromMonth).toBe(1);
+  });
+
+  it('covers a contiguous four-month span with no hole around today', () => {
+    const spans = PRIME_WINDOWS.map((w) => [w.fromMonth, w.toMonth]).sort((a, b) => a[0] - b[0]);
+    expect(spans[0][0]).toBe(-1);
+    expect(spans[spans.length - 1][1]).toBe(3);
+    for (let i = 1; i < spans.length; i += 1) expect(spans[i][0]).toBe(spans[i - 1][1]);
+  });
+
+  it('computes month boundaries as real month starts, not "30 days ago"', () => {
+    const now = new Date('2026-03-17T09:41:00Z');
+    expect(monthBoundary(0, now)).toBe('2026-03-01T00:00:00.000Z');
+    expect(monthBoundary(1, now)).toBe('2026-04-01T00:00:00.000Z');
+    expect(monthBoundary(-1, now)).toBe('2026-02-01T00:00:00.000Z');
+    expect(monthBoundary(2, now)).toBe('2026-05-01T00:00:00.000Z');
+  });
+
+  it('rolls the year over rather than producing month 13', () => {
+    const dec = new Date('2026-12-05T00:00:00Z');
+    expect(monthBoundary(1, dec)).toBe('2027-01-01T00:00:00.000Z');
+    expect(monthBoundary(-1, new Date('2026-01-20T00:00:00Z'))).toBe('2025-12-01T00:00:00.000Z');
   });
 });

@@ -146,6 +146,34 @@ const EVENT_SYNC_PARAMS = {
 
 export const AOS_CALENDAR_SUMMARY = 'AOS · Autonomous OS';
 
+/**
+ * Priming windows, in the order the owner actually looks at them (D-194):
+ * this month first, then next, then last, then the month after next.
+ *
+ * These are BOUNDED reads (`timeMin`/`timeMax`) and deliberately carry NO sync
+ * token — the official sync guide forbids combining the two, and a request that
+ * mixes them is rejected. So the two mechanisms serve different jobs and are
+ * never mixed in one series:
+ *
+ *   priming  → bounded, throwaway, makes the grid usable in seconds
+ *   series   → unbounded, tokenised, makes every later update cheap
+ *
+ * A first sync used to be one unbounded walk of every calendar across all time,
+ * which is why connecting took so long before anything appeared.
+ */
+export const PRIME_WINDOWS: ReadonlyArray<{ label: string; fromMonth: number; toMonth: number }> = [
+  { label: 'current', fromMonth: 0, toMonth: 1 },
+  { label: 'next', fromMonth: 1, toMonth: 2 },
+  { label: 'previous', fromMonth: -1, toMonth: 0 },
+  { label: 'next+1', fromMonth: 2, toMonth: 3 },
+];
+
+/** Month boundary N months from now, as an RFC3339 instant. */
+export function monthBoundary(offset: number, now: Date = new Date()): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
+  return d.toISOString();
+}
+
 /* ------------------------------------------------------------------ helpers */
 
 async function readState(actorId: string, resourceId: string, kind: 'events' | 'tasks'): Promise<SyncState | null> {
@@ -312,6 +340,107 @@ export async function ensureAosCalendar(actorId: string, env: NodeJS.ProcessEnv 
   return refreshed;
 }
 
+/**
+ * Upsert one event, refusing to go backwards in time.
+ *
+ * Google stamps every event with `updated`. A slow page of a priming read can
+ * land AFTER a newer change has already been mirrored — from an edit the owner
+ * or Jarvis just made — and a blind upsert would resurrect the old version on
+ * screen. Comparing `updated` makes that impossible: the mirror only ever
+ * moves forward. This is what keeps staged loading from fighting live edits.
+ */
+async function upsertEvent(ev: CalendarEvent): Promise<boolean> {
+  const existing = await eventsCol().findOne(
+    { actorId: ev.actorId, calendarId: ev.calendarId, eventId: ev.eventId },
+    { projection: { updated: 1 } as never },
+  );
+  if (existing?.updated && ev.updated && existing.updated > ev.updated) return false;
+  await eventsCol().updateOne(
+    { actorId: ev.actorId, calendarId: ev.calendarId, eventId: ev.eventId },
+    { $set: ev },
+    { upsert: true },
+  );
+  return true;
+}
+
+/**
+ * Mirror an event the system just wrote, using Google's own response (D-194).
+ *
+ * Without this, a new event is invisible until the next sync — so the owner
+ * (or Jarvis) writes something, looks at the grid, and sees nothing. The
+ * response body is not a guess: it is the authoritative representation Google
+ * stored, `updated` stamp included, so the `updated` guard in `upsertEvent`
+ * orders it correctly against any sync page still in flight.
+ */
+export async function mirrorWrittenEvent(
+  actorId: string, calendarId: string, raw: Record<string, unknown>,
+): Promise<void> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const ev = toEvent(actorId, calendarId, raw, account);
+  if (!ev.eventId) return;
+  if (ev.status === 'cancelled') {
+    await eventsCol().deleteOne({ actorId, calendarId, eventId: ev.eventId });
+    return;
+  }
+  await upsertEvent(ev);
+}
+
+/** Forget an event the system just deleted, without waiting for a sync. */
+export async function forgetMirroredEvent(
+  actorId: string, calendarId: string, eventId: string,
+): Promise<void> {
+  await eventsCol().deleteOne({ actorId, calendarId, eventId });
+}
+
+export interface PrimeResult {
+  calendarId: string;
+  window: string;
+  upserted: number;
+  error: string;
+}
+
+/**
+ * Fetch ONE bounded window for one calendar. Fast, cheap, and independent —
+ * the caller runs them in the owner's viewing order so the current month is on
+ * screen while the rest is still arriving.
+ */
+export async function primeWindow(
+  actorId: string, calendarId: string, fromIso: string, toIso: string, label: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PrimeResult> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  let upserted = 0;
+  try {
+    let pageToken = '';
+    for (;;) {
+      const res = await googleCall<{ items?: Array<Record<string, unknown>>; nextPageToken?: string }>(
+        actorId, CALENDAR_API, `/calendars/${encodeURIComponent(calendarId)}/events`,
+        {
+          query: {
+            maxResults: 250,
+            singleEvents: true,
+            orderBy: 'startTime',
+            timeMin: fromIso,
+            timeMax: toIso,
+            pageToken: pageToken || undefined,
+          },
+          env,
+        },
+      );
+      for (const raw of res.items ?? []) {
+        const ev = toEvent(actorId, calendarId, raw, account);
+        if (!ev.eventId || ev.status === 'cancelled') continue;
+        if (await upsertEvent(ev)) upserted += 1;
+      }
+      if (!res.nextPageToken) break;
+      pageToken = res.nextPageToken;
+    }
+  } catch (err) {
+    return { calendarId, window: label, upserted, error: err instanceof Error ? err.message : String(err) };
+  }
+  return { calendarId, window: label, upserted, error: '' };
+}
+
 /* ------------------------------------------------------------- event sync */
 
 export interface SyncResult {
@@ -354,8 +483,7 @@ export async function syncEvents(
           const r = await eventsCol().deleteOne({ actorId, calendarId, eventId: ev.eventId });
           deleted += r.deletedCount ?? 0;
         } else {
-          await eventsCol().updateOne({ actorId, calendarId, eventId: ev.eventId }, { $set: ev }, { upsert: true });
-          upserted += 1;
+          if (await upsertEvent(ev)) upserted += 1;
         }
       }
 
@@ -553,6 +681,51 @@ export async function syncStates(actorId: string): Promise<SyncState[]> {
 }
 
 /** Sync every selected calendar plus the default task list. */
+/**
+ * Staged sync, phase one (D-194): make the screen useful.
+ *
+ * Only calendars that have never been synced are primed. A calendar that
+ * already holds a sync token has a cheaper route — one incremental call
+ * instead of four windowed reads — so priming it again would spend the
+ * owner's Google quota to learn nothing.
+ *
+ * Awaited by the caller, and deliberately short: four bounded reads per cold
+ * calendar, current month first.
+ */
+export async function syncFirstPaint(
+  actorId: string,
+  onWindow?: (r: PrimeResult) => void,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PrimeResult[]> {
+  const calendars = await syncCalendarList(actorId, env);
+  const tokens = new Map(
+    (await syncStates(actorId)).filter((s) => s.kind === 'events').map((s) => [s.resourceId, s.syncToken]),
+  );
+  const cold = calendars.filter((c) => c.enabled && !tokens.get(c.calendarId));
+  if (cold.length === 0) return [];
+
+  const out: PrimeResult[] = [];
+  // Window-major: the current month of EVERY calendar before next month of any.
+  for (const w of PRIME_WINDOWS) {
+    const from = monthBoundary(w.fromMonth);
+    const to = monthBoundary(w.toMonth);
+    for (const cal of cold) {
+      const r = await primeWindow(actorId, cal.calendarId, from, to, w.label, env);
+      out.push(r);
+      onWindow?.(r);
+    }
+  }
+  return out;
+}
+
+/**
+ * Staged sync, phase two: make the mirror complete and cheap to keep current.
+ *
+ * This is the unbounded, tokenised series. First run per calendar walks
+ * everything (slow, once); every run after is a delta (fast, forever). Meant to
+ * run in the BACKGROUND behind `syncFirstPaint`, which is why nothing here
+ * needs to finish before the owner sees their month.
+ */
 export async function syncAll(actorId: string, env: NodeJS.ProcessEnv = process.env): Promise<SyncResult[]> {
   const calendars = await syncCalendarList(actorId, env);
   const results: SyncResult[] = [];

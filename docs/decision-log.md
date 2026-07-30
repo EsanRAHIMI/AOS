@@ -4033,3 +4033,44 @@ so the registry, dashboard, and agents can treat services uniformly.
 ### D-001 Production domain `simorx.com`
 Subdomains derived in `shared/src/constants` (api., factory., orchestrator., …).
 Swappable via `ROOT_DOMAIN` + env.
+
+## D-194 — Staged calendar loading, and why it needs two mechanisms
+
+**Problem.** Every sync took minutes. A first sync walked every enabled
+calendar across all time before anything reached the screen.
+
+**The constraint that shapes the design.** Google's sync guide forbids
+`timeMin`/`timeMax` on a request carrying a `syncToken`; every request in a
+sync series must use identical parameters. So "just fetch this month" and
+"fetch only what changed" cannot be the same call. They are now two phases:
+
+| phase | request | token | job |
+|---|---|---|---|
+| priming | bounded, one month | none | make the grid usable in seconds |
+| series | unbounded | `syncToken` | make deltas cheap forever |
+
+**Priming order** is the order the owner actually looks: current month, next,
+previous, month-after-next (`PRIME_WINDOWS`). Window-major across calendars —
+the current month of every calendar outranks next month of the first one.
+Only calendars with no sync token are primed; a warm calendar has a cheaper
+route (one incremental call) and priming it again would spend quota to learn
+nothing. This is the bandwidth reduction the owner asked for.
+
+**Conflict safety.** Two rules, because a staged loader and a live editor
+share one mirror:
+
+1. `upsertEvent` compares Google's `updated` stamp and refuses to move a row
+   backwards. A slow priming page cannot resurrect a version older than an
+   edit that landed while it was in flight.
+2. Writes mirror themselves. `createEvent`/`updateEvent` upsert Google's own
+   response; `deleteEvent` removes the row. The owner and Jarvis see their
+   change immediately instead of waiting for a sync — and rule 1 orders it
+   correctly against anything still arriving.
+
+The mirror stays a cache, never a second source of truth: writes go to Google
+first and are mirrored from Google's answer, never from local intent.
+
+**Rejected:** keeping a `pending` flag on locally-written rows and reconciling
+later. It adds a state that can be orphaned by a crash, and `updated` already
+gives a total order from the authority. Also rejected: priming on every sync —
+correct, but it spends four reads per calendar to replace one.

@@ -49,7 +49,16 @@ export function CalendarControls({ connected }: { connected: boolean }) {
           setBusy(true); setMsg('');
           const r = await syncCalendarAction();
           setBusy(false);
-          setMsg(r.ok ? 'همگام‌سازی شد' : r.error);
+          if (!r.ok) { setMsg(r.error); return; }
+          if (r.staged) {
+            setMsg('ماه‌های جاری آمد — بقیه در پس‌زمینه');
+            // The background walk is still filling older months. Refresh once
+            // it has had time to land, rather than leaving a half-full grid
+            // that looks like the sync failed.
+            setTimeout(() => window.location.reload(), 12_000);
+          } else {
+            setMsg('همگام‌سازی شد');
+          }
         }}
       >{busy ? 'در حال همگام‌سازی…' : 'همگام‌سازی'}</button>
 

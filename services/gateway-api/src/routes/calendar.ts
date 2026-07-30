@@ -12,7 +12,7 @@ import {
   googleAvailability, googleConfig, buildAuthUrl, exchangeCode, fetchAccountEmail,
   storeGrant, getGrant, deleteGrant, vaultAvailability,
   rememberOAuthState, consumeOAuthState,
-  syncAll, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
+  syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
   ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
@@ -157,7 +157,8 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
 
       // First sync immediately: an empty calendar page right after connecting
       // looks broken even when it is merely unsynced.
-      const results = await syncAll(OWNER).catch(() => []);
+      const results = await syncFirstPaint(OWNER).catch(() => []);
+      void syncAll(OWNER).catch(() => undefined);
       const total = results.reduce((n, r) => n + r.upserted, 0);
       return page(true, 'اتصال برقرار شد', `${email || 'حساب گوگل'} وصل شد و ${total} مورد همگام‌سازی شد.`);
     } catch (err) {
@@ -217,11 +218,19 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
        * timeout, so the caller gave up and reported failure while the grant was
        * already stored and the sync was still running. The exchange is the
        * thing the owner is waiting on; the sync is not. */
+      /* Staged (D-194): the four month windows are awaited — they are bounded
+       * and quick, and they are what the owner is about to look at. The
+       * unbounded tokenised walk then runs behind them. */
+      const primed = await syncFirstPaint(OWNER).catch(() => []);
       void syncAll(OWNER)
         .then((r) => deps.ctx.log.info({ synced: r.reduce((n, x) => n + x.upserted, 0) }, 'calendar initial sync done'))
         .catch((err) => deps.ctx.log.error({ err }, 'calendar initial sync failed'));
 
-      return { accountEmail: email, syncStarted: true };
+      return {
+        accountEmail: email,
+        syncStarted: true,
+        primed: primed.reduce((n, r) => n + r.upserted, 0),
+      };
     });
   });
 
@@ -239,7 +248,17 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
 
   app.post('/v1/calendar/sync', async (req, reply) => {
     if (!guard(req)) return deny(reply);
-    return handle(reply, async () => ({ results: await syncAll(OWNER) }));
+    return handle(reply, async () => {
+      /* Cold calendars get their four windows first so the grid fills fast;
+       * warm ones skip straight to the incremental delta, which is a single
+       * cheap call. Either way the owner is not waiting on a full walk. */
+      const primed = await syncFirstPaint(OWNER);
+      if (primed.length > 0) {
+        void syncAll(OWNER).catch((err) => deps.ctx.log.error({ err }, 'background series sync failed'));
+        return { results: [], primed: primed.reduce((n, r) => n + r.upserted, 0), staged: true };
+      }
+      return { results: await syncAll(OWNER), primed: 0, staged: false };
+    });
   });
 
   /**

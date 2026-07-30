@@ -13,7 +13,7 @@
  * in the owner's name.
  */
 import { googleCall, CALENDAR_API, TASKS_API } from './google.js';
-import { ensureAosCalendar, listCalendars, type CalendarRef } from './sync.js';
+import { ensureAosCalendar, listCalendars, mirrorWrittenEvent, forgetMirroredEvent, type CalendarRef } from './sync.js';
 
 export type WriteSensitivity = 'free' | 'approval';
 
@@ -105,7 +105,7 @@ export async function createEvent(input: CreateEventInput, env: NodeJS.ProcessEn
     };
   }
 
-  return googleCall<Record<string, unknown>>(
+  const created = await googleCall<Record<string, unknown>>(
     input.actorId, CALENDAR_API, `/calendars/${encodeURIComponent(calendarId)}/events`,
     {
       method: 'POST',
@@ -118,6 +118,10 @@ export async function createEvent(input: CreateEventInput, env: NodeJS.ProcessEn
       env,
     },
   );
+  // Show it now. Mirroring is best-effort — a failure here must not turn a
+  // successful write into a reported error.
+  await mirrorWrittenEvent(input.actorId, calendarId, created).catch(() => undefined);
+  return created;
 }
 
 export interface UpdateEventInput {
@@ -138,11 +142,13 @@ export async function updateEvent(input: UpdateEventInput, env: NodeJS.ProcessEn
   /* PATCH, not UPDATE: per the official error guide, a full update with no
    * shared properties is equivalent to resetting them to defaults, which fails
    * with forbiddenForNonOrganizer on events the owner does not organise. */
-  return googleCall<Record<string, unknown>>(
+  const patched = await googleCall<Record<string, unknown>>(
     input.actorId, CALENDAR_API,
     `/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`,
     { method: 'PATCH', body, query: { sendUpdates: 'none' }, env },
   );
+  await mirrorWrittenEvent(input.actorId, input.calendarId, patched).catch(() => undefined);
+  return patched;
 }
 
 export async function deleteEvent(
@@ -153,6 +159,7 @@ export async function deleteEvent(
     `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
     { method: 'DELETE', query: { sendUpdates: 'none' }, env },
   );
+  await forgetMirroredEvent(actorId, calendarId, eventId).catch(() => undefined);
 }
 
 /* ------------------------------------------------------------------ tasks */
