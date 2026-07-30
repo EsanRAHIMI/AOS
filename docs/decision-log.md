@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-25 — CIN-1b: the owner finally has a profile, records and documents (D-185)
+
+Owner's observation, and it was correct: for a system of this size there was
+no place that was "me". The pieces existed but were never surfaced — CIN
+entities already carry versioned profile sections with per-section visibility,
+verifiable claims and a tamper-evident ledger, yet the only UI was a read-only
+`/cin/entities/[id]` page; `file-asset-service` could store files in S3 but the
+gateway exposed no route to it, so the dashboard could never reach it.
+
+- **Built on the CIN entity, not a parallel table** (owner's choice). The
+  profile inherits versioning, visibility, attestation and ledger history for
+  free, and there is exactly one copy of the owner's identity in the system.
+- **`shared/src/cin/documents.ts`** — documents as RECORDS first, files second:
+  type, issuer, reference, issue/expiry dates, linked claim, and an optional
+  `file` that is `null` when there is none (never a broken or pretend link).
+  Status is derived from the clock on every read, so "expires in 40 days" can
+  never go stale in storage. Four new ledger record types anchor every change.
+- **Gateway:** `GET /v1/me/entity` (one authoritative answer to "which entity
+  am I?", instead of every surface guessing by name), full document CRUD, a
+  signed time-limited download URL, and an upload route that answers **501
+  `not_configured` with the exact missing AWS variables** when S3 is absent —
+  the kernel's honesty rule applied to storage. The registry is fully usable
+  without a bucket.
+- **`/me/profile`** — living sections (view + edit + visibility, saved as whole
+  versioned sections), claims about me, my documents with expiry status, and
+  my history filtered out of the hash chain. Linked from `/me`,
+  `/settings/identity` and the sidebar. Empty states name the missing thing
+  instead of inventing content.
+- Tests: `shared/test/cin-documents.contract.test.ts` (9). One of them caught
+  a real defect — the S3 key sanitiser let `..` through — which was fixed in
+  the code rather than the test. 34 CIN-family tests green; shared, gateway
+  and dashboard typecheck clean.
+
 ## 2026-07-25 — provider-scope defect: a strict context hook in a shared component (D-184.1)
 
 **Symptom:** `useUniverse() must be called within a UniverseProvider`, thrown

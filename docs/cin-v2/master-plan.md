@@ -182,7 +182,7 @@ claim signed by A verifies and fails after revocation; docs updated.
 
 | Phase | Status | Evidence |
 |---|---|---|
-| CIN-1 Trust & Identity Core | **COMPLETE (in-kernel; real-Mongo genesis run = owner step)** | `shared/src/cin/*` (+PQC detect, W3C VC export), `cin` tool family, `/cin` dashboard, 9+ tests |
+| CIN-1 Trust & Identity Core | **COMPLETE** (+ CIN-1b: owner profile surface & document registry, D-185) | `shared/src/cin/*` (+PQC detect, W3C VC export), `cin` tool family, `/cin` dashboard, 9+ tests |
 | CIN-2 Living Personal OS | **IN PROGRESS** (heartbeat + owner stream landed) | `shared/src/heartbeat/*`, `/v1/stream/owner`, `OwnerPulse` on `/me`, 6 tests |
 | CIN-3 Org/Legal/Financial | PLANNED | — |
 | CIN-4 Decisions + World Model | PLANNED | — |

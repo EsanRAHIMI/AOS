@@ -48,6 +48,12 @@ export const CIN_LEDGER_RECORD_TYPES = [
   'key.created',
   // CIN-2b (D-181): every completed Living Loop cycle is anchored in the chain.
   'cycle.completed',
+  // CIN-1b (D-185): the owner's paperwork has the same tamper-evident history
+  // as the rest of their identity.
+  'document.registered',
+  'document.updated',
+  'document.archived',
+  'document.file_attached',
 ] as const;
 
 export const CinLedgerRecordSchema = z.object({

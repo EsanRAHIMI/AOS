@@ -16,6 +16,11 @@ import {
   createRelation, endRelation, getEntityGraph,
   issueClaim, getClaim, listClaims, verifyClaim, revokeClaim, getPublicKey, claimToW3cVc,
   listLedger, verifyChain,
+  createDocument, listDocuments, getDocument, updateDocument, archiveDocument,
+  attachDocumentFile, summariseDocuments,
+  documentStorage, documentStorageAvailability, documentObjectKey,
+  CinCreateDocumentBody, CinUpdateDocumentBody, CinUploadDocumentFileBody,
+  ESAN_USER_ID,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { CinActor } from '@factory/shared';
@@ -143,6 +148,118 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
     const body = CinRevokeClaimBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'reason is required'));
     return handle(reply, () => revokeClaim(id, body.data.reason));
+  });
+
+  /* --------------------------- the owner's self --------------------------
+   * One place that answers "which CIN entity am I?". Without it every client
+   * would have to guess by name, which is exactly how identity surfaces drift
+   * apart. Resolves the person entity the genesis seed created; honest null
+   * when the graph has not been seeded yet. */
+  app.get('/v1/me/entity', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const people = await listEntities({ entityType: 'person' });
+    const owner = people.find((e) => e.tags.includes('owner') || e.tags.includes('founder')) ?? people[0] ?? null;
+    if (!owner) {
+      return success({
+        entity: null, publicKey: null, documents: null,
+        hint: 'no person entity yet — run scripts/cin-genesis-seed.mjs',
+      });
+    }
+    const [graph, publicKey, claimsAbout, docs] = await Promise.all([
+      getEntityGraph(owner.entityId, { includePrivate: true }),
+      getPublicKey(owner.entityId),
+      listClaims({ subjectEntityId: owner.entityId }),
+      summariseDocuments(owner.entityId),
+    ]);
+    return success({
+      entity: graph?.entity ?? owner,
+      relations: graph?.relations ?? [],
+      neighbours: graph?.neighbors ?? [],
+      publicKey,
+      claims: claimsAbout,
+      documents: docs,
+      storage: documentStorageAvailability(),
+    });
+  });
+
+  /* ------------------------------ documents ------------------------------ */
+
+  app.get('/v1/cin/documents', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const q = req.query as { ownerEntityId?: string; docType?: string; status?: string; includeArchived?: string };
+    const documents = await listDocuments({
+      ownerEntityId: q.ownerEntityId,
+      docType: q.docType as never,
+      status: q.status as never,
+      includeArchived: q.includeArchived === '1',
+    });
+    return success({ documents, storage: documentStorageAvailability() });
+  });
+
+  app.post('/v1/cin/documents', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const body = CinCreateDocumentBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, zodIssuesMessage(body.error)));
+    const ownerEntityId = String((req.body as { ownerEntityId?: string }).ownerEntityId ?? '');
+    if (!ownerEntityId) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'ownerEntityId is required'));
+    return handle(reply, () => createDocument({ actorId: ESAN_USER_ID }, { ...body.data, ownerEntityId }));
+  });
+
+  app.patch('/v1/cin/documents/:id', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const { id } = req.params as { id: string };
+    const body = CinUpdateDocumentBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, zodIssuesMessage(body.error)));
+    return handle(reply, () => updateDocument({ actorId: ESAN_USER_ID }, id, body.data));
+  });
+
+  app.post('/v1/cin/documents/:id/archive', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const { id } = req.params as { id: string };
+    return handle(reply, async () => { await archiveDocument({ actorId: ESAN_USER_ID }, id); return { docId: id, status: 'archived' }; });
+  });
+
+  /**
+   * Attach a file. Object storage is OPTIONAL in most deployments, so this is
+   * the one place that must be loud about it: when S3 is not configured the
+   * route answers 501 with the exact missing variables instead of failing
+   * obscurely or pretending the upload worked. The document record itself
+   * stays fully usable without a file.
+   */
+  app.post('/v1/cin/documents/:id/file', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const { id } = req.params as { id: string };
+    const availability = documentStorageAvailability();
+    if (!availability.configured) {
+      return reply.code(501).send(failure('not_configured', availability.reason));
+    }
+    const body = CinUploadDocumentFileBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, zodIssuesMessage(body.error)));
+    const doc = await getDocument(id);
+    if (!doc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `document ${id} not found`));
+    const storage = documentStorage();
+    if (!storage) return reply.code(501).send(failure('not_configured', availability.reason));
+    return handle(reply, async () => {
+      const buffer = Buffer.from(body.data.contentBase64, 'base64');
+      const key = documentObjectKey(doc.ownerEntityId, doc.docId, body.data.filename);
+      const put = await storage.put(key, buffer, body.data.mimeType);
+      return attachDocumentFile({ actorId: ESAN_USER_ID }, id, {
+        objectId: key, bucket: put.bucket, key: put.key,
+        mimeType: body.data.mimeType, size: put.size, originalName: body.data.filename,
+      });
+    });
+  });
+
+  /** Time-limited signed download URL — never a public object URL. */
+  app.get('/v1/cin/documents/:id/url', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const { id } = req.params as { id: string };
+    const doc = await getDocument(id);
+    if (!doc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `document ${id} not found`));
+    if (!doc.file) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'this document has no stored file'));
+    const storage = documentStorage();
+    if (!storage) return reply.code(501).send(failure('not_configured', documentStorageAvailability().reason));
+    return handle(reply, async () => ({ url: await storage.signedGetUrl(doc.file!.key) }));
   });
 
   // --- Ledger -----------------------------------------------------------

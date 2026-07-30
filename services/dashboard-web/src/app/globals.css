@@ -797,3 +797,16 @@ button { font: inherit; }
   .jdock { inset-inline: 12px auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 64px); }
   .jdock-panel { width: calc(100vw - 24px); max-height: 62vh; }
 }
+
+/* D-185 — owner living profile editors (/me/profile). */
+.prof-editor { display: flex; flex-direction: column; gap: 7px; margin-top: 8px; }
+.prof-row { display: flex; gap: 7px; align-items: center; }
+.prof-row input, .prof-row select, .prof-editor select {
+  flex: 1; min-width: 0; padding: 6px 9px; border-radius: 8px; font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.04);
+  color: var(--text); unicode-bidi: plaintext;
+}
+.prof-lbl { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.prof-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.prof-msg { margin: 4px 0 0; font-size: 11px; color: var(--muted); unicode-bidi: plaintext; }
+.prof-doc-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }

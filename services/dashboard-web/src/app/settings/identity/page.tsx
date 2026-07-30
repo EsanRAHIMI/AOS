@@ -18,7 +18,7 @@ export default async function IdentityPage() {
   const mems = memories ?? [];
   return (
     <>
-      <PageHeader title="Identity & Scope" subtitle={ctx?.governance ?? 'Global software evolution. Scoped human data.'} actions={<Link href="/settings/access-log" className="btn btn-ghost">Access log</Link>} />
+      <PageHeader title="Identity & Scope" subtitle={ctx?.governance ?? 'Global software evolution. Scoped human data.'} actions={<><Link href="/me/profile" className="btn btn-ghost">My living profile</Link><Link href="/settings/access-log" className="btn btn-ghost">Access log</Link></>} />
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <MetricCard label="Actor" value={ctx?.actor.displayName ?? '—'} hint={`${ctx?.actor.actorId ?? ''} · ${ctx?.actor.isOwner ? 'OWNER / platform governor' : ctx?.actor.roles.join(', ') ?? ''}`} tone={ctx?.actor.isOwner ? 'ok' : undefined} />
         <MetricCard label="Active tenant" value={ctx?.tenant?.name ?? '—'} hint={`${ctx?.tenant?.tenantId ?? ''} (${ctx?.tenant?.kind ?? ''})`} />

@@ -10,6 +10,8 @@ import { buildAuthHeaders } from './gateway-session';
 
 const API = process.env.FACTORY_API_URL ?? 'http://localhost:4101';
 const ADMIN = process.env.FACTORY_ADMIN_TOKEN ?? '';
+/** Prevent hung gateway/Redis from stalling RSC / server actions indefinitely. */
+const GATEWAY_FETCH_TIMEOUT_MS = 12_000;
 
 export interface ApiEnvelope<T> {
   ok: boolean;
@@ -45,6 +47,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
         ...(init?.headers ?? {}),
       },
       cache: 'no-store',
+      signal: init?.signal ?? AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as ApiEnvelope<T>;
@@ -344,6 +347,32 @@ export const gateway = {
   },
   cinClaimVerify: (id: string) => call<{ claimId: string; valid: boolean; checks: Record<string, boolean>; reason: string | null }>(`/v1/cin/claims/${id}/verify`),
   cinLedger: (limit = 50) => call<{ records: Array<Record<string, unknown>> }>(`/v1/cin/ledger?limit=${limit}`),
+  // --- CIN-1b: the owner's living profile + documents (D-185) ---
+  meEntity: () => call<{
+    entity: Record<string, unknown> | null;
+    relations?: Array<Record<string, unknown>>;
+    neighbours?: Array<Record<string, unknown>>;
+    publicKey?: { keyId: string; alg: string; publicKeyPem: string } | null;
+    claims?: Array<Record<string, unknown>>;
+    documents?: { total: number; withFile: number; expiring: Array<Record<string, unknown>>; expired: Array<Record<string, unknown>>; byType: Record<string, number> } | null;
+    storage?: { configured: boolean; reason: string; bucket: string; region: string };
+    hint?: string;
+  }>('/v1/me/entity'),
+  cinDocuments: (ownerEntityId?: string) => call<{
+    documents: Array<Record<string, unknown>>;
+    storage: { configured: boolean; reason: string; bucket: string; region: string };
+  }>(`/v1/cin/documents${ownerEntityId ? `?ownerEntityId=${encodeURIComponent(ownerEntityId)}` : ''}`),
+  createCinDocument: (body: Record<string, unknown>) =>
+    call<Record<string, unknown>>('/v1/cin/documents', { method: 'POST', body: JSON.stringify(body) }),
+  updateCinDocument: (docId: string, patch: Record<string, unknown>) =>
+    call<Record<string, unknown>>(`/v1/cin/documents/${docId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  archiveCinDocument: (docId: string) =>
+    call<{ docId: string; status: string }>(`/v1/cin/documents/${docId}/archive`, { method: 'POST', body: '{}' }),
+  cinDocumentUrl: (docId: string) => call<{ url: string }>(`/v1/cin/documents/${docId}/url`),
+  updateCinSection: (entityId: string, section: string, data: Record<string, unknown>, visibility?: string) =>
+    call<Record<string, unknown>>(`/v1/cin/entities/${entityId}/sections/${section}`, {
+      method: 'PUT', body: JSON.stringify({ data, ...(visibility ? { visibility } : {}) }),
+    }),
   cinLedgerVerify: () => call<{ chainId: string; ok: boolean; length: number; headHash: string | null; brokenAtSeq: number | null; reason: string | null }>('/v1/cin/ledger/verify'),
 
   // --- CIN-2b Autonomous Living Loop (D-181) ---

@@ -307,6 +307,8 @@ export const COLLECTIONS = {
   CIN_KEYS: 'cin_keys',
   CIN_CLAIMS: 'cin_claims',
   CIN_LEDGER: 'cin_ledger',
+  // CIN-1b Documents (D-185) — the owner's records/papers as identity records.
+  CIN_DOCUMENTS: 'cin_documents',
   // CIN-2 Living Personal OS (D-180) — proactive heartbeat + owner stream.
   PROACTIVE_EVENTS: 'proactive_events',
   HEARTBEAT_RUNS: 'heartbeat_runs',

@@ -51,6 +51,36 @@ export type CinIssueClaimBody = z.infer<typeof CinIssueClaimBody>;
 export const CinRevokeClaimBody = z.object({ reason: z.string().min(1) });
 export type CinRevokeClaimBody = z.infer<typeof CinRevokeClaimBody>;
 
+/* ----------------------- documents (CIN-1b, D-185) ---------------------- */
+
+export const CinCreateDocumentBody = z.object({
+  title: z.string().min(1),
+  docType: z.enum(['identity', 'education', 'employment', 'financial', 'legal', 'medical', 'contract', 'license', 'other']),
+  issuer: z.string().optional(),
+  reference: z.string().optional(),
+  issuedAt: z.string().nullable().optional(),
+  expiresAt: z.string().nullable().optional(),
+  notes: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  section: z.string().optional(),
+  linkedClaimId: z.string().nullable().optional(),
+});
+export type CinCreateDocumentBody = z.infer<typeof CinCreateDocumentBody>;
+
+export const CinUpdateDocumentBody = CinCreateDocumentBody.partial().extend({
+  status: z.enum(['active', 'expiring', 'expired', 'superseded', 'archived']).optional(),
+});
+export type CinUpdateDocumentBody = z.infer<typeof CinUpdateDocumentBody>;
+
+/** Base64 upload — small owner documents (scans, PDFs), not bulk media. */
+export const CinUploadDocumentFileBody = z.object({
+  filename: z.string().min(1),
+  mimeType: z.string().min(1),
+  /** base64, no data: prefix. */
+  contentBase64: z.string().min(1),
+});
+export type CinUploadDocumentFileBody = z.infer<typeof CinUploadDocumentFileBody>;
+
 /** Join zod issues into one human-readable message (gateway convenience). */
 export function zodIssuesMessage(error: z.ZodError): string {
   return error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ');

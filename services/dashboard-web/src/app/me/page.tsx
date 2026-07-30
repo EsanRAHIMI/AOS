@@ -81,7 +81,7 @@ export default async function MePage() {
       </div>
 
       <div className="m" style={{ fontSize: 12, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-        <Link href="/me/reality">Reality</Link><Link href="/me/goals">Goals</Link><Link href="/me/projects">Projects</Link>
+        <Link href="/me/profile">My Profile</Link><Link href="/me/reality">Reality</Link><Link href="/me/goals">Goals</Link><Link href="/me/projects">Projects</Link>
         <Link href="/me/systems">Systems</Link><Link href="/me/opportunities">Opportunities</Link><Link href="/me/briefing">Briefings</Link>
         <Link href="/me/strategy">Strategy</Link><Link href="/me/resume">Resume</Link>
       </div>

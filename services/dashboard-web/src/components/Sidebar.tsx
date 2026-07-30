@@ -17,7 +17,7 @@ const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
   { title: 'Learn', items: [['/learning', 'Learning'], ['/learning-runs', 'Learning Runs'], ['/reliability', 'Reliability'], ['/patterns', 'Patterns'], ['/system-recommendations', 'Recommendations'], ['/improvement-workflows', 'Workflows'], ['/impact-assessments', 'Impact'], ['/memory-maintenance', 'Memory Maint.'], ['/learning/schedules', 'Schedules']] },
   { title: 'Universe', items: [['/', 'Command Universe'], ['/operations', 'Engine Room']] },
   { title: 'CIN', items: [['/cin', 'Network'], ['/cin/entities', 'Entities'], ['/loop', 'Living Loop']] },
-  { title: 'Personal', items: [['/me', 'Command Center'], ['/me/briefing', 'Briefings'], ['/me/strategy', 'Strategy'], ['/me/opportunities', 'Opportunities'], ['/me/resume', 'Resume']] },
+  { title: 'Personal', items: [['/me', 'Command Center'], ['/me/profile', 'My Profile'], ['/me/briefing', 'Briefings'], ['/me/strategy', 'Strategy'], ['/me/opportunities', 'Opportunities'], ['/me/resume', 'Resume']] },
   { title: 'Identity', items: [['/settings/identity', 'Identity & Scope'], ['/settings/tenants', 'Tenants'], ['/settings/consents', 'Consents'], ['/settings/connectors', 'Connectors'], ['/settings/access-log', 'Access log']] },
   { title: 'More', items: [['/docs', 'Docs'], ['/events', 'Events'], ['/logs', 'Logs'], ['/settings', 'Settings']] },
 ];

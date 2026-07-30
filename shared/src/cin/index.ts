@@ -8,4 +8,6 @@
 export * from './ledger.js';
 export * from './trust.js';
 export * from './entities.js';
+export * from './documents.js';
+export * from './storage.js';
 export * from './api.js';
