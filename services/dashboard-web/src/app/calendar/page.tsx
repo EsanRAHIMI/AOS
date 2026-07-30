@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { CalendarControls, ConnectButton } from './controls';
+import { MonthGrid, WeekGrid, Agenda, DayPanel, CalendarNav } from './views';
+import { toJalali, shiftMonth, addDays, todayKey, buildWeek, type CalEvent, type CalView } from './format';
 import { bidiProps } from '@/lib/rtl';
 
 export const dynamic = 'force-dynamic';
@@ -17,32 +19,6 @@ export const dynamic = 'force-dynamic';
  * missing. An integration that says "failed" when it means "not configured
  * yet" wastes the owner's afternoon.
  */
-
-type Ev = {
-  eventId: string; calendarId: string; summary: string; start: string; end: string;
-  allDay: boolean; location: string; status: string; hangoutLink: string; htmlLink: string;
-  createdByAos: boolean; attendees: Array<{ email: string }>;
-};
-type Task = { taskId: string; title: string; due: string; status: string; notes: string; createdByAos: boolean };
-
-const DAY_FA = ['یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه', 'شنبه'];
-
-function dayKey(iso: string): string { return iso.slice(0, 10); }
-
-function humanDay(key: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-  if (key === today) return 'امروز';
-  if (key === tomorrow) return 'فردا';
-  const d = new Date(`${key}T12:00:00Z`);
-  return `${DAY_FA[d.getUTCDay()]} ${key}`;
-}
-
-function clock(iso: string, allDay: boolean): string {
-  if (allDay) return 'تمام‌روز';
-  const t = iso.slice(11, 16);
-  return t || '—';
-}
 
 /**
  * Google reports the outcome of consent by redirecting back with `?connect=`.
@@ -70,29 +46,44 @@ function connectMessage(code: string): { tone: 'err' | 'ok'; title: string; deta
   return { tone: 'err', title: 'اتصال ناموفق بود', detail: code };
 }
 
-export default async function CalendarPage({ searchParams }: { searchParams: Promise<{ connect?: string }> }) {
+type Task = { taskId: string; title: string; due: string; status: string; notes: string; createdByAos: boolean };
+
+export default async function CalendarPage({ searchParams }: {
+  searchParams: Promise<{ connect?: string; view?: string; day?: string; sel?: string }>;
+}) {
   const sp = await searchParams;
   const connectMsg = connectMessage(sp.connect ?? '');
   const status = await gateway.calendarStatus();
   const setup = status?.setup;
   const connected = Boolean(status?.connected);
 
+  const view: CalView = sp.view === 'week' ? 'week' : sp.view === 'agenda' ? 'agenda' : 'month';
+  const anchor = /^\d{4}-\d{2}-\d{2}$/.test(sp.day ?? '') ? sp.day! : todayKey();
+  const selected = /^\d{4}-\d{2}-\d{2}$/.test(sp.sel ?? '') ? sp.sel! : anchor;
+
+  /* Fetch exactly the window the current view needs — the mirror is local, but
+   * a month view has no business pulling a year of rows into the page. */
+  const window = view === 'week'
+    ? { from: buildWeek(anchor)[0].key, to: addDays(buildWeek(anchor)[6].key, 1) }
+    : view === 'agenda'
+      ? { from: anchor, to: addDays(anchor, 30) }
+      : { from: addDays(anchor, -45), to: addDays(anchor, 45) };
+
   const [agendaRes, tasksRes] = connected
-    ? await Promise.all([gateway.calendarAgenda(), gateway.calendarTasks()])
+    ? await Promise.all([gateway.calendarAgenda(window.from, window.to), gateway.calendarTasks()])
     : [null, null];
 
-  const events = (agendaRes?.events ?? []) as unknown as Ev[];
+  const events = (agendaRes?.events ?? []) as unknown as CalEvent[];
   const tasks = (tasksRes?.tasks ?? []) as unknown as Task[];
 
-  const byDay = new Map<string, Ev[]>();
-  for (const e of events) {
-    const k = dayKey(e.start);
-    if (!k) continue;
-    byDay.set(k, [...(byDay.get(k) ?? []), e]);
-  }
-  const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 21);
+  const j = toJalali(anchor);
+  const title = view === 'week'
+    ? `هفتهٔ ${toJalali(buildWeek(anchor)[0].key).day} ${toJalali(buildWeek(anchor)[0].key).monthName}`
+    : `${j.monthName} ${j.year}`;
+  const prev = view === 'month' ? shiftMonth(anchor, -1) : addDays(anchor, view === 'week' ? -7 : -30);
+  const next = view === 'month' ? shiftMonth(anchor, 1) : addDays(anchor, view === 'week' ? 7 : 30);
 
-  const overdue = tasks.filter((t) => t.due && t.due.slice(0, 10) < new Date().toISOString().slice(0, 10));
+  const overdue = tasks.filter((t) => t.due && t.due.slice(0, 10) < todayKey());
 
   return (
     <div className="cal" dir="rtl">
@@ -158,62 +149,45 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
       {/* -------------------------------------------------------- connected */}
       {connected && (
-        <div className="cal-grid">
-          <section className="cal-glass cal-agenda">
-            <h2>برنامهٔ پیش‌رو</h2>
-            {days.length === 0 ? (
-              <p className="cal-empty">رویدادی در ۳۰ روز آینده ثبت نشده — یا هنوز همگام‌سازی نشده است.</p>
-            ) : days.map(([key, list]) => (
-              <div className="cal-day" key={key}>
-                <h3 className="cal-day-h">{humanDay(key)}</h3>
-                <ul className="cal-events">
-                  {list.sort((a, b) => a.start.localeCompare(b.start)).map((e) => (
-                    <li key={`${e.calendarId}:${e.eventId}`} className={e.createdByAos ? 'aos' : ''}>
-                      <span className="cal-time" dir="ltr">{clock(e.start, e.allDay)}</span>
-                      <span className="cal-body">
-                        <span className="cal-title" {...bidiProps(e.summary)}>{e.summary || '(بدون عنوان)'}</span>
-                        {(e.location || e.attendees?.length > 0) && (
-                          <span className="cal-meta" {...bidiProps(e.location)}>
-                            {e.location}
-                            {e.attendees?.length > 0 && `${e.location ? ' · ' : ''}${e.attendees.length} مهمان`}
-                          </span>
-                        )}
-                      </span>
-                      {e.createdByAos && <span className="cal-tag">AOS</span>}
-                      {e.hangoutLink && (
-                        <a className="cal-meet" href={e.hangoutLink} target="_blank" rel="noopener noreferrer">Meet</a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </section>
+        <>
+          <CalendarNav view={view} anchor={anchor} prev={prev} next={next} selected={selected} title={title} />
 
-          <section className="cal-glass cal-tasks">
-            <h2>کارها و یادآوری‌ها</h2>
-            <p className="cal-note">
-              «ریمایندر» در گوگل دیگر محصول جداگانه‌ای نیست — به Tasks منتقل شده. اینجا همان‌هاست.
-            </p>
-            {tasks.length === 0 ? (
-              <p className="cal-empty">کاری ثبت نشده.</p>
-            ) : (
-              <ul className="cal-tasklist">
-                {overdue.length > 0 && <li className="cal-overdue-h">{overdue.length} مورد عقب‌افتاده</li>}
-                {tasks.slice(0, 40).map((t) => {
-                  const late = t.due && t.due.slice(0, 10) < new Date().toISOString().slice(0, 10);
-                  return (
-                    <li key={t.taskId} className={late ? 'late' : ''}>
-                      <span className="cal-task-t" {...bidiProps(t.title)}>{t.title}</span>
-                      {t.due && <span className="cal-task-d" dir="ltr">{t.due.slice(0, 10)}</span>}
-                      {t.createdByAos && <span className="cal-tag">AOS</span>}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-        </div>
+          <div className="calx-layout">
+            <section className="cal-glass calx-main">
+              {view === 'month' && <MonthGrid anchor={anchor} events={events} selected={selected} view={view} />}
+              {view === 'week' && <WeekGrid anchor={anchor} events={events} selected={selected} view={view} />}
+              {view === 'agenda' && <Agenda anchor={anchor} events={events} selected={selected} view={view} />}
+            </section>
+
+            <div className="calx-side">
+              <DayPanel dayKey={selected} events={events} />
+
+              <section className="cal-glass cal-tasks">
+                <h2>کارها و یادآوری‌ها</h2>
+                <p className="cal-note">
+                  «ریمایندر» در گوگل محصول جداگانه‌ای نیست — به Tasks منتقل شده. اینجا همان‌هاست.
+                </p>
+                {tasks.length === 0 ? (
+                  <p className="calx-empty">کاری ثبت نشده.</p>
+                ) : (
+                  <ul className="cal-tasklist">
+                    {overdue.length > 0 && <li className="cal-overdue-h">{overdue.length} مورد عقب‌افتاده</li>}
+                    {tasks.slice(0, 30).map((t) => {
+                      const late = Boolean(t.due) && t.due.slice(0, 10) < todayKey();
+                      return (
+                        <li key={t.taskId} className={late ? 'late' : ''}>
+                          <span className="cal-task-t" {...bidiProps(t.title)}>{t.title}</span>
+                          {t.due && <span className="cal-task-d" dir="ltr">{toJalali(t.due.slice(0, 10)).day} {toJalali(t.due.slice(0, 10)).monthName}</span>}
+                          {t.createdByAos && <span className="cal-tag">AOS</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </div>
+        </>
       )}
 
       <p className="cal-foot">

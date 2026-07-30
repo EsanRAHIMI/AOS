@@ -1492,3 +1492,139 @@ button { font: inherit; }
 .cal-alert strong { display: block; font-size: 13px; margin-bottom: 4px; }
 .cal-alert p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.9; }
 .cal-alert.ok { border-color: rgba(69, 224, 168, 0.35); background: rgba(69, 224, 168, 0.08); }
+
+/* ==========================================================================
+   D-193 — the calendar proper: month grid, week columns, agenda, day panel.
+   Liquid Glass container, dense readable interior. A calendar earns its keep
+   by being scannable; the material must never fight the data.
+   ========================================================================== */
+
+.calx-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 16px; align-items: start; }
+.calx-main { padding: 16px; }
+.calx-side { display: flex; flex-direction: column; gap: 16px; }
+.calx-empty { margin: 0; font-size: 12.5px; color: var(--muted); text-align: start; }
+
+/* ------------------------------------------------------------ navigation */
+.calx-nav { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.calx-nav-when { display: flex; align-items: center; gap: 10px; }
+.calx-nav-when strong { font-size: 16px; min-width: 150px; text-align: center; }
+.calx-arrow {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 19px;
+  color: var(--muted); border: 1px solid var(--border); background: rgba(255, 255, 255, 0.04);
+}
+.calx-arrow:hover { color: var(--text); background: rgba(255, 255, 255, 0.09); }
+.calx-today {
+  font-size: 12px; padding: 6px 14px; border-radius: var(--r-pill); color: var(--text);
+  border: 1px solid rgba(110, 168, 255, 0.4); background: rgba(110, 168, 255, 0.13);
+}
+.calx-views {
+  display: flex; gap: 3px; padding: 3px; border-radius: var(--r-pill);
+  border: 1px solid var(--border); background: var(--glass);
+}
+.calx-view { padding: 6px 16px; border-radius: var(--r-pill); font-size: 12.5px; color: var(--muted); }
+.calx-view:hover { color: var(--text); }
+.calx-view.on { color: var(--text); background: rgba(110, 168, 255, 0.18); border: 1px solid rgba(110, 168, 255, 0.32); padding-block: 5px; }
+
+/* ----------------------------------------------------------- month grid */
+.calx-weekhead {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px;
+}
+.calx-weekhead span { font-size: 11px; color: var(--muted); text-align: center; padding: 4px 0; }
+.calx-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.calx-cell {
+  min-height: 104px; display: flex; flex-direction: column; gap: 5px; padding: 7px 8px;
+  border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025); color: var(--text);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.calx-cell:hover { border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); }
+.calx-cell.out { opacity: 0.38; }
+.calx-cell.fri { background: rgba(255, 107, 129, 0.045); }
+.calx-cell.today { border-color: rgba(110, 168, 255, 0.6); box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25) inset; }
+.calx-cell.sel { border-color: rgba(255, 255, 255, 0.4); background: rgba(255, 255, 255, 0.07); }
+.calx-cell-h { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.calx-j { font-size: 14px; font-weight: 620; }
+.calx-g { font-size: 9.5px; color: var(--muted-2); }
+.calx-cell-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.calx-pill {
+  display: block; font-size: 10.5px; line-height: 1.5; padding: 2px 6px; border-radius: 6px;
+  border: 1px solid; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: start;
+}
+.calx-pill b { font-weight: 600; opacity: 0.8; margin-inline-end: 4px; }
+.calx-more { font-size: 9.5px; color: var(--muted); text-align: start; }
+
+/* ------------------------------------------------------------ week view */
+.calx-week-head { display: grid; grid-template-columns: 44px repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 6px; }
+.calx-week-day {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 2px;
+  border-radius: 10px; color: var(--text); font-size: 11px;
+}
+.calx-week-day b { font-size: 12px; }
+.calx-week-day span { color: var(--muted); font-size: 10px; }
+.calx-week-day.today { background: rgba(110, 168, 255, 0.14); }
+.calx-week-day.sel { outline: 1px solid rgba(255, 255, 255, 0.28); }
+.calx-week-body {
+  display: grid; grid-template-columns: 44px repeat(7, minmax(0, 1fr)); gap: 4px;
+  max-height: 62vh; overflow-y: auto; position: relative;
+}
+.calx-hours { display: flex; flex-direction: column; }
+.calx-hours span { height: var(--hour); font-size: 9.5px; color: var(--muted-2); text-align: center; }
+.calx-col { position: relative; border-radius: 8px; background: rgba(255, 255, 255, 0.02); }
+.calx-col.fri { background: rgba(255, 107, 129, 0.04); }
+.calx-hline { display: block; height: var(--hour); border-top: 1px solid rgba(255, 255, 255, 0.045); }
+.calx-block {
+  position: absolute; inset-inline: 3px; padding: 3px 6px; border-radius: 7px; border: 1px solid;
+  font-size: 10px; line-height: 1.35; overflow: hidden; text-align: start;
+}
+.calx-block b { opacity: 0.85; margin-inline-end: 3px; }
+.calx-allday {
+  position: absolute; top: 2px; inset-inline: 3px; padding: 2px 6px; border-radius: 6px;
+  border: 1px solid; font-size: 10px; text-align: start;
+}
+
+/* --------------------------------------------------------------- agenda */
+.calx-agenda { display: flex; flex-direction: column; gap: 16px; }
+.calx-aday-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; color: var(--text); }
+.calx-aday-h b { font-size: 13px; }
+.calx-aday-h span { font-size: 10.5px; color: var(--muted-2); }
+.calx-aday.today .calx-aday-h b { color: var(--accent); }
+.calx-aday ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.calx-aday li {
+  display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06);
+  border-inline-start: 3px solid;
+}
+.calx-atime { flex: none; min-width: 42px; font-size: 11px; color: var(--muted); }
+.calx-atitle { flex: 1; min-width: 0; font-size: 12.5px; text-align: start; overflow-wrap: anywhere; }
+.calx-aos {
+  flex: none; font-size: 9px; letter-spacing: 0.5px; padding: 1px 6px; border-radius: var(--r-pill);
+  color: var(--accent); border: 1px solid rgba(110, 168, 255, 0.35);
+}
+
+/* ------------------------------------------------------------- day panel */
+.calx-day { padding: 18px 20px; }
+.calx-day-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.calx-day-h h2 { margin: 0; font-size: 14.5px; }
+.calx-day-h span { font-size: 10.5px; color: var(--muted-2); }
+.calx-day-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.calx-day-list li {
+  padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025); border-inline-start: 3px solid;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.calx-day-t { display: flex; align-items: center; gap: 8px; }
+.calx-day-time { font-size: 11px; color: var(--muted); }
+.calx-day-s { font-size: 13px; text-align: start; overflow-wrap: anywhere; }
+.calx-day-m { font-size: 11px; color: var(--muted); text-align: start; overflow-wrap: anywhere; }
+.calx-day-links { display: flex; gap: 10px; margin-top: 3px; }
+.calx-day-links a { font-size: 11px; color: var(--accent); }
+
+@media (max-width: 1100px) {
+  .calx-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .calx-cell { min-height: 72px; }
+  .calx-pill { font-size: 9px; }
+  .calx-week-body, .calx-week-head { grid-template-columns: 34px repeat(7, minmax(38px, 1fr)); }
+  .calx-week-body { overflow-x: auto; }
+}

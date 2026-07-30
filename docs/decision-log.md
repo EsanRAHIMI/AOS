@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — A real calendar, not a list (D-193)
+
+Owner, correctly: the page is not a calendar. It was a flat 30-day agenda, and
+with three daily recurring events it rendered the same three lines twenty-one
+times — technically their calendar, practically unreadable. It also had no
+Jalali dates, which for this owner is the calendar that matters.
+
+- **Month / week / agenda views**, switched by URL (`?view=&day=&sel=`), so
+  every view is linkable, back/forward works, and there is no client store to
+  desynchronise. Month grid, week columns with real hour geometry, agenda for
+  scanning ahead, and a day panel beside all three.
+- **Jalali is first-class, from `Intl`.** `fa-IR-u-ca-persian` is a maintained
+  implementation shipped with the runtime; a vendored converter is one more
+  place to get leap years wrong forever. Weeks start on Saturday and Fridays
+  are tinted, because that is the week this owner lives in.
+- **Times are computed from the instant in the event's zone.** The first
+  version did `start.slice(11, 16)` — which reads correctly for an offset
+  timestamp and is wrong by hours for a `Z` one, silently. A test pins the case
+  that exposed it.
+- **The month grid is always six rows.** A grid that switches between five and
+  six makes the page jump as you page through months, which reads as a bug.
+- **The view fetches only its own window** — the mirror is local, but a month
+  view has no business pulling a year of rows into a render.
+- Each calendar gets a stable hue derived from its id, so the same source looks
+  the same everywhere without the owner configuring anything; AOS-created
+  events are additionally marked.
+
+Two of my own errors surfaced while writing the tests, both in the test rather
+than the code: I assumed Tehran was UTC+04:30 (Iran abolished DST in 2022 — it
+is +03:30 year-round), which the timezone and geometry tests caught.
+
+20 formatting tests + 6 render tests; 124/124 dashboard tests, typecheck clean.
+
 ## 2026-07-31 — The OAuth callback always lands somewhere (D-192d)
 
 Owner completed Google consent and the browser stayed on Google's page — they
