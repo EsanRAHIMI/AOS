@@ -2,6 +2,42 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — The Rudder: one assistant, voice everywhere, Liquid Glass (D-191)
+
+Owner: `/jarvis` has a microphone and spoken replies but no history or
+structure; the other pages have history and structure but no voice; unify them
+completely, make it a bottom rudder, Liquid Glass.
+
+**D-190 unified the wrong pair.** There were THREE implementations, not two:
+`JarvisDock` (other pages), `JarvisWorkspace` — which nothing rendered — and
+`JarvisCoreHUD`, which is what `/jarvis` actually renders and the only one with
+voice. I refactored the dead file and reported the system unified. The guard
+test passed because it audited that same dead file. A test that checks the
+wrong component is worse than no test: it reports safety. The rewritten guard
+now **starts from the route** and follows it to the component the route really
+renders, and additionally scans every `.tsx` for anyone touching the turn
+pipeline.
+
+- **Voice moved into the conversation** (`lib/useVoice.ts`): dictation with a
+  silence window rather than cutting off at the first final chunk, and spoken
+  replies. Voice is a transport, not a mode — a dictated turn goes through the
+  identical send path, and only a spoken question gets a spoken answer.
+- **`JarvisRudder` replaces the dock**: one bottom-anchored bar on every page
+  including `/jarvis`, expanding upward into the conversation. Bottom, because
+  it is the control you steer with and the page above stays your context.
+- **Liquid Glass as a material, not a filter**: layered translucency over a
+  saturated backdrop blur, a specular highlight along the top edge where light
+  would catch, an inner rim reading as thickness, depth from a large soft
+  shadow instead of a hard border.
+- **`/jarvis` keeps its living canvas and loses its chat.** The canvas pulsed
+  with what Jarvis was doing because it owned the conversation; it now
+  subscribes to `lib/jarvisPresence.ts` instead. A module-level emitter, not
+  context — publisher and subscriber sit in different subtrees, and wrapping
+  the app in a provider to move one enum would be the wrong trade.
+- `JarvisWorkspace` and `JarvisDock` are **deleted**, not bypassed.
+
+98/98 dashboard tests, typecheck clean, `next build` passes.
+
 ## 2026-07-30 — One Jarvis: a single conversation, centred, on every surface (D-190)
 
 Owner: these capabilities must exist on `/jarvis` too, the assistant must be

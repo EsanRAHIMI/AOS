@@ -22,6 +22,8 @@ import { invalidateBlocks } from '@/components/UniverseProvider';
 import { blocksForApprovalDecision } from '@/lib/realtimeBlocks';
 import { RichText } from '@/components/RichText';
 import { bidiProps } from '@/lib/rtl';
+import { useVoice } from '@/lib/useVoice';
+import { publishJarvisPresence } from '@/lib/jarvisPresence';
 
 export type ConversationState = 'idle' | 'thinking' | 'acting' | 'waiting_approval' | 'error';
 
@@ -36,8 +38,8 @@ export interface ConversationMsg {
 const HISTORY_TURNS = 30;
 
 export interface JarvisConversationProps {
-  /** Layout only. Behaviour is identical in both. */
-  variant: 'overlay' | 'page';
+  /** Layout only. Behaviour is identical in every one. */
+  variant: 'rudder' | 'overlay' | 'page';
   /** Controlled session (the /jarvis session switcher); omit to use the latest. */
   sessionId?: string | null;
   /** Extra text appended to the prompt — the dock passes the current page. */
@@ -48,11 +50,13 @@ export interface JarvisConversationProps {
   /** Fires after a turn completes so a host can refresh its own panels. */
   onTurnComplete?: (sessionId: string) => void;
   autoFocus?: boolean;
+  /** Read replies aloud when the turn arrived by voice. Default on. */
+  voice?: boolean;
 }
 
 export function JarvisConversation({
   variant, sessionId: controlledSessionId, contextNote, placeholder, emptyHint,
-  onState, onTurnComplete, autoFocus,
+  onState, onTurnComplete, autoFocus, voice = true,
 }: JarvisConversationProps) {
   const [msgs, setMsgs] = useState<ConversationMsg[]>([]);
   const [input, setInput] = useState('');
@@ -66,6 +70,7 @@ export function JarvisConversation({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const setState = useCallback((s: ConversationState) => { setStateRaw(s); onState?.(s); }, [onState]);
+
 
   useEffect(() => { sessionRef.current = controlledSessionId ?? sessionRef.current; }, [controlledSessionId]);
 
@@ -114,6 +119,9 @@ export function JarvisConversation({
   }, [controlledSessionId, ensureSession]);
 
   /* --------------------------------- send -------------------------------- */
+  /** True when THIS turn was dictated — decides whether the reply is spoken. */
+  const spokenTurnRef = useRef(false);
+
   const send = useCallback(async (raw: string) => {
     const text = raw.trim();
     if (!text || busy) return;
@@ -177,7 +185,11 @@ export function JarvisConversation({
       } else {
         setState('idle');
       }
-      setMsgs((m) => [...m, { who: 'jarvis', text: String(final?.replyText ?? '…'), steps: [...collected] }]);
+      const reply = String(final?.replyText ?? '…');
+      setMsgs((m) => [...m, { who: 'jarvis', text: reply, steps: [...collected] }]);
+      // Answer in the medium the owner used: spoken question, spoken answer.
+      if (voice && spokenTurnRef.current) v.speak(reply);
+      spokenTurnRef.current = false;
     } catch {
       // Non-streaming fallback: the answer still arrives, just without steps.
       try {
@@ -194,7 +206,24 @@ export function JarvisConversation({
       setSteps([]);
       onTurnComplete?.(sessionId);
     }
-  }, [busy, contextNote, controlledSessionId, ensureSession, onTurnComplete, setState]);
+  }, [busy, contextNote, controlledSessionId, ensureSession, onTurnComplete, setState, voice]);
+
+  // Dictation feeds the very same send path — voice is a transport, not a mode.
+  const v = useVoice({
+    onFinal: (text) => { spokenTurnRef.current = true; void send(text); },
+  });
+  /* Broadcast what Jarvis is doing so the /jarvis canvas can pulse with it
+   * WITHOUT owning a second conversation to derive it from. */
+  useEffect(() => {
+    publishJarvisPresence(
+      v.listening ? 'listening'
+        : v.speaking ? 'speaking'
+          : state === 'acting' ? 'acting'
+            : state === 'thinking' ? 'thinking'
+              : state === 'error' ? 'error'
+                : 'idle',
+    );
+  }, [state, v.listening, v.speaking]);
 
   const decide = useCallback(async (action: 'approve' | 'reject') => {
     if (!pending) return;
@@ -271,19 +300,43 @@ export function JarvisConversation({
         className="jconv-form"
         onSubmit={(e) => { e.preventDefault(); void send(input); }}
       >
+        {v.supported && (
+          <button
+            type="button"
+            className={`jconv-mic${v.listening ? ' on' : ''}`}
+            onClick={v.toggleListening}
+            aria-pressed={v.listening}
+            aria-label={v.listening ? 'قطع میکروفون' : 'گفتن با صدا'}
+            title={v.listening ? 'در حال شنیدن — برای توقف بزنید' : 'گفتن با صدا'}
+          >
+            <span className="jconv-mic-ico" aria-hidden>◉</span>
+          </button>
+        )}
+
         <input
           ref={inputRef}
-          value={input}
+          value={v.listening && v.interim ? v.interim : input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={placeholder ?? 'دستور یا پرسش…'}
+          onFocus={v.stopSpeaking}
+          placeholder={v.listening ? 'در حال شنیدن…' : (placeholder ?? 'دستور یا پرسش…')}
           disabled={busy}
-          {...bidiProps(input)}
+          readOnly={v.listening}
+          {...bidiProps(v.listening ? v.interim : input)}
         />
-        <button type="submit" className="jconv-send" disabled={busy || !input.trim()} aria-label="ارسال">↵</button>
+
+        {v.speaking ? (
+          <button type="button" className="jconv-send jconv-send--stop" onClick={v.stopSpeaking} aria-label="توقف صدا">◼</button>
+        ) : (
+          <button type="submit" className="jconv-send" disabled={busy || !input.trim()} aria-label="ارسال">↵</button>
+        )}
       </form>
 
       <p className="jconv-foot" aria-live="polite">
-        {state === 'error' ? 'خطا در ارتباط' : state === 'waiting_approval' ? 'در انتظار تأیید شما' : 'همان جلسه و حافظه در همهٔ صفحه‌ها'}
+        {state === 'error' ? 'خطا در ارتباط'
+          : state === 'waiting_approval' ? 'در انتظار تأیید شما'
+            : v.listening ? 'میکروفون باز است — بعد از مکث ارسال می‌شود'
+              : v.speaking ? 'در حال خواندن پاسخ'
+                : 'همان جلسه، حافظه و صدا در همهٔ صفحه‌ها'}
       </p>
     </div>
   );

@@ -14,7 +14,6 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  listSessionsAction, createSessionAction, sendTurnAction,
   jarvisTelemetryAction, type JarvisTelemetryView,
 } from './actions';
 import { createGargantua3D, type Gargantua3D } from './gargantua3d';
@@ -23,21 +22,10 @@ import { createNeuralMeshPainter } from './neuralMesh3d';
 import JarvisBoard from './board/JarvisBoard';
 import { UtteranceGate } from '@/lib/utteranceGate';
 import { bidiProps } from '@/lib/rtl';
+import { subscribeJarvisPresence } from '@/lib/jarvisPresence';
 
 type CoreState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting' | 'alert' | 'degraded';
 type RGB = [number, number, number];
-type SpeechRec = {
-  lang: string; continuous: boolean; interimResults: boolean;
-  onresult: (e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void;
-  onend: () => void; onerror: () => void; start: () => void; stop: () => void; abort: () => void;
-};
-
-function speechCtor(): (new () => SpeechRec) | null {
-  if (typeof window === 'undefined') return null;
-  const w = window as unknown as { webkitSpeechRecognition?: new () => SpeechRec; SpeechRecognition?: new () => SpeechRec };
-  return w.webkitSpeechRecognition ?? w.SpeechRecognition ?? null;
-}
-
 /** Orbital gold family — warmer mesh, tracks the accretion spectrum. */
 const STATE_COLOR: Record<CoreState, { core: RGB; ring: RGB }> = {
   idle: { core: [236, 168, 72], ring: [210, 132, 48] },
@@ -63,7 +51,6 @@ function lerp(a: number, b: number, t: number): number { return a + (b - a) * t;
 function rgba(c: RGB, a: number): string { return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`; }
 function mixRgb(a: RGB, b: RGB, t: number): RGB { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)]; }
 
-const CMD_PLACEHOLDER = 'یک دستور کوتاه بدهید…';
 
 function TelemCell({
   slot, label, cell,
@@ -98,10 +85,7 @@ export default function JarvisCoreHUD() {
 
   const [uiState, setUiState] = useState<CoreState>('idle');
   const [caption, setCaption] = useState(STATE_LABEL_FA.idle);
-  const [input, setInput] = useState('');
-  const [busy, setBusyState] = useState(false);
   const busyRef = useRef(false);
-  const setBusy = useCallback((v: boolean) => { busyRef.current = v; setBusyState(v); }, []);
   const sessionIdRef = useRef<string | null>(null);
   const [telem, setTelem] = useState<JarvisTelemetryView | null>(null);
   /** True only when this tab is visible AND the window has focus — desktop
@@ -112,12 +96,9 @@ export default function JarvisCoreHUD() {
   const gateRef = useRef(new UtteranceGate({ minCommandChars: 2, silenceMs: 900 }));
   const recRef = useRef<{ stop?: () => void; abort?: () => void } | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const finalBufRef = useRef('');
   const voiceActiveRef = useRef(false);
   const voiceEnergyRef = useRef(0);
   const [listening, setListening] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(false);
-  const [interimHint, setInterimHint] = useState('');
 
   const setCoreState = useCallback((s: CoreState, note?: string) => {
     stateRef.current = s;
@@ -126,29 +107,17 @@ export default function JarvisCoreHUD() {
     setCaption(note ?? STATE_LABEL_FA[s]);
   }, []);
 
-  useEffect(() => {
-    setSpeechSupported(Boolean(speechCtor()) && typeof window !== 'undefined' && 'speechSynthesis' in window);
-  }, []);
-
-  const stopListening = useCallback(() => {
-    try { recRef.current?.abort?.(); recRef.current?.stop?.(); } catch { /* ignore */ }
-    recRef.current = null;
-    setListening(false);
-    voiceActiveRef.current = false;
-    setInterimHint('');
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
-  }, []);
-
-  const interruptSpeech = useCallback(() => {
-    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
-    gateRef.current.markSpeaking(false);
-    gateRef.current.reset();
-  }, []);
-
-  useEffect(() => () => {
-    stopListening();
-    interruptSpeech();
-  }, [stopListening, interruptSpeech]);
+  /* The canvas pulses with what the ONE conversation is doing. Subscribing
+   * beats re-deriving: there is no second chat here to derive it from. */
+  useEffect(() => subscribeJarvisPresence((p) => {
+    const map: Record<string, CoreState> = {
+      idle: 'idle', listening: 'listening', thinking: 'thinking',
+      acting: 'acting', speaking: 'speaking', error: 'alert',
+    };
+    voiceActiveRef.current = p === 'listening' || p === 'speaking';
+    if (p === 'speaking') voiceEnergyRef.current = 0.8;
+    setCoreState(map[p] ?? 'idle');
+  }), [setCoreState]);
 
   const refreshTelemetry = useCallback(async () => {
     if (!liveRef.current) return;
@@ -444,168 +413,13 @@ export default function JarvisCoreHUD() {
     };
   }, []);
 
-  async function ensureSession(): Promise<string | null> {
-    if (sessionIdRef.current) return sessionIdRef.current;
-    try {
-      const sessions = await listSessionsAction();
-      if (sessions[0]?.sessionId) { sessionIdRef.current = sessions[0].sessionId; return sessionIdRef.current; }
-      const id = await createSessionAction('Live');
-      sessionIdRef.current = id;
-      return id;
-    } catch { return null; }
-  }
-
-  function speakReply(text: string): void {
-    if (!text || typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      setTimeout(() => {
-        voiceActiveRef.current = false;
-        setCoreState('idle');
-        gateRef.current.markHandled();
-      }, 2800);
-      return;
-    }
-    try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.slice(0, 500));
-      u.lang = 'fa-IR';
-      u.rate = 1.02;
-      u.onstart = () => {
-        gateRef.current.markSpeaking(true);
-        voiceActiveRef.current = true;
-        voiceEnergyRef.current = 0.85;
-        setCoreState('speaking', text.slice(0, 140));
-      };
-      u.onboundary = () => { voiceEnergyRef.current = Math.min(1, 0.55 + Math.random() * 0.45); };
-      const finish = () => {
-        gateRef.current.markSpeaking(false);
-        gateRef.current.markHandled();
-        voiceActiveRef.current = false;
-        voiceEnergyRef.current = 0.15;
-        if (stateRef.current === 'speaking') setCoreState('idle');
-      };
-      u.onend = finish;
-      u.onerror = finish;
-      window.speechSynthesis.speak(u);
-    } catch {
-      gateRef.current.markHandled();
-      voiceActiveRef.current = false;
-      setCoreState('idle');
-    }
-  }
-
-  async function submitTurn(raw: string, transport: 'text' | 'voice'): Promise<void> {
-    const text = raw.trim();
-    const gate = gateRef.current;
-    const verdict = gate.evaluate(text, true, { voice: transport === 'voice' });
-    if (!verdict.accept) return;
-    if (transport === 'text' && (gate.speaking || busyRef.current)) interruptSpeech();
-
-    gate.markSubmitted(text);
-    if (transport === 'text') setInput('');
-    setBusy(true);
-    voiceActiveRef.current = true;
-    setCoreState('thinking');
-    try {
-      const sid = await ensureSession();
-      if (!sid) {
-        setCoreState('degraded', 'ارتباط با کرنل برقرار نشد');
-        gate.markHandled();
-        voiceActiveRef.current = false;
-        return;
-      }
-      const res = await sendTurnAction(sid, text, transport);
-      if (!res) {
-        setCoreState('degraded', 'پاسخی دریافت نشد');
-        gate.markHandled();
-        voiceActiveRef.current = false;
-        return;
-      }
-      void refreshTelemetry();
-      const reply = res.replyText?.trim() || 'انجام شد.';
-      if (!gate.acceptAssistant(reply)) {
-        setCoreState('idle');
-        gate.markHandled();
-        voiceActiveRef.current = false;
-        return;
-      }
-      setCoreState('speaking', reply.slice(0, 140));
-      speakReply(reply);
-    } catch {
-      setCoreState('degraded', 'خطا در ارتباط');
-      gate.markHandled();
-      voiceActiveRef.current = false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function toggleListen(): void {
-    if (!speechSupported) return;
-    if (listening) {
-      stopListening();
-      if (stateRef.current === 'listening') setCoreState('idle');
-      return;
-    }
-    if (gateRef.current.speaking || gateRef.current.busy || busyRef.current) return;
-    interruptSpeech();
-    const Ctor = speechCtor();
-    if (!Ctor) return;
-    const rec = new Ctor();
-    rec.lang = 'fa-IR';
-    rec.continuous = false;
-    rec.interimResults = true;
-    finalBufRef.current = '';
-    rec.onresult = (e) => {
-      if (gateRef.current.speaking) return;
-      let interim = '';
-      for (let i = 0; i < e.results.length; i += 1) {
-        const r = e.results[i];
-        const txt = r[0]?.transcript ?? '';
-        if (r.isFinal) {
-          if (i >= e.resultIndex || !finalBufRef.current.includes(txt.trim())) {
-            finalBufRef.current = `${finalBufRef.current} ${txt}`.trim();
-          }
-        } else interim += txt;
-      }
-      const hint = (interim || finalBufRef.current).trim();
-      setInterimHint(hint);
-      if (hint) {
-        setCoreState('listening', hint.slice(0, 120));
-      }
-      if (finalBufRef.current) {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(() => {
-          const cmd = finalBufRef.current;
-          finalBufRef.current = '';
-          setInterimHint('');
-          stopListening();
-          void submitTurn(cmd, 'voice');
-        }, gateRef.current.config.silenceMs);
-      }
-    };
-    rec.onend = () => {
-      setListening(false);
-      if (!finalBufRef.current && !silenceTimerRef.current && stateRef.current === 'listening') {
-        voiceActiveRef.current = false;
-        setCoreState('idle');
-      }
-    };
-    rec.onerror = () => {
-      setListening(false);
-      setInterimHint('');
-      voiceActiveRef.current = false;
-      if (stateRef.current === 'listening') setCoreState('idle');
-    };
-    recRef.current = rec;
-    voiceActiveRef.current = true;
-    setListening(true);
-    setCoreState('listening');
-    try { rec.start(); } catch {
-      setListening(false);
-      voiceActiveRef.current = false;
-      setCoreState('idle');
-    }
-  }
+  /* D-191 — the conversation used to live HERE: session handling, submitTurn,
+   * speech recognition and synthesis. That is why voice existed on this page
+   * and nowhere else, while history and structured replies existed everywhere
+   * else and not here. It now lives in JarvisConversation, rendered by the
+   * rudder over every page including this one. What remains is the visual
+   * layer, which subscribes to the shared presence instead of deriving state
+   * from a conversation it owns. */
 
   return (
     <div className="jarvis-live-stage" dir="ltr">
@@ -614,7 +428,7 @@ export default function JarvisCoreHUD() {
           stays the centre of the board. */}
       <JarvisBoard
         onOriginChange={(o) => { boardOriginRef.current = o; }}
-        dimmed={busy || listening}
+        dimmed={uiState !== 'idle'}
       />
       <canvas ref={canvasRef} className="jarvis-live-canvas" />
       <canvas ref={glCanvasRef} className="jarvis-gl-canvas" aria-label="سیاه‌چاله سه‌بعدی" />
@@ -629,36 +443,6 @@ export default function JarvisCoreHUD() {
         <span className={`jarvis-live-dot jarvis-live-dot--${uiState}`} />
         <span key={caption} className="jarvis-live-caption-text" {...bidiProps(caption)}>{caption}</span>
       </div>
-      <form
-        className={`jarvis-live-cmdbar${listening ? ' jarvis-live-cmdbar--listening' : ''}`}
-        dir="rtl"
-        onSubmit={(e) => { e.preventDefault(); void submitTurn(input, 'text'); }}
-      >
-        {speechSupported ? (
-          <button
-            type="button"
-            className={`jarvis-live-mic${listening ? ' jarvis-live-mic--on' : ''}`}
-            onClick={toggleListen}
-            disabled={busy && !listening}
-            aria-label={listening ? 'توقف شنیدن' : 'صحبت با جارویس'}
-            title={listening ? 'توقف' : 'صحبت کنید'}
-          >
-            {listening ? '■' : 'MIC'}
-          </button>
-        ) : null}
-        <input
-          value={listening && interimHint ? interimHint : input}
-          onChange={(e) => { if (!listening) setInput(e.target.value); }}
-          placeholder={listening ? 'در حال شنیدن…' : CMD_PLACEHOLDER}
-          disabled={busy || listening}
-          readOnly={listening}
-          data-auto-dir=""
-          {...bidiProps((listening && interimHint ? interimHint : input) || CMD_PLACEHOLDER)}
-        />
-        <button type="submit" disabled={busy || listening || !input.trim()} aria-label="ارسال">
-          {busy ? '…' : '↵'}
-        </button>
-      </form>
     </div>
   );
 }
