@@ -84,6 +84,10 @@ function TelemCell({
 export default function JarvisCoreHUD() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
+  /** CIN-2c/D-183.11 — the half of the neural cage that passes IN FRONT of the
+   *  singularity. Painted on its own transparent canvas above the WebGL layer
+   *  so the black hole sits inside the mesh instead of on top of it. */
+  const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<CoreState>('idle');
   const targetColorRef = useRef(STATE_COLOR.idle);
   const currentColorRef = useRef({ core: [...STATE_COLOR.idle.core] as RGB, ring: [...STATE_COLOR.idle.ring] as RGB });
@@ -194,9 +198,13 @@ export default function JarvisCoreHUD() {
   useEffect(() => {
     const canvas = canvasRef.current;
     const glCanvas = glCanvasRef.current;
+    const frontCanvas = frontCanvasRef.current;
     if (!canvas || !glCanvas) return;
     const ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
     if (!ctx2d) return;
+    // Transparent (alpha:true) — this layer only carries the front half of
+    // the cage and must never paint a background over the black hole.
+    const ctxFront = frontCanvas?.getContext('2d', { alpha: true, desynchronized: true }) ?? null;
     const canvasEl: HTMLCanvasElement = canvas;
     const ctx: CanvasRenderingContext2D = ctx2d;
     const reducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -283,6 +291,13 @@ export default function JarvisCoreHUD() {
       canvasEl.style.width = `${w}px`;
       canvasEl.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (frontCanvas && ctxFront) {
+        frontCanvas.width = Math.floor(w * dpr);
+        frontCanvas.height = Math.floor(h * dpr);
+        frontCanvas.style.width = `${w}px`;
+        frontCanvas.style.height = `${h}px`;
+        ctxFront.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
       gargantua?.setSize(w, h, dpr);
     }
     resize();
@@ -382,7 +397,11 @@ export default function JarvisCoreHUD() {
       // synapses. Keeping decorative stand-ins beside them would be noise.
 
       // Independent modules, shared ensemble pose.
-      meshPainter.paint(ctx, pose, now);
+      // The cage is painted in two passes with the singularity BETWEEN them,
+      // so the nodes visibly orbit around a black hole that sits inside the
+      // mesh (D-183.11). `advance:false` on the second pass keeps one
+      // simulation driving both halves.
+      meshPainter.paint(ctx, pose, now, { layer: ctxFront ? 'back' : 'all' });
       if (gargantua) {
         // CIN-2c: clip the GL layer to a disc around the singularity. Purely a
         // HIT-TEST boundary (the disc is far wider than the drawn horizon, so
@@ -398,6 +417,11 @@ export default function JarvisCoreHUD() {
         gargantua.setSpeak(speakE);
         gargantua.setEnsemble(pose.spin.yaw, pose.spin.pitch, pose.t);
         gargantua.tick(t);
+      }
+
+      if (ctxFront) {
+        ctxFront.clearRect(0, 0, w, h);
+        meshPainter.paint(ctxFront, pose, now, { layer: 'front', advance: false });
       }
 
       raf = requestAnimationFrame(frame);
@@ -594,6 +618,7 @@ export default function JarvisCoreHUD() {
       />
       <canvas ref={canvasRef} className="jarvis-live-canvas" />
       <canvas ref={glCanvasRef} className="jarvis-gl-canvas" aria-label="سیاه‌چاله سه‌بعدی" />
+      <canvas ref={frontCanvasRef} className="jarvis-mesh-front-canvas" aria-hidden />
       <div className="jarvis-telem" aria-label="system telemetry">
         <TelemCell slot="mode" label="MODE" cell={telem?.mode} />
         <TelemCell slot="loop" label="LOOP" cell={telem?.loop} />

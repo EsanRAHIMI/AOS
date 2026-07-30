@@ -13,6 +13,9 @@ export type Gargantua3D = {
   setCenter: (cssX: number, cssY: number) => void;
   setViewRadius: (cssPx: number) => void;
   setSpeak: (speak: number) => void;
+  /** Shared ensemble spin/phase — keeps disk shear locked to the neural cage. */
+  setEnsemble: (spinYaw: number, spinPitch: number, phase: number) => void;
+  getOrbit: () => { theta: number; phi: number; dist: number };
   tick: (tSec: number) => void;
   dispose: () => void;
 };
@@ -43,6 +46,9 @@ uniform vec2 uResolution;
 uniform vec2 uCenter;
 uniform float uTime;
 uniform float uSpeak;
+uniform float uEnsembleYaw;
+uniform float uEnsemblePitch;
+uniform float uEnsemblePhase;
 uniform float uRadiusPx;
 uniform float uCamTheta;
 uniform float uCamPhi;
@@ -109,8 +115,8 @@ vec3 diskEmission(float r, float ang, float doppler, float speak, float time) {
   col = mix(col, mix(cCream, cHot, 0.35), tip * 0.52);
 
   // Turbulent filaments — broken, not smooth Saturn bands
-  float kepler = time * (0.62 + speak * 0.7) * pow(1.15 / max(r, 1.15), 1.6);
-  float shear = ang * (1.0 + 0.08 * sin(ang * 3.0)) + kepler;
+  float kepler = (time + uEnsembleYaw * 0.45 + uEnsemblePhase * 0.02) * (0.62 + speak * 0.7) * pow(1.15 / max(r, 1.15), 1.6);
+  float shear = ang * (1.0 + 0.08 * sin(ang * 3.0 + uEnsemblePitch)) + kepler;
   float smoke = fbm(vec2(r * 4.2, shear * 3.1));
   float filA = fbm(vec2(r * 9.0 - kepler * 1.7, shear * 6.2));
   float filB = fbm(vec2(r * 14.0 + shear * 0.4, ang * 8.0 - kepler));
@@ -357,6 +363,9 @@ export function createGargantua3DV2(canvas: HTMLCanvasElement): Gargantua3D {
     uCenter: { value: new THREE.Vector2(0.5, 0.5) },
     uTime: { value: 0 },
     uSpeak: { value: 0 },
+    uEnsembleYaw: { value: 0 },
+    uEnsemblePitch: { value: 0 },
+    uEnsemblePhase: { value: 0 },
     uRadiusPx: { value: 80 },
     uCamTheta: { value: GARGANTUA_LOCK_V2.theta },
     uCamPhi: { value: GARGANTUA_LOCK_V2.phi },
@@ -479,6 +488,14 @@ export function createGargantua3DV2(canvas: HTMLCanvasElement): Gargantua3D {
     },
     setSpeak(v) {
       speak = Math.max(0, Math.min(1, v));
+    },
+    setEnsemble(spinYaw, spinPitch, phase) {
+      uniforms.uEnsembleYaw.value = spinYaw;
+      uniforms.uEnsemblePitch.value = spinPitch;
+      uniforms.uEnsemblePhase.value = phase;
+    },
+    getOrbit() {
+      return { theta: orbit.theta, phi: orbit.phi, dist: orbit.dist };
     },
     tick(tSec) {
       if (disposed) return;

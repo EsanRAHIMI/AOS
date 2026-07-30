@@ -670,3 +670,11 @@ button { font: inherit; }
 .jboard-card--far .jboard-card-metrics,
 .jboard-card--far .jboard-card-sub { opacity: 0.5; }
 .jboard-card--focus { border-color: rgba(255, 255, 255, 0.45) !important; }
+
+/* CIN-2c / D-183.11 — the half of the neural cage that passes in FRONT of the
+   singularity. Transparent, never cleared with a fill, and layered just above
+   the WebGL canvas so the black hole reads as being INSIDE the mesh. */
+.jarvis-mesh-front-canvas {
+  position: absolute; inset: 0; display: block; width: 100%; height: 100%;
+  pointer-events: none; z-index: 1;
+}

@@ -308,23 +308,26 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     if (d.mode === 'pan') {
       d.moved = d.moved || Math.abs(dx) + Math.abs(dy) > 2;
       cameraRef.current.panByScreen(dx, dy);
-    }
-    else if (d.mode === 'orbit') cameraRef.current.orbitBy(dx * 0.004, -dy * 0.003);
-    else {
+    } else if (d.mode === 'orbit') {
+      cameraRef.current.orbitBy(dx * 0.004, -dy * 0.003);
+    } else {
       d.moved = d.moved || Math.abs(dx) + Math.abs(dy) > 2;
-      const cam = cameraRef.current;
       const p = placementsRef.current.get(d.id);
-      if (p) {
-        // Screen delta → world delta, un-rotated by yaw and un-squashed by
-        // pitch so the card tracks the cursor at any camera angle.
-        const s = cam.pxPerUnit;
-        const cy = Math.cos(-cam.pose.yaw);
-        const sy = Math.sin(-cam.pose.yaw);
-        const wy = (dy / s) / Math.max(0.35, Math.cos(cam.pose.pitch));
-        const wx = dx / s;
-        p.x += wx * cy - wy * sy;
-        p.y += wx * sy + wy * cy;
-        p.manual = true;
+      if (p && p.r > 0.001) {
+        // A card SLIDES ALONG ITS ORBIT — it can never be dragged off it.
+        // The orbit a card rides is the board's whole grammar, so leaving it
+        // is only possible by changing the card's orbit explicitly (the
+        // «چیدمان» panel). We take the pointer's world direction and keep the
+        // card's own radius.
+        const rect = wrapRef.current?.getBoundingClientRect();
+        const w = cameraRef.current.unproject(e.clientX - (rect?.left ?? 0), e.clientY - (rect?.top ?? 0));
+        const theta = Math.atan2(w.y, w.x);
+        if (Number.isFinite(theta)) {
+          p.theta = theta;
+          p.x = Math.cos(theta) * p.r;
+          p.y = Math.sin(theta) * p.r;
+          p.manual = true;
+        }
       }
     }
   }, []);

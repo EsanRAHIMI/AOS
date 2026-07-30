@@ -70,8 +70,22 @@ export function buildNeuralMesh3D(countPerShell: number, k: number, shells = 2):
   return { nodes, edges, neighbors };
 }
 
+/**
+ * Which half of the cage to paint (D-183.11). The singularity lives INSIDE the
+ * mesh, so the cage is drawn in two passes on two canvases with the black hole
+ * between them: `back` (nodes behind the horizon, occluded by it) below the GL
+ * layer, `front` (nodes on our side) above it. That is what makes the network
+ * read as rotating AROUND the black hole rather than behind a disc.
+ */
+export type MeshLayer = 'back' | 'front' | 'all';
+
 export type NeuralMeshPainter = {
-  paint: (ctx: CanvasRenderingContext2D, pose: JarvisEnsemblePose, now: number) => void;
+  paint: (
+    ctx: CanvasRenderingContext2D,
+    pose: JarvisEnsemblePose,
+    now: number,
+    opts?: { layer?: MeshLayer; advance?: boolean },
+  ) => void;
   setCompact: (compact: boolean) => void;
 };
 
@@ -88,7 +102,12 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
       signalCap = compact ? 12 : 18;
       // Keep graph topology stable across resize — only retune signal budget.
     },
-    paint(ctx, pose, now) {
+    paint(ctx, pose, now, opts) {
+      const layer: MeshLayer = opts?.layer ?? 'all';
+      const advance = opts?.advance ?? true;
+      // A node/edge belongs to this pass when it is on the requested side of
+      // the singularity. `back` is additionally occluded by the horizon.
+      const inLayer = (z: number) => layer === 'all' || (layer === 'front' ? z > 0 : z <= 0);
       const { cx, cy, meshRadius, bhKeepout, t, dt, speak, speedMul, spin, accent } = pose;
       const lux = luxPaletteFromAccent(accent);
       const keep2 = bhKeepout * bhKeepout;
@@ -115,7 +134,7 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
         p.persp = persp;
         const dxn = p.x - cx, dyn = p.y - cy;
         p.occ = dxn * dxn + dyn * dyn < keep2;
-        n.flash *= Math.pow(0.02, dt);
+        if (advance) n.flash *= Math.pow(0.02, dt);
       }
 
       const edgeOrder = mesh.edges
@@ -123,10 +142,13 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
         .sort((u, v) => u.z - v.z);
       for (const e of edgeOrder) {
         const pa = projected[e.a], pb = projected[e.b];
-        if (pa.occ && pb.occ) continue;
-        const mx = (pa.x + pb.x) * 0.5 - cx;
-        const my = (pa.y + pb.y) * 0.5 - cy;
-        if (mx * mx + my * my < keep2 * 0.92) continue;
+        if (!inLayer(e.z)) continue;
+        if (layer !== 'front') {
+          if (pa.occ && pb.occ) continue;
+          const mx = (pa.x + pb.x) * 0.5 - cx;
+          const my = (pa.y + pb.y) * 0.5 - cy;
+          if (mx * mx + my * my < keep2 * 0.92) continue;
+        }
         const flash = Math.max(mesh.nodes[e.a].flash, mesh.nodes[e.b].flash);
         const back = e.z < 0;
         const depth = Math.max(0, Math.min(1, (pa.persp + pb.persp) * 0.5 - 0.5));
@@ -139,7 +161,7 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
         ctx.stroke();
       }
 
-      if (now >= nextSignalAt && signals.length < signalCap) {
+      if (advance && now >= nextSignalAt && signals.length < signalCap) {
         const [ea, eb] = mesh.edges[Math.floor(Math.random() * mesh.edges.length)];
         if (!projected[ea].occ || !projected[eb].occ) {
           signals.push({ a: ea, b: eb, t: 0, speed: 0.85 + Math.random() * 0.35 });
@@ -148,7 +170,7 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
       }
       for (let i = signals.length - 1; i >= 0; i -= 1) {
         const s = signals[i];
-        s.t += dt * s.speed * speedMul;
+        if (advance) s.t += dt * s.speed * speedMul;
         if (s.t >= 1) {
           mesh.nodes[s.b].flash = 1;
           if (signals.length < signalCap && Math.random() < 0.55) {
@@ -165,11 +187,15 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
           continue;
         }
         const pa = projected[s.a], pb = projected[s.b];
-        if (pa.occ && pb.occ) continue;
+        const sz = (pa.z + pb.z) * 0.5;
+        if (!inLayer(sz)) continue;
         const sx = lerp(pa.x, pb.x, s.t);
         const sy = lerp(pa.y, pb.y, s.t);
-        if ((sx - cx) ** 2 + (sy - cy) ** 2 < keep2) continue;
-        const back = (pa.z + pb.z) * 0.5 < 0;
+        if (layer !== 'front') {
+          if (pa.occ && pb.occ) continue;
+          if ((sx - cx) ** 2 + (sy - cy) ** 2 < keep2) continue;
+        }
+        const back = sz < 0;
         ctx.beginPath();
         ctx.fillStyle = rgba(lux.hot, back ? 0.45 : 0.9);
         ctx.arc(sx, sy, back ? 1.15 : 1.65, 0, Math.PI * 2);
@@ -179,7 +205,8 @@ export function createNeuralMeshPainter(compact: boolean): NeuralMeshPainter {
       const nodeOrder = projected.map((p, i) => ({ i, z: p.z })).sort((a, b) => a.z - b.z);
       for (const { i } of nodeOrder) {
         const p = projected[i];
-        if (p.occ) continue;
+        if (!inLayer(p.z)) continue;
+        if (layer !== 'front' && p.occ) continue;
         const flash = mesh.nodes[i].flash;
         const back = p.z < 0;
         const depthAlpha = Math.max(0, Math.min(1, (p.persp - 0.55) / 1.1));

@@ -37,6 +37,12 @@ export type PlacementOverrides = Record<string, { x: number; y: number; z?: numb
 
 /** Minimum arc length (world units) between two cards sharing a lane. */
 const MIN_ARC = 5.2;
+/** Angular window at 12 o'clock kept clear so the orbit's LABEL is never
+ *  covered by a card. Scaled by radius so the reserved space is roughly the
+ *  same number of pixels on every track. */
+function labelGap(radius: number): number {
+  return Math.min(0.62, 8.5 / Math.max(4, radius));
+}
 /** Radius offset between lanes of the same orbit. */
 const LANE_STEP = 2.4;
 /** How far `scope` may pull a card inside/outside its own track. */
@@ -66,25 +72,36 @@ export function layoutCards(cards: BoardCard[], overrides: PlacementOverrides = 
     const lanes = Math.max(1, Math.ceil(ordered.length / perLane));
 
     ordered.forEach((card, i) => {
+      // Owner placement stores a DIRECTION only. A card can be slid around
+      // its track but never pulled off it — leaving an orbit would break the
+      // one rule the board is built on, so it is only possible by changing
+      // the card's orbit explicitly (boardProfile.orbitOverrides).
       const manual = overrides[card.id];
       if (manual) {
+        const theta = Math.atan2(manual.y, manual.x);
+        const rManual = track.radius + (2 - Math.min(4, scopeIndex(card.scope))) * SCOPE_LANE * -0.5;
         placements.push({
-          id: card.id, x: manual.x, y: manual.y, z: manual.z ?? 0,
-          r: Math.hypot(manual.x, manual.y), orbitRadius: track.radius,
-          scope: card.scope, group,
-          theta: Math.atan2(manual.y, manual.x), manual: true,
+          id: card.id,
+          x: Math.cos(theta) * rManual,
+          y: Math.sin(theta) * rManual,
+          z: manual.z ?? 0,
+          r: rManual, orbitRadius: track.radius,
+          scope: card.scope, group, theta, manual: true,
         });
         return;
       }
       const lane = i % lanes;
       const indexInLane = Math.floor(i / lanes);
       const countInLane = Math.ceil((ordered.length - lane) / lanes);
-      // Spread the lane's bodies over the FULL circle, offset per lane so
-      // neighbouring lanes interleave instead of lining up radially.
-      const step = (Math.PI * 2) / countInLane;
+      // Spread the lane's bodies over the circle MINUS the label window, so
+      // the orbit's caption at 12 o'clock always stays readable. Lanes are
+      // phase-shifted so neighbours interleave instead of lining up radially.
+      const gap = labelGap(track.radius);
+      const usable = Math.PI * 2 - gap;
+      const step = usable / countInLane;
       const lanePhase = (lane / lanes) * step * 0.5;
-      // −π/2 starts each orbit at the top, which reads as "12 o'clock".
-      const theta = -Math.PI / 2 + indexInLane * step + lanePhase;
+      // Start just after the reserved label window at the top.
+      const theta = -Math.PI / 2 + gap / 2 + step / 2 + indexInLane * step + lanePhase;
 
       // Lane offset: crowding pushes outward, personal scope pulls inward.
       const crowdOffset = lanes === 1 ? 0 : (lane - (lanes - 1) / 2) * LANE_STEP;

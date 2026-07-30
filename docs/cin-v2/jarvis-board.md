@@ -61,6 +61,17 @@ mark on it means "this actually happened, just now".
    involve it are muted. The HUD reports cards, orbits and how many pieces of
    data are in flight right now.
 
+### The singularity sits INSIDE the cage
+
+The neural mesh is painted in **two passes with the black hole between them**
+(D-183.11): the half of the cage behind the horizon goes on the main canvas
+below the WebGL layer (and is occluded by it), and the half on our side goes on
+a transparent `.jarvis-mesh-front-canvas` above it, driven by the same
+simulation (`advance:false` on the second pass). The result is that the nodes
+visibly rotate *around* a black hole that lives inside the mesh, instead of the
+mesh disappearing behind a disc. The singularity's own size and structure are
+untouched.
+
 ## 3. Architecture (five independent modules + one layer)
 
 ```txt
@@ -94,7 +105,7 @@ level-of-detail chip below ~0.5 scale so a far view stays readable.
 
 **Layer order (fragile — read before editing CSS):** the stage paints
 `.jarvis-live-canvas` → `.jboard-canvas` (z 1) → `.jarvis-gl-canvas` (z 1) →
-`.jboard-cards` (z 2) → telemetry (z 3) → caption (z 4) → `.jboard-hud` (z 5)
+`.jarvis-mesh-front-canvas` (z 1) → `.jboard-cards` (z 2) → telemetry (z 3) → caption (z 4) → `.jboard-hud` (z 5)
 → `.jboard-panel` (z 6). The `.jboard` wrapper **must keep `z-index: auto` and
 full opacity**: giving it a numeric z-index (or any opacity < 1, filter, or
 transform) creates a stacking context that traps the cards and the zoom HUD
@@ -136,8 +147,17 @@ hiding what that role does not care about). On top of the preset the owner can:
 
 - switch any card/source off,
 - re-assign a source to a different **orbit**,
-- drag a card anywhere (hand-placed cards never move again),
+- **slide a card around its own orbit** (the saved override is a direction,
+  never a free position — see below),
 - pin cards to stay expanded.
+
+**A card can never leave its orbit by dragging (D-183.11).** Dragging slides it
+along its track; the placement override stores an ANGLE only and the layout
+re-derives the radius from the card's orbit every frame, so even a profile
+saved by an older build snaps back onto a track. Leaving an orbit is a change
+of meaning, not of position, so it is only possible through the explicit orbit
+selector. Each track also reserves an angular window at 12 o'clock where no
+card is ever seated, so the orbit's label stays readable at all times.
 
 Overrides always beat presets. Persistence is `localStorage`
 (`aos.jarvis.board.profile.v1`) today; `loadBoardProfile`/`saveBoardProfile`
