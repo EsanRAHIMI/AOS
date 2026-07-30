@@ -22,9 +22,12 @@ import {
 function Field({ name, value }: { name: string; value: unknown }) {
   const kind = valueKind(value);
   const text = formatValue(value);
+  // The LABEL's language is data-dependent too: a curated key gives Persian,
+  // an unknown key falls back to a humanised English string.
+  const label = fieldLabel(name);
   return (
     <div className="prof-field">
-      <dt>{fieldLabel(name)}</dt>
+      <dt {...bidiProps(label)}>{label}</dt>
       <dd>
         {kind === 'email' ? <a href={`mailto:${text}`} dir="ltr">{text}</a>
           : kind === 'url' ? <a href={text} target="_blank" rel="noopener noreferrer" dir="ltr">{text}</a>
@@ -43,6 +46,7 @@ export function SectionCard({
   section: { data: Record<string, unknown>; visibility: string; version: number; updatedAt: string; attestedBy: string[] } | null;
   purpose?: string;
 }) {
+  // Known sections have Persian names; an unmapped one keeps its raw id.
   const label = SECTION_LABEL[name] ?? name;
   const fields = section ? Object.entries(section.data) : [];
 
@@ -51,7 +55,7 @@ export function SectionCard({
     return (
       <article className="card prof-sec empty">
         <header className="prof-sec-head">
-          <h3>{label}</h3>
+          <h3 {...bidiProps(label)}>{label}</h3>
         </header>
         <p className="prof-sec-purpose">{purpose ?? SECTION_PURPOSE[name] ?? ''}</p>
         <footer className="prof-sec-foot">
@@ -64,7 +68,7 @@ export function SectionCard({
   return (
     <article className="card prof-sec">
       <header className="prof-sec-head">
-        <h3>{label}</h3>
+        <h3 {...bidiProps(label)}>{label}</h3>
         <span className="prof-vis" title={VISIBILITY_HINT[section.visibility] ?? ''}>
           {VISIBILITY_LABEL[section.visibility] ?? section.visibility}
         </span>
@@ -100,7 +104,9 @@ export function DocumentCard({ doc, deadline }: { doc: Record<string, unknown>; 
     <article className={`card prof-doc${deadline.tone ? ` ${deadline.tone}` : ''}`}>
       <div className="prof-doc-top">
         <h3 {...bidiProps(title)}>{title}</h3>
-        <span className="badge">{DOC_TYPE_LABEL[String(doc.docType)] ?? String(doc.docType)}</span>
+        <span className="badge" {...bidiProps(DOC_TYPE_LABEL[String(doc.docType)] ?? String(doc.docType))}>
+          {DOC_TYPE_LABEL[String(doc.docType)] ?? String(doc.docType)}
+        </span>
       </div>
 
       <p className={`prof-doc-deadline ${deadline.tone}`}>{deadline.text}</p>
@@ -128,7 +134,9 @@ export function AttestationRow({ claim }: { claim: Record<string, unknown> }) {
     <div className={`prof-claim${revoked ? ' revoked' : ''}`}>
       <span className={`prof-claim-mark ${revoked ? 'err' : 'ok'}`} aria-hidden>{revoked ? '×' : '✓'}</span>
       <div className="prof-claim-body">
-        <p className="prof-claim-t">{claimSentence(String(claim.claimType))}</p>
+        <p className="prof-claim-t" {...bidiProps(claimSentence(String(claim.claimType)))}>
+          {claimSentence(String(claim.claimType))}
+        </p>
         <p className="prof-claim-m">
           صادرکننده: <span dir="ltr">{String(claim.issuerEntityId ?? '—')}</span>
           {claim.issuedAt ? <> · {whenPhrase(String(claim.issuedAt))}</> : null}
@@ -155,8 +163,8 @@ export function HistoryTimeline({
         return (
           <li key={String(r.ledgerId)} className={`prof-tl-${recordGroup(type)}`}>
             <div className="prof-tl-line">
-              <span className="prof-tl-when">{whenPhrase(String(r.at))}</span>
-              <span className="prof-tl-what">{recordSentence(type)}</span>
+              <span className="prof-tl-when" {...bidiProps(whenPhrase(String(r.at)))}>{whenPhrase(String(r.at))}</span>
+              <span className="prof-tl-what" {...bidiProps(recordSentence(type))}>{recordSentence(type)}</span>
             </div>
             {!compact && summary && (
               <p className="prof-tl-detail" {...bidiProps(summary)}>{summary}</p>
@@ -220,7 +228,9 @@ export function AttentionList({
         <li className="">
           <Link href="/me/profile?tab=documents">
             <span className="prof-attn-t">پیوست فایل غیرفعال است</span>
-            <span className="prof-attn-d">{storageReason || 'S3 تنظیم نشده'}</span>
+            <span className="prof-attn-d" {...bidiProps(storageReason || 'S3 تنظیم نشده')}>
+              {storageReason || 'S3 تنظیم نشده'}
+            </span>
           </Link>
         </li>
       )}

@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Bidi on the profile: alignment follows the text, not the page (D-187b)
+
+Owner: Persian must be right-aligned and English left-aligned, or readability
+is only half done. The redesigned profile had per-node `dir` on *user* values
+but not on the strings whose language depends on DATA — an unmapped field key
+(`Crypto Wallet Id`), an unseen ledger record type (`Contract Signed`), a
+gateway storage reason naming an env var. Those inherited the rtl shell and
+rendered right-aligned with flipped punctuation.
+
+- **Shell rtl, content per-node.** The page's own language is Persian, so
+  `.prof` is `dir="rtl"` and every label and layout axis follows. Each content
+  node then declares its own direction via `bidiProps`. This split is the only
+  combination that stays readable in a bilingual system: a global rtl with no
+  per-node direction breaks English, and a global ltr with no per-node
+  direction breaks Persian.
+- **One CSS rule does the alignment**: `text-align: start` on text elements
+  inside `.prof`. `start` resolves against each ELEMENT's own direction, so
+  Persian goes right and English goes left with no per-element overrides — and
+  it keeps working for content nobody has written yet. It has to sit after the
+  app-wide `:dir(rtl) { text-align: right }`, which would otherwise drag
+  `dir="ltr"` children along with their rtl parent. `:where()` keeps its
+  specificity at 0 so genuinely centred elements still win.
+- **Mixed-script values are isolated** (`unicode-bidi: isolate`) so a Latin id
+  inside a Persian sentence cannot reorder the punctuation around it.
+- **Edit fields align to what is being typed** — `unicode-bidi: plaintext` plus
+  `text-align: start`, so one input serves both scripts live.
+
+Five render tests now pin this: a Persian label gets `dir="rtl"` and its
+English fallback `dir="ltr"` in the same section; an English document title and
+a Persian one differ; an unmapped record type stays ltr while Persian sentences
+stay rtl. Bidi cannot be verified by eye once the data is user-supplied, so it
+is asserted in markup. 50/50 dashboard tests, typecheck and `next build` pass.
+
 ## 2026-07-30 — The profile stops being a database browser (D-187)
 
 Owner's verdict on `/me/profile`: complicated, unprofessional, confusing. It

@@ -167,6 +167,66 @@ describe('attention list', () => {
   });
 });
 
+/**
+ * Bidi is the difference between a readable page and an unreadable one here,
+ * and it cannot be asserted by eye once the data is user-supplied: every node
+ * whose language depends on DATA must declare its own direction, or it
+ * inherits the rtl shell and English renders right-aligned with flipped
+ * punctuation.
+ */
+describe('direction follows the content, not the page', () => {
+  it('gives a Persian field label rtl and an English fallback label ltr', () => {
+    const out = html(
+      <SectionCard entityId="e1" name="identity"
+        section={{
+          data: { full_name: 'احسان رحیمی', crypto_wallet_id: '0xAbC123', email: 'a@b.com' },
+          visibility: 'private', version: 1, updatedAt: '2026-07-20T10:00:00.000Z', attestedBy: [],
+        }} />,
+    );
+    expect(out).toContain('<dt dir="rtl">نام کامل</dt>');
+    expect(out).toContain('<dt dir="ltr">Crypto Wallet Id</dt>');
+    // …and the values follow their own script, not the label's.
+    expect(out).toContain('<span dir="rtl">احسان رحیمی</span>');
+    expect(out).toContain('<span dir="ltr">0xAbC123</span>');
+    expect(out).toContain('dir="ltr"');
+  });
+
+  it('gives an English document title ltr and a Persian one rtl', () => {
+    const fa = html(<DocumentCard doc={{ docId: 'd1', title: 'پاسپورت', docType: 'identity', status: 'active' }} deadline={expiryPhrase(null, 'active', NOW)} />);
+    expect(fa).toContain('<h3 dir="rtl">پاسپورت</h3>');
+
+    const en = html(<DocumentCard doc={{ docId: 'd2', title: 'Employment Contract', docType: 'contract', status: 'active' }} deadline={expiryPhrase(null, 'active', NOW)} />);
+    expect(en).toContain('<h3 dir="ltr">Employment Contract</h3>');
+  });
+
+  it('gives an unmapped record type ltr in the timeline while Persian sentences stay rtl', () => {
+    const out = html(
+      <HistoryTimeline records={[
+        { ledgerId: 'l1', recordType: 'document.created', summary: '', at: '2026-07-29T10:00:00.000Z' },
+        { ledgerId: 'l2', recordType: 'contract.signed', summary: '', at: '2026-07-29T10:00:00.000Z' },
+      ]} />,
+    );
+    expect(out).toContain('<span class="prof-tl-what" dir="rtl">مدرک جدیدی ثبت شد</span>');
+    expect(out).toContain('<span class="prof-tl-what" dir="ltr">Contract Signed</span>');
+  });
+
+  it('gives an English storage reason ltr in the attention list', () => {
+    const out = html(
+      <AttentionList items={[]} missingSections={[]} storageConfigured={false} storageReason="AWS_S3_BUCKET is not set" />,
+    );
+    expect(out).toContain('dir="ltr"');
+    expect(out).toContain('AWS_S3_BUCKET is not set');
+  });
+
+  it('keeps ids and versions ltr even inside the rtl shell', () => {
+    const out = html(
+      <SectionCard entityId="e1" name="skills"
+        section={{ data: { level: 'senior' }, visibility: 'network', version: 7, updatedAt: '2026-07-20T10:00:00.000Z', attestedBy: [] }} />,
+    );
+    expect(out).toContain('class="prof-sec-meta" dir="ltr"');
+  });
+});
+
 describe('attestations and technical disclosure', () => {
   it('explains a claim and marks a revoked one', () => {
     const ok = html(<AttestationRow claim={{ claimId: 'c1', claimType: 'identity_verified', issuerEntityId: 'cin_ent_gov', issuedAt: '2026-07-29T10:00:00.000Z' }} />);

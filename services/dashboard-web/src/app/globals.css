@@ -804,7 +804,11 @@ button { font: inherit; }
 .prof-row input, .prof-row select, .prof-editor select {
   flex: 1; min-width: 0; padding: 6px 9px; border-radius: 8px; font-size: 12px;
   border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.04);
-  color: var(--text); unicode-bidi: plaintext;
+  color: var(--text);
+  /* plaintext resolves direction from what the owner is typing; `start` is what
+   * makes the caret and text follow it live (D-187b) — Persian to the right,
+   * English to the left, in the same field. */
+  unicode-bidi: plaintext; text-align: start;
 }
 .prof-lbl { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 .prof-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
@@ -1012,3 +1016,23 @@ button { font: inherit; }
   .prof-sections, .prof-docs { grid-template-columns: 1fr; }
   .prof-field { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* ---------------------------------------------------------- bidi alignment
+   The shell is rtl (the UI language is Persian), but the page carries English
+   data too. `text-align: start` resolves against each ELEMENT's own direction,
+   so one rule gives Persian right-alignment and English left-alignment — no
+   per-element overrides, and it keeps working for content we have not written
+   yet. This must sit after the global `:dir(rtl) { text-align: right }`, which
+   would otherwise drag `dir="ltr"` children along with their rtl parent.
+   `:where()` keeps specificity at 0 so the exceptions below still win. */
+.prof :where(p, h1, h2, h3, dt, dd, span, li, a, summary, ol, ul, dl, div, article, section, header, footer) {
+  text-align: start;
+}
+/* Genuinely centred things stay centred regardless of direction. */
+.prof .prof-stat, .prof .prof-avatar, .prof .empty-state,
+.prof .prof-claim-mark, .prof .prof-clear-mark { text-align: center; }
+
+/* Free-form values may be mixed-script; isolate each so a Latin id inside a
+   Persian line cannot reorder the punctuation around it. */
+.prof-field dd, .prof-doc-meta dd, .prof-tl-detail, .prof-claim-m,
+.prof-attn-t, .prof-tech-grid dd { unicode-bidi: isolate; }

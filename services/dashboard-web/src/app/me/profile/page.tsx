@@ -58,7 +58,7 @@ export default async function OwnerProfilePage({ searchParams }: { searchParams:
 
   if (!entity) {
     return (
-      <div className="prof">
+      <div className="prof" dir="rtl">
         <EmptyState
           icon="◌"
           title="هنوز هویتی برای شما ساخته نشده"
@@ -93,7 +93,13 @@ export default async function OwnerProfilePage({ searchParams }: { searchParams:
   const activeClaims = claims.filter((c) => !c.revokedAt);
 
   return (
-    <div className="prof">
+    /* The page's own language is Persian, so the SHELL is rtl and every label,
+     * heading and layout axis follows from that. Individual content nodes then
+     * declare their own direction (bidiProps) — an English value inside this
+     * container must not inherit rtl, or it renders right-aligned with its
+     * punctuation flipped. Chrome rtl + content per-node is the only
+     * combination that stays readable in a bilingual system. */
+    <div className="prof" dir="rtl">
       <IdentityHeader
         name={entity.displayName || entity.name}
         entityId={entity.entityId}
