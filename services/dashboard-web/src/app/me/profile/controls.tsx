@@ -21,12 +21,14 @@ const VISIBILITY: Array<{ id: string; fa: string }> = [
 ];
 
 export function SectionEditor({
-  entityId, section, initial, visibility,
+  entityId, section, initial, visibility, label,
 }: {
   entityId: string;
   section: string;
   initial: Record<string, unknown>;
   visibility: string;
+  /** Trigger text — "افزودن هویت" reads better than "ویرایش" on an empty section. */
+  label?: string;
 }) {
   const [rows, setRows] = useState<Row[]>(() =>
     Object.entries(initial).map(([k, v]) => ({ k, v: typeof v === 'string' ? v : JSON.stringify(v) })));
@@ -54,7 +56,7 @@ export function SectionEditor({
 
   if (!open) {
     return (
-      <button type="button" className="btn btn-ghost" onClick={() => setOpen(true)}>ویرایش</button>
+      <button type="button" className="btn btn-ghost" onClick={() => setOpen(true)}>{label ?? 'ویرایش'}</button>
     );
   }
 

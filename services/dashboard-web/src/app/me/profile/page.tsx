@@ -1,217 +1,245 @@
 import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
-import { PageHeader, MetricCard, EmptyState } from '@/components/ui';
-import { SectionEditor, AddDocument, DocumentControls } from './controls';
-import { bidiProps } from '@/lib/rtl';
+import { EmptyState } from '@/components/ui';
+import { AddDocument } from './controls';
+import { IdentityHeader, TabBar, TechnicalDetails } from './shell';
+import { SectionCard, DocumentCard, AttestationRow, HistoryTimeline, AttentionList } from './views';
+import {
+  SECTION_LABEL, SECTION_PURPOSE, completeness, expiryPhrase, CORE_SECTIONS,
+} from './present';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * The owner's living profile (CIN-1b, D-185).
+ * The owner's living profile (CIN-1b redesigned, D-187).
  *
- * Built directly on the CIN entity graph rather than a parallel profile table,
- * so identity here is versioned per section, carries a visibility level, can
- * be attested by verifiable claims, and leaves a tamper-evident trail in the
- * ledger. Documents are records first and files second — a passport that
- * expires in 40 days is useful information even with no scan attached.
+ * Still built directly on the CIN entity — no parallel profile table, so
+ * identity stays versioned per section, attestable and ledger-anchored. What
+ * changed is the SURFACE: the old page rendered storage shapes (a table whose
+ * "content" column was `key: value · key: value`), which made the owner decode
+ * their own identity. Now:
+ *
+ *  - one identity header answers "who am I in this system, and is anything
+ *    wrong right now",
+ *  - five tabs (?tab=) each do exactly one job, so the page never dumps
+ *    everything at once and stays readable as sections and documents grow,
+ *  - every record is rendered as human Persian; entity ids, section versions
+ *    and ledger record types live inside a collapsed «جزئیات فنی» — available
+ *    for debugging, never leading.
+ *
+ * Tabs are URL state, not client state: linkable, refresh-safe, server
+ * rendered, and cheap (one fetch set, no client store).
  */
 
-const SECTION_FA: Record<string, string> = {
-  identity: 'هویت', contact: 'تماس', education: 'تحصیلات', credentials: 'گواهی‌ها',
-  employment: 'شغل', skills: 'مهارت‌ها', financial: 'مالی', assets: 'دارایی‌ها',
-  legal: 'حقوقی', health_ref: 'سلامت', memberships: 'عضویت‌ها', achievements: 'دستاوردها',
-  preferences: 'ترجیحات', goals: 'اهداف', capabilities: 'توانمندی‌ها',
-  governance: 'حاکمیت', operations: 'عملیات',
+type Entity = {
+  entityId: string; name: string; displayName: string; status: string;
+  entityType?: string;
+  sections: Record<string, { data: Record<string, unknown>; visibility: string; version: number; updatedAt: string; attestedBy: string[] }>;
+  createdAt: string;
 };
 
-const VIS_FA: Record<string, string> = {
-  private: 'خصوصی', restricted: 'محدود', network: 'شبکه', public: 'عمومی',
-};
+const TABS = [
+  { id: 'overview', label: 'نمای کلی' },
+  { id: 'info', label: 'اطلاعات من' },
+  { id: 'documents', label: 'مدارک' },
+  { id: 'attestations', label: 'تأییدها' },
+  { id: 'history', label: 'سوابق' },
+] as const;
 
-const DOC_TYPE_FA: Record<string, string> = {
-  identity: 'هویتی', education: 'تحصیلی', employment: 'شغلی', financial: 'مالی',
-  legal: 'حقوقی', medical: 'درمانی', contract: 'قرارداد', license: 'مجوز', other: 'سایر',
-};
-
-const STATUS_FA: Record<string, string> = {
-  active: 'معتبر', expiring: 'نزدیک انقضا', expired: 'منقضی', superseded: 'جایگزین‌شده', archived: 'بایگانی',
-};
-
-/** Suggested sections the owner has not filled yet — an honest to-do, not a fake profile. */
-const SUGGESTED = ['identity', 'contact', 'education', 'employment', 'skills', 'financial', 'legal', 'goals'];
-
-export default async function OwnerProfilePage() {
-  const [me, docsRes, ledger] = await Promise.all([
+export default async function OwnerProfilePage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const [sp, me, docsRes, ledger] = await Promise.all([
+    searchParams,
     gateway.meEntity(),
     gateway.cinDocuments(),
     gateway.cinLedger(200),
   ]);
 
-  const entity = me?.entity as null | {
-    entityId: string; name: string; displayName: string; status: string;
-    sections: Record<string, { data: Record<string, unknown>; visibility: string; version: number; updatedAt: string; attestedBy: string[] }>;
-    createdAt: string;
-  };
+  const entity = (me?.entity ?? null) as Entity | null;
 
   if (!entity) {
     return (
-      <>
-        <PageHeader title="پروفایل من" subtitle="هویت زندهٔ شما در شبکهٔ هوش جمعی" />
+      <div className="prof">
         <EmptyState
-          icon="·"
-          title="هنوز موجودیت هویتی ساخته نشده"
+          icon="◌"
+          title="هنوز هویتی برای شما ساخته نشده"
           hint={me?.hint ?? 'اجرا کنید: node scripts/cin-genesis-seed.mjs — این کار شما، جارویس و خود کرنل را به‌عنوان سه موجودیت اول شبکه ثبت می‌کند.'}
         />
-      </>
+      </div>
     );
   }
+
+  const tab = (TABS.find((t) => t.id === sp.tab)?.id ?? 'overview') as (typeof TABS)[number]['id'];
 
   const sections = Object.entries(entity.sections ?? {});
   const claims = (me?.claims ?? []) as Array<Record<string, unknown>>;
   const documents = (docsRes?.documents ?? []) as Array<Record<string, unknown>>;
   const storage = docsRes?.storage ?? me?.storage ?? { configured: false, reason: '', bucket: '', region: '' };
-  const summary = me?.documents ?? null;
-  const missing = SUGGESTED.filter((s) => !entity.sections?.[s]);
+  const comp = completeness(entity.sections);
 
-  // My history: only ledger records that are about me or my papers.
+  // Live documents first; archived/superseded are history, not daily concerns.
+  const liveDocs = documents.filter((d) => d.status !== 'archived');
+  const withExpiry = liveDocs
+    .map((d) => ({ doc: d, deadline: expiryPhrase(d.expiresAt as string | null, String(d.status)) }))
+    .sort((a, b) => a.deadline.urgency - b.deadline.urgency);
+  const needsAttention = withExpiry.filter((x) => x.deadline.tone === 'err' || x.deadline.tone === 'warn');
+
+  // My history: only ledger records about me or my papers.
   const myDocIds = new Set(documents.map((d) => String(d.docId)));
   const history = ((ledger?.records ?? []) as Array<Record<string, unknown>>)
     .filter((r) => String(r.refId) === entity.entityId || myDocIds.has(String(r.refId)) || String(r.actorEntityId) === entity.entityId)
-    .slice(-40)
+    .slice(-60)
     .reverse();
 
+  const activeClaims = claims.filter((c) => !c.revokedAt);
+
   return (
-    <>
-      <PageHeader
-        title={entity.displayName || entity.name}
-        subtitle={`هویت زندهٔ شما — ${entity.entityId} · ثبت‌شده ${String(entity.createdAt).slice(0, 10)}`}
-        actions={<Link href={`/cin/entities/${entity.entityId}`} className="btn btn-ghost">نمای شبکه</Link>}
+    <div className="prof">
+      <IdentityHeader
+        name={entity.displayName || entity.name}
+        entityId={entity.entityId}
+        status={entity.status}
+        since={String(entity.createdAt).slice(0, 10)}
+        completeness={comp}
+        attention={needsAttention.length}
+        attestations={activeClaims.length}
+        documents={liveDocs.length}
       />
 
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <MetricCard label="بخش‌های پروفایل" value={sections.length} hint={missing.length ? `${missing.length} بخش پیشنهادی خالی` : 'پایه کامل است'} tone={sections.length ? 'ok' : undefined} />
-        <MetricCard label="ادعاهای دربارهٔ من" value={claims.length} hint={claims.length ? 'قابل راستی‌آزمایی با امضا' : 'هنوز ادعایی صادر نشده'} />
-        <MetricCard label="مدارک" value={summary?.total ?? documents.length} hint={`${summary?.withFile ?? documents.filter((d) => d.file).length} فایل ذخیره‌شده`} />
-        <MetricCard
-          label="نیازمند توجه"
-          value={(summary?.expiring.length ?? 0) + (summary?.expired.length ?? 0)}
-          tone={(summary?.expired.length ?? 0) > 0 ? 'warn' : (summary?.expiring.length ?? 0) > 0 ? 'warn' : 'ok'}
-          hint={(summary?.expired.length ?? 0) > 0 ? 'مدرک منقضی دارید' : (summary?.expiring.length ?? 0) > 0 ? 'نزدیک انقضا' : 'همه معتبر'}
-        />
-      </div>
+      <TabBar tabs={TABS} active={tab} />
 
-      {/* ------------------------------ sections ------------------------------ */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="label" style={{ marginBottom: 10 }}>
-          بخش‌های زندهٔ پروفایل — هر بخش نسخه‌دار است و سطح دسترسی خودش را دارد
+      {/* ------------------------------------------------------------ overview */}
+      {tab === 'overview' && (
+        <div className="prof-grid">
+          <section className="card prof-panel">
+            <h2 className="prof-h">نیازمند توجه شما</h2>
+            <AttentionList
+              items={needsAttention}
+              missingSections={comp.missing}
+              storageConfigured={storage.configured}
+              storageReason={storage.reason}
+            />
+          </section>
+
+          <section className="card prof-panel">
+            <h2 className="prof-h">آخرین تغییرات</h2>
+            {history.length === 0
+              ? <EmptyState icon="◌" title="هنوز تغییری ثبت نشده" hint="هر ویرایش پروفایل یا مدرک اینجا ثبت می‌شود." />
+              : <HistoryTimeline records={history.slice(0, 6)} compact />}
+            {history.length > 6 && (
+              <Link href="/me/profile?tab=history" className="prof-more">دیدن همهٔ سوابق ({history.length})</Link>
+            )}
+          </section>
         </div>
-        {sections.length === 0 ? (
-          <EmptyState icon="·" title="پروفایل خالی است" hint="با «ویرایش» یک بخش بسازید — مثلاً هویت یا تماس." />
-        ) : (
-          <table>
-            <thead><tr><th>بخش</th><th>محتوا</th><th>دسترسی</th><th>نسخه</th><th>به‌روزرسانی</th><th /></tr></thead>
-            <tbody>
-              {sections.map(([name, sec]) => (
-                <tr key={name}>
-                  <td><span className="badge">{SECTION_FA[name] ?? name}</span></td>
-                  <td className="m" {...bidiProps(JSON.stringify(sec.data))}>
-                    {Object.entries(sec.data).slice(0, 4).map(([k, v]) => `${k}: ${String(v)}`).join(' · ') || '—'}
-                  </td>
-                  <td className="m">{VIS_FA[sec.visibility] ?? sec.visibility}</td>
-                  <td className="m" dir="ltr">v{sec.version}</td>
-                  <td className="m" dir="ltr">{String(sec.updatedAt).slice(0, 10)}</td>
-                  <td><SectionEditor entityId={entity.entityId} section={name} initial={sec.data} visibility={sec.visibility} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {missing.length > 0 && (
-          <p className="m" style={{ marginTop: 10, fontSize: 11.5 }} dir="rtl">
-            بخش‌های پیشنهادی که هنوز پر نشده‌اند: {missing.map((s) => SECTION_FA[s] ?? s).join('، ')}
-            {' '}— هرکدام را با ویرایش یک بخش موجود یا از طریق جارویس اضافه کنید.
-          </p>
-        )}
-      </div>
+      )}
 
-      {/* ------------------------------ documents ----------------------------- */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="label" style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span>مدارک و اسناد</span>
-          <span style={{ marginInlineStart: 'auto' }}><AddDocument ownerEntityId={entity.entityId} /></span>
-        </div>
-        {!storage.configured && (
-          <p className="m" style={{ fontSize: 11.5, marginBottom: 8 }} dir="rtl">
-            ثبت مدرک کامل کار می‌کند؛ اما پیوست فایل فعلاً غیرفعال است — {storage.reason || 'فضای ذخیره‌سازی S3 تنظیم نشده'}.
+      {/* ---------------------------------------------------------------- info */}
+      {tab === 'info' && (
+        <>
+          <p className="prof-lead">
+            هر بخش جداگانه نسخه‌گذاری می‌شود و سطح دسترسی مستقل خودش را دارد — یعنی می‌توانید
+            مهارت‌هایتان را با شبکه به اشتراک بگذارید و اطلاعات مالی را کاملاً خصوصی نگه دارید.
           </p>
-        )}
-        {documents.length === 0 ? (
-          <EmptyState icon="·" title="مدرکی ثبت نشده" hint="پاسپورت، مدرک تحصیلی، قرارداد… حتی بدون فایل، تاریخ انقضا برایتان پایش می‌شود." />
-        ) : (
-          <table>
-            <thead><tr><th>عنوان</th><th>نوع</th><th>صادرکننده</th><th>انقضا</th><th>وضعیت</th><th>فایل</th><th /></tr></thead>
-            <tbody>
-              {documents.map((d) => (
-                <tr key={String(d.docId)}>
-                  <td {...bidiProps(String(d.title))}>{String(d.title)}</td>
-                  <td className="m">{DOC_TYPE_FA[String(d.docType)] ?? String(d.docType)}</td>
-                  <td className="m" {...bidiProps(String(d.issuer ?? ''))}>{String(d.issuer || '—')}</td>
-                  <td className="m" dir="ltr">{d.expiresAt ? String(d.expiresAt).slice(0, 10) : '—'}</td>
-                  <td>
-                    <span className={`badge${d.status === 'expired' ? ' err' : d.status === 'expiring' ? ' warn' : ''}`}>
-                      {STATUS_FA[String(d.status)] ?? String(d.status)}
-                    </span>
-                  </td>
-                  <td className="m">{d.file ? 'دارد' : '—'}</td>
-                  <td><DocumentControls docId={String(d.docId)} hasFile={Boolean(d.file)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+          <div className="prof-sections">
+            {sections.map(([name, sec]) => (
+              <SectionCard key={name} entityId={entity.entityId} name={name} section={sec} />
+            ))}
+            {comp.missing.map((name) => (
+              <SectionCard
+                key={name}
+                entityId={entity.entityId}
+                name={name}
+                section={null}
+                purpose={SECTION_PURPOSE[name] ?? `بخش «${SECTION_LABEL[name] ?? name}» هنوز پر نشده است.`}
+              />
+            ))}
+          </div>
+          {sections.length === 0 && comp.missing.length === CORE_SECTIONS.length && (
+            <p className="prof-lead">با «افزودن» روی یکی از کارت‌های بالا شروع کنید — مثلاً هویت یا راه‌های تماس.</p>
+          )}
+        </>
+      )}
 
-      {/* -------------------------------- claims ------------------------------ */}
-      <div className="grid cols-2" style={{ gap: 16, marginBottom: 16 }}>
-        <div className="card">
-          <div className="label" style={{ marginBottom: 8 }}>ادعاهای امضاشده دربارهٔ من</div>
+      {/* ----------------------------------------------------------- documents */}
+      {tab === 'documents' && (
+        <>
+          <div className="prof-toolbar">
+            <p className="prof-lead" style={{ margin: 0 }}>
+              مدرک اول یک «رکورد» است و بعد یک «فایل». حتی بدون اسکن، تاریخ انقضا برای شما پایش می‌شود.
+            </p>
+            <AddDocument ownerEntityId={entity.entityId} />
+          </div>
+
+          {!storage.configured && (
+            <div className="prof-note">
+              ثبت مدرک کامل کار می‌کند؛ پیوست فایل فعلاً غیرفعال است — {storage.reason || 'فضای ذخیره‌سازی S3 تنظیم نشده'}.
+            </div>
+          )}
+
+          {liveDocs.length === 0 ? (
+            <EmptyState icon="◌" title="مدرکی ثبت نشده" hint="پاسپورت، مدرک تحصیلی، قرارداد… با «ثبت مدرک» شروع کنید." />
+          ) : (
+            <div className="prof-docs">
+              {withExpiry.map(({ doc, deadline }) => (
+                <DocumentCard key={String(doc.docId)} doc={doc} deadline={deadline} />
+              ))}
+            </div>
+          )}
+
+          {documents.length > liveDocs.length && (
+            <details className="prof-arch">
+              <summary>مدارک بایگانی‌شده ({documents.length - liveDocs.length})</summary>
+              <div className="prof-docs" style={{ marginTop: 10 }}>
+                {documents.filter((d) => d.status === 'archived').map((doc) => (
+                  <DocumentCard key={String(doc.docId)} doc={doc} deadline={expiryPhrase(doc.expiresAt as string | null, 'archived')} />
+                ))}
+              </div>
+            </details>
+          )}
+        </>
+      )}
+
+      {/* -------------------------------------------------------- attestations */}
+      {tab === 'attestations' && (
+        <section className="card prof-panel">
+          <p className="prof-lead">
+            تأیید یعنی چیزی که یک نهاد دربارهٔ شما امضا کرده و طرف مقابل می‌تواند بدون دیدن اصل مدرک
+            راستی‌آزمایی کند — این همان چیزی است که پروفایل را از یک فرم پرشده جدا می‌کند.
+          </p>
           {claims.length === 0 ? (
-            <EmptyState icon="·" title="هنوز ادعایی نیست" hint="ادعا یعنی چیزی که یک نهاد دربارهٔ شما امضا کرده و طرف مقابل می‌تواند بدون دیدن مدرک راستی‌آزمایی کند." />
+            <EmptyState
+              icon="◌"
+              title="هنوز تأییدی صادر نشده"
+              hint="وقتی نهادی مدرک یا مهارت شما را امضا کند، اینجا ظاهر می‌شود."
+            />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
-              {claims.slice(0, 12).map((c) => (
-                <div key={String(c.claimId)} className="m" dir="rtl">
-                  <span className="badge" dir="ltr">{String(c.claimType)}</span>{' '}
-                  از <span dir="ltr">{String(c.issuerEntityId)}</span>
-                  {c.revokedAt ? ' — باطل‌شده' : ''}
-                </div>
-              ))}
+            <div className="prof-claims">
+              {claims.map((c) => <AttestationRow key={String(c.claimId)} claim={c} />)}
             </div>
           )}
-        </div>
+        </section>
+      )}
 
-        <div className="card">
-          <div className="label" style={{ marginBottom: 8 }}>سوابق — تاریخچهٔ دستکاری‌ناپذیر</div>
-          {history.length === 0 ? (
-            <EmptyState icon="·" title="سابقه‌ای ثبت نشده" hint="هر تغییر در پروفایل یا مدارک شما اینجا با زنجیرهٔ هش ثبت می‌شود." />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, maxHeight: 260, overflow: 'auto' }}>
-              {history.map((r) => (
-                <div key={String(r.ledgerId)} className="m" dir="rtl">
-                  <span dir="ltr">[{String(r.at).slice(0, 16).replace('T', ' ')}]</span>{' '}
-                  <span className="badge" dir="ltr">{String(r.recordType)}</span>{' '}
-                  <span {...bidiProps(String(r.summary))}>{String(r.summary)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      {/* ------------------------------------------------------------- history */}
+      {tab === 'history' && (
+        <section className="card prof-panel">
+          <p className="prof-lead">
+            هر تغییر با زنجیرهٔ هش ثبت شده است؛ دستکاری گذشته بدون شکستن زنجیره ممکن نیست.
+          </p>
+          {history.length === 0
+            ? <EmptyState icon="◌" title="سابقه‌ای ثبت نشده" hint="هر ویرایش پروفایل یا مدرک شما اینجا ثبت می‌شود." />
+            : <HistoryTimeline records={history} />}
+        </section>
+      )}
 
-      <p className="m" style={{ fontSize: 12 }} dir="rtl">
-        این صفحه روی موجودیت CIN شما ساخته شده — همان هویتی که در{' '}
-        <Link href="/cin">شبکهٔ هوش جمعی</Link> می‌بینید. هیچ کپی موازی از اطلاعات شما وجود ندارد.
-      </p>
-    </>
+      <TechnicalDetails
+        entityId={entity.entityId}
+        entityType={entity.entityType ?? 'person'}
+        status={entity.status}
+        createdAt={entity.createdAt}
+        sectionCount={sections.length}
+        publicKey={me?.publicKey ?? null}
+        storage={storage}
+      />
+    </div>
   );
 }

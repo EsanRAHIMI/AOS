@@ -2,6 +2,50 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — The profile stops being a database browser (D-187)
+
+Owner's verdict on `/me/profile`: complicated, unprofessional, confusing. It
+was — and the cause was structural, not cosmetic. The page rendered STORAGE
+SHAPES straight to the screen: a profile section became a table row whose
+"content" column read `passport_no: K123 · dob: 1990-04-11`, history read
+`document.created`, an attestation read a claim type and a raw entity id. The
+owner was being asked to decode their own identity.
+
+- **A presentation layer** (`present.ts`) now sits between records and screen:
+  field labels, ledger record types → Persian sentences, claim types →
+  sentences, visibility → plain words, and values classified so a date renders
+  as a date and an email as a link. Unknown keys are *humanised, never hidden* —
+  the CIN graph is designed to grow shapes we have not seen, and a profile that
+  silently drops a field it does not recognise is worse than an ugly one.
+- **Five tabs (`?tab=`), each with one job** — نمای کلی / اطلاعات من / مدارک /
+  تأییدها / سوابق. Tab state is URL state, not client state: linkable,
+  refresh-safe, server-rendered, no client store. The page never dumps
+  everything at once and stays readable as sections and documents multiply.
+- **One identity header** answers who am I / is anything wrong / how complete am
+  I. The three counters are LINKS into the tab that fixes them — a number the
+  owner cannot act on is decoration. Completeness names the next section rather
+  than only scoring.
+- **The overview is an attention list**, not a metrics wall: expired and
+  expiring documents (most urgent first), unfilled core sections, and disabled
+  file storage — each row linking to where it is resolved. When there is nothing
+  wrong it says so plainly instead of manufacturing activity.
+- **Deadlines are the product.** `expiryPhrase` says «۱۲ روز تا انقضا», not
+  `expiring`. `daysUntil` **floors** rather than rounds: with 5.5 days left,
+  "۵ روز" is a fair warning and "۶ روز" is a small lie in the dangerous
+  direction. (The render test caught the original `ceil`; the code changed, not
+  the test.)
+- **Technical truth stays, but stops leading.** Entity ids, section versions,
+  signing key, ledger record types and the exact Atlas collections live in a
+  collapsed «جزئیات فنی». Removing them would have made the system quieter about
+  where the owner's data actually is, which is the wrong kind of clean.
+
+Verification: 17 presentation tests + 14 **render** tests that put real markup
+through `react-dom/server` — including an object-valued field (no
+`[object Object]`), a document with no issuer/file/expiry, and an unseen ledger
+record type. `vitest.config.ts` gained the `@/*` alias so tests import exactly
+what production imports, and a `server-only` stub (a build-time marker package;
+the real guarantee is still enforced by `next build`, which passes).
+
 ## 2026-07-30 — Storage that actually scales on Atlas: one index plan, DB-enforced invariants (D-186)
 
 Owner's instruction: data and tables must be stored, read and written
