@@ -8,15 +8,14 @@
  * inspection/correction, and honest offline/degraded status. Not a chat box —
  * the sessions and memory persist server-side and survive reloads.
  */
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
-  listSessionsAction, createSessionAction, getSessionAction, sendTurnAction,
-  decideApprovalAction, intelligenceStatusAction, listMemoriesAction,
+  listSessionsAction, createSessionAction, intelligenceStatusAction, listMemoriesAction,
   correctMemoryAction, pinMemoryAction, deleteMemoryAction,
   onboardingQuestionsAction, submitOnboardingAction, personalStateAction,
-  type JarvisSessionView, type JarvisTurnView, type OnboardingQuestion,
+  type JarvisSessionView, type OnboardingQuestion,
 } from './actions';
-import { RichText } from '@/components/RichText';
+import { JarvisConversation } from '@/components/JarvisConversation';
 import { dirProps } from '@/lib/rtl';
 
 type IntelStatus = Awaited<ReturnType<typeof intelligenceStatusAction>>;
@@ -38,11 +37,7 @@ function StatusPill({ intel }: { intel: IntelStatus | null }) {
 export default function JarvisWorkspace() {
   const [sessions, setSessions] = useState<JarvisSessionView[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [turns, setTurns] = useState<JarvisTurnView[]>([]);
-  const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [steps, setSteps] = useState<Array<{ kind: string; summary: string; toolName: string; ok: boolean }>>([]);
-  const [pending, setPending] = useState<{ approvalId: string; runId: string; toolName: string } | null>(null);
   const [intel, setIntel] = useState<IntelStatus | null>(null);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [tab, setTab] = useState<'chat' | 'memory'>('chat');
@@ -51,20 +46,14 @@ export default function JarvisWorkspace() {
   const [questions, setQuestions] = useState<OnboardingQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [onboardingDone, setOnboardingDone] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const refreshSessions = useCallback(async () => setSessions(await listSessionsAction()), []);
-  const loadSession = useCallback(async (id: string) => {
-    setActiveId(id);
-    const { turns: t } = await getSessionAction(id);
-    setTurns(t);
-    const last = t[t.length - 1];
-    setPending(last?.pendingApprovalId && last.runId ? { approvalId: last.pendingApprovalId, runId: last.runId, toolName: '' } : null);
-  }, []);
+  /* Selecting a session is all this page does now — JarvisConversation loads
+   * that session's real history itself, exactly as it does in the dock. */
+  const loadSession = useCallback(async (id: string) => { setActiveId(id); }, []);
 
   useEffect(() => { void refreshSessions(); void intelligenceStatusAction().then(setIntel); }, [refreshSessions]);
   useEffect(() => { if (!activeId && sessions.length) void loadSession(sessions[0].sessionId); }, [sessions, activeId, loadSession]);
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [turns, steps]);
   // Offer onboarding on first load when the owner has no personal state yet.
   useEffect(() => {
     void personalStateAction().then((s) => { if (s && s.empty) setOnboardingDone(false); else setOnboardingDone(true); });
@@ -84,57 +73,6 @@ export default function JarvisWorkspace() {
   async function newSession() {
     const id = await createSessionAction();
     if (id) { await refreshSessions(); await loadSession(id); }
-  }
-
-  async function send() {
-    const text = input.trim();
-    if (!text || busy) return;
-    let sessionId = activeId;
-    if (!sessionId) { sessionId = await createSessionAction(); if (!sessionId) return; await refreshSessions(); setActiveId(sessionId); }
-    setInput(''); setBusy(true); setSteps([]);
-    // optimistic user turn
-    setTurns((prev) => [...prev, { turnId: 'tmp', userText: text, replyText: '', status: 'running', reasoningMode: '', provider: '', costUsd: 0, pendingApprovalId: null, runId: null, createdAt: new Date().toISOString() }]);
-    try {
-      // Stream steps via SSE for live progress; fall back to the JSON result.
-      const res = await fetch(`/api/jarvis-stream?sessionId=${encodeURIComponent(sessionId)}`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }),
-      });
-      if (res.ok && res.body) {
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const chunks = buf.split('\n\n'); buf = chunks.pop() ?? '';
-          for (const c of chunks) {
-            const ev = /event: (.+)/.exec(c)?.[1]; const dm = /data: (.+)/.exec(c);
-            if (!ev || !dm) continue;
-            const data = JSON.parse(dm[1]);
-            if (ev === 'loop.step') setSteps((s) => [...s, { kind: data.kind, summary: data.summary, toolName: data.toolName, ok: data.ok }]);
-            if (ev === 'turn.final') {
-              if (data.pendingApprovalId && data.runId) setPending({ approvalId: data.pendingApprovalId, runId: data.runId, toolName: '' });
-            }
-          }
-        }
-      } else {
-        await sendTurnAction(sessionId, text);
-      }
-    } catch { /* fall through to reload */ }
-    await loadSession(sessionId);
-    await refreshSessions();
-    void intelligenceStatusAction().then(setIntel);
-    setBusy(false); setSteps([]);
-  }
-
-  async function decide(action: 'approve' | 'reject') {
-    if (!pending) return;
-    setBusy(true);
-    await decideApprovalAction(pending.approvalId, pending.runId, action);
-    setPending(null);
-    if (activeId) await loadSession(activeId);
-    setBusy(false);
   }
 
   async function openMemory() {
@@ -174,8 +112,8 @@ export default function JarvisWorkspace() {
 
         {tab === 'chat' ? (
           <>
-            <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {turns.length === 0 && !showOnboarding && (
+            <div className="jstage-chat">
+              {showOnboarding === false && !onboardingDone && (
                 <div style={{ margin: 'auto', textAlign: 'center', opacity: 0.85, maxWidth: 460 }}>
                   <div style={{ fontSize: 40, marginBottom: 8, opacity: 0.6 }}>◍</div>
                   <p style={{ fontSize: 14, opacity: 0.7 }}>Jarvis remembers your goals, missions and decisions across sessions. Ask in Persian or English — it reads your real stored state and uses governed tools.</p>
@@ -204,53 +142,18 @@ export default function JarvisWorkspace() {
                   </div>
                 </div>
               )}
-              {turns.map((t, i) => (
-                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div {...dirProps(t.userText)} style={{ alignSelf: 'flex-end', maxWidth: '80%', background: 'rgba(89,194,255,0.14)', padding: '9px 13px', borderRadius: 14, borderTopRightRadius: 4, whiteSpace: 'pre-wrap' }}>{t.userText}</div>
-                  {(t.replyText || t.status === 'completed') && (
-                    <div style={{ alignSelf: 'flex-start', maxWidth: '85%', background: 'rgba(255,255,255,0.045)', padding: '10px 14px', borderRadius: 14, borderTopLeftRadius: 4 }}>
-                      {/* D-189 — same structured renderer as the dock, so one
-                        * reply reads identically wherever it is opened. */}
-                      <RichText text={t.replyText} />
-                      <div style={{ marginTop: 6, fontSize: 11, opacity: 0.5, display: 'flex', gap: 10 }} data-no-auto-dir="">
-                        {t.reasoningMode === 'none' ? <span>⚠︎ degraded (no model)</span> : <span>{t.provider || 'model'}</span>}
-                        {t.costUsd > 0 && <span>${t.costUsd.toFixed(4)}</span>}
-                        {t.status === 'waiting_approval' && <span style={{ color: '#ffb020' }}>awaiting approval</span>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {busy && steps.map((s, i) => {
-                const summary = `${s.toolName ? `${s.toolName}: ` : ''}${s.summary}`;
-                return (
-                <div key={`step-${i}`} style={{ alignSelf: 'flex-start', fontSize: 12, opacity: 0.7, display: 'flex', gap: 8, alignItems: 'center', padding: '2px 8px' }}>
-                  <span style={{ color: s.ok ? '#4ade80' : '#ff6b81' }}>{s.kind === 'tool_execution' ? '⚙' : s.kind === 'approval_pause' ? '⏸' : '◆'}</span>
-                  <span {...dirProps(summary)}>{summary}</span>
-                </div>
-                );
-              })}
-              {busy && steps.length === 0 && <div style={{ alignSelf: 'flex-start', fontSize: 12, opacity: 0.6 }}>Jarvis is thinking…</div>}
-            </div>
-
-            {pending && (
-              <div style={{ margin: '0 16px 12px', padding: 14, borderRadius: 12, background: 'rgba(255,176,32,0.08)', border: '1px solid rgba(255,176,32,0.35)' }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>⏸ Approval required</div>
-                <p style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>Jarvis paused a sensitive action and needs your decision. The exact run will resume from where it stopped.</p>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn" disabled={busy} onClick={() => decide('approve')}>Approve & resume</button>
-                  <button className="btn ghost" disabled={busy} onClick={() => decide('reject')}>Reject</button>
-                </div>
-              </div>
-            )}
-
-            <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 8 }}>
-              <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
-                {...dirProps(input || 'در مورد هدف‌ها')}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
-                placeholder="در مورد هدف‌ها، تحقیق یا توسعهٔ سیستم بپرس…  /  Ask about goals, research or self-development…"
-                style={{ flex: 1, resize: 'none', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 12px', color: 'inherit', fontFamily: 'inherit' }} />
-              <button className="btn" disabled={busy || !input.trim()} onClick={send}>{busy ? '…' : 'Send'}</button>
+              {/* D-190 — the SAME conversation component the dock uses.
+                * This page used to re-implement the transcript, the streaming
+                * loop, the approval bar and the composer; two copies of one
+                * conversation drifted apart every time either changed. */}
+              <JarvisConversation
+                key={activeId ?? 'new'}
+                variant="page"
+                sessionId={activeId}
+                onTurnComplete={() => { void refreshSessions(); void intelligenceStatusAction().then(setIntel); }}
+                placeholder="در مورد هدف‌ها، تحقیق یا توسعهٔ سیستم بپرسید…"
+                emptyHint="هرچه لازم دارید بپرسید — به همهٔ سرویس‌ها، حافظه، مأموریت‌ها، هویت و حلقهٔ زنده دسترسی دارم."
+              />
             </div>
           </>
         ) : (

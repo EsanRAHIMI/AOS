@@ -2,6 +2,43 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — One Jarvis: a single conversation, centred, on every surface (D-190)
+
+Owner: these capabilities must exist on `/jarvis` too, the assistant must be
+present uniformly across all services with one history and one structure, and
+it should float in the centre of the screen.
+
+The reason `/jarvis` kept missing what the dock had was not neglect — it was
+that **there were two conversations**. `JarvisDock` and `JarvisWorkspace` each
+had their own message list, streaming loop, approval bar and composer. They
+shared the session list and the streaming route, so the DATA was unified while
+the BEHAVIOUR drifted: history loading landed in one (D-188), the structured
+renderer in one first (D-189), and the approval UI looked different in each.
+Two copies of a conversation is two products, and every fix had to be written
+twice or it silently applied to half the system.
+
+- **`JarvisConversation` is now the only implementation.** It owns session
+  resolution, real history loading, streaming with live tool steps, the
+  approval pause, and structured rendering. Surfaces differ by a `variant`
+  prop, which is a CSS concern — never a behavioural one.
+- **The dock is a shell**: trigger, priority preview, and a **centred** native
+  `<dialog>`. Centred rather than a corner panel because this is the primary
+  way the owner drives the system, not a support widget; and it opens *over*
+  the current page, so the page stays as context instead of being replaced.
+  The top layer also means no ancestor's overflow or stacking context can clip
+  it, and Esc/focus-trap/backdrop come from the platform.
+- **`/jarvis` hosts the same component** and kept only what is genuinely its
+  own: the session switcher, onboarding and the memory tab. Its duplicated
+  transcript, streaming loop, approval bar and composer were deleted rather
+  than left behind, along with the dock's superseded CSS — dead duplicates are
+  how this drift started.
+
+A structural test enforces the property: both surfaces must render
+`<JarvisConversation>`, and neither may call the streaming route,
+`sendTurnAction`, `decideApprovalAction` or `<RichText>` itself. Re-introducing
+a second copy fails the suite instead of quietly shipping. 98/98 dashboard
+tests, typecheck clean.
+
 ## 2026-07-30 — Assistant replies become structure, not a wall of prose (D-189)
 
 Owner: the answers look primitive and the surface looks like a throwaway
