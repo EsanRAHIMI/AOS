@@ -2,6 +2,33 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-25 — provider-scope defect: a strict context hook in a shared component (D-184.1)
+
+**Symptom:** `useUniverse() must be called within a UniverseProvider`, thrown
+during server rendering and forcing Next.js to fall back to client rendering.
+
+**Root cause (pre-existing, not the D-184 dock):** `UniverseProvider` is
+mounted by `app/page.tsx` alone, but `LiveEvents` — which calls the STRICT
+`useUniverse()` hook — is rendered on three routes: `/` (has the provider),
+`/events` and `/operations` (do not). On those two routes the hook threw and
+took the whole page down. `LiveEvents` already treated `liveState` as
+nullable everywhere, so the hook was the ONLY thing making the provider
+mandatory.
+
+- **Fix:** added `useOptionalUniverse()` (returns `null` instead of throwing)
+  alongside the strict `useUniverse()`, and switched `LiveEvents` to it.
+  Without a provider it now runs on its own SSE stream, which is exactly what
+  those pages need. `ActiveOperationsPanel` moved to the optional accessor
+  too — it renders nothing without a snapshot, so it must never be the reason
+  a route fails. This matches the existing `useOptionalRefresh` precedent.
+- **Scope rule, now written down:** the strict hook is for the homepage tree
+  only (`HomeLive`); anything reused elsewhere must take the optional one.
+- **Regression guard:** `test/universe-context.test.ts` reads the source and
+  fails if a non-allowlisted component reaches for the strict hook again, if
+  `LiveEvents` stops being provider-optional, or if the optional accessor ever
+  learns to throw. Verified the guard actually fails on a seeded violation
+  (not a vacuous pass). Dashboard suite: 14 tests green; typecheck clean.
+
 ## 2026-07-25 — ONE assistant: the operator console is removed, Jarvis goes system-wide (D-184)
 
 The dashboard shipped two chat surfaces with different engines: the globally

@@ -172,7 +172,7 @@ export function HomeLive({ session, ctx }: { session: { role: string } | null; c
           connection is also what drives cross-tab/background-completion
           block invalidation — one connection, two jobs, never a second
           EventSource. Phase AF.4.3 — `LiveEvents` now renders its own card
-          (grouped operation feed, reading live-state via `useUniverse()`
+          (grouped operation feed, reading live-state via the optional universe accessor
           directly) — no separate wrapper card here anymore, which also
           removes the previous duplicated "Live activity" heading. */}
       <LiveEvents />

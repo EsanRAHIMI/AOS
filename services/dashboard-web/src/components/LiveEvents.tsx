@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { blocksForEventType } from '@/lib/realtimeBlocks';
 import { mergeDedupedEvents } from '@/lib/eventDedupe';
 import { buildOperationFeed, type FeedEventInput, type OperationFeedItem } from '@/lib/operationFeed';
-import { invalidateBlocks, useUniverse } from './UniverseProvider';
+import { invalidateBlocks, useOptionalUniverse } from './UniverseProvider';
 import { summonJarvis } from './UniverseZone';
 import { RelativeTime } from './RelativeTime';
 
@@ -21,7 +21,8 @@ import { RelativeTime } from './RelativeTime';
  * per operation that gets patched, never duplicated.
  *
  * Data sources, combined:
- *  - `useUniverse().liveState` — the real, persisted snapshot (sessions,
+ *  - the optional universe snapshot (`useOptionalUniverse()?.liveState`) —
+ *    the real, persisted state (sessions,
  *    pending approvals, recent tasks, recent events), refreshed whenever
  *    any operator lifecycle event fires (the existing 'live-pulse' block
  *    invalidation from AF.4/AF.4.1 — unchanged).
@@ -36,7 +37,12 @@ import { RelativeTime } from './RelativeTime';
  * `PresenceBar`.
  */
 export function LiveEvents() {
-  const { liveState } = useUniverse();
+  // Shared component: rendered on `/` (inside UniverseProvider) but also on
+  // `/events` and `/operations`, which have no provider. The optional
+  // accessor is what makes that legal — without a provider there is simply no
+  // server-seeded snapshot and the feed runs on its own SSE stream alone,
+  // which is exactly what those pages need (D-184.1).
+  const liveState = useOptionalUniverse()?.liveState ?? null;
   const [connected, setConnected] = useState(false);
   const [liveEvents, setLiveEvents] = useState<FeedEventInput[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { useUniverse } from './UniverseProvider';
+import { useOptionalUniverse } from './UniverseProvider';
 import { summonJarvis } from './UniverseZone';
 import { dirProps } from '@/lib/rtl';
 
@@ -25,7 +25,9 @@ import { dirProps } from '@/lib/rtl';
  * navigating back, or on the next 'live-pulse' refresh).
  */
 export function ActiveOperationsPanel() {
-  const { liveState } = useUniverse();
+  // Optional by policy: this panel already renders nothing without a
+  // snapshot, so it must never be the reason a route fails to render.
+  const liveState = useOptionalUniverse()?.liveState ?? null;
   const [dismissed, setDismissed] = useState(false);
 
   if (!liveState || dismissed) return null;

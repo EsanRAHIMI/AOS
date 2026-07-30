@@ -113,10 +113,29 @@ export function UniverseProvider({ initialUniverse, initialBriefing, initialLive
   return <UniverseContext.Provider value={value}>{children}</UniverseContext.Provider>;
 }
 
+/**
+ * STRICT accessor — throws when there is no provider.
+ *
+ * Use it ONLY in components that exist exclusively inside the homepage tree
+ * (`HomeLive` and its private children). Any component that is — or might one
+ * day be — reused on another route must use `useOptionalUniverse()` instead:
+ * `UniverseProvider` is mounted by `app/page.tsx` alone, so a strict hook in a
+ * shared component takes the whole route down with a render error (this is
+ * exactly what broke `/events` and `/operations`, D-184.1).
+ */
 export function useUniverse(): UniverseContextValue {
   const ctx = useContext(UniverseContext);
   if (!ctx) throw new Error('useUniverse() must be called within a UniverseProvider');
   return ctx;
+}
+
+/**
+ * SAFE accessor for shared components — returns `null` outside a provider
+ * instead of throwing. The caller then degrades honestly: no server-seeded
+ * snapshot, just whatever live source it has of its own.
+ */
+export function useOptionalUniverse(): UniverseContextValue | null {
+  return useContext(UniverseContext);
 }
 
 /** Safe outside a provider (e.g. `DecisionButtons` is also reused at plain
