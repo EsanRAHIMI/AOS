@@ -1149,3 +1149,24 @@ button { font: inherit; }
   .prof-form { grid-template-columns: 1fr; gap: 6px; }
   .prof-form label { margin-top: 6px; }
 }
+
+.prof-more-sections { margin-top: 20px; }
+.prof-more-sections > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.prof-more-sections > summary:hover { color: var(--text); }
+/* Textareas inside the editor share the input styling. */
+.prof-fedit textarea {
+  width: 100%; min-width: 0; box-sizing: border-box; resize: vertical;
+  padding: 8px 11px; border-radius: 9px; font-size: 13px; font-family: inherit; line-height: 1.7;
+  border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.04);
+  color: var(--text); unicode-bidi: plaintext; text-align: start;
+}
+.prof-fedit select {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  padding: 8px 11px; border-radius: 9px; font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.04);
+  color: var(--text); text-align: start;
+}
+.prof-fedit select option { background: #0d1220; }
+.prof-fedit textarea:focus, .prof-fedit select:focus {
+  outline: none; border-color: rgba(110, 168, 255, 0.55); background: rgba(110, 168, 255, 0.06);
+}

@@ -3,7 +3,7 @@ import { SectionEditor, DocumentControls } from './controls';
 import { bidiProps } from '@/lib/rtl';
 import {
   SECTION_LABEL, SECTION_PURPOSE, VISIBILITY_LABEL, VISIBILITY_HINT, DOC_TYPE_LABEL,
-  fieldLabel, formatValue, valueKind, recordSentence, recordGroup, whenPhrase,
+  fieldLabel, formatFieldValue, valueKind, recordSentence, recordGroup, whenPhrase,
   claimSentence, type Deadline,
 } from './present';
 
@@ -20,8 +20,9 @@ import {
 
 /** One field of a profile section, rendered according to what it actually is. */
 function Field({ name, value }: { name: string; value: unknown }) {
-  const kind = valueKind(value);
-  const text = formatValue(value);
+  const kind = valueKind(value, name);
+  // Enum ids resolve to their Persian label here; storage keeps the id.
+  const text = formatFieldValue(name, value);
   // The LABEL's language is data-dependent too: a curated key gives Persian,
   // an unknown key falls back to a humanised English string.
   const label = fieldLabel(name);

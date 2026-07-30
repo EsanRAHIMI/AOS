@@ -2,6 +2,46 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — A field catalogue that survives real paperwork (D-187e)
+
+Owner: the identity and personal fields are not complete or practical in the
+real world. Correct — the previous list (`full_name`, `national_id`,
+`birth_date`, `gender`…) was a demo schema. Everything is now driven by a
+typed catalogue, `FIELD_SPEC`, with three decisions behind it:
+
+- **Persian and Latin names are different data, not a formatting choice.**
+  Every visa form, bank and airline needs the passport transliteration; every
+  Iranian document needs the Persian original. Storing one and hoping is how a
+  name ends up mismatched across applications, which is expensive to unwind.
+  Hence `full_name_fa` + `full_name_en` (the latter always ltr, with a hint to
+  copy the passport spelling exactly).
+- **Iranian identity paperwork is more than a national id**: `father_name`,
+  `mother_name`, `id_card_number` (شماره شناسنامه, distinct from کد ملی),
+  `id_card_issue_place`, `birth_date_jalali`, `military_status`, `blood_type`.
+- **A date the owner can miss is a first-class field**, so `residency` exists
+  as a section at all: permit and visa expiry, entry date, tax residency, case
+  number. Same for `test_expires` (language scores expire) and
+  `insurance_expires`. These are the dates that cost the most when missed.
+  New sections: `residency`, `languages`; every other section expanded.
+- **`type` drives both the editor control and the display.** An enum renders a
+  `<select>` and stores a stable id (`male`) while showing Persian (`مرد`) — a
+  translated word in storage is a value the system cannot read back. A date
+  renders a date picker, because a hand-typed date is the most common way an
+  expiry watch silently stops working.
+
+One real bug fixed on the way: the editor coerced anything numeric-looking into
+a number, so a national id of `0012345678` lost its leading zeros on save — and
+an IBAN or phone could too. Only a field DECLARED numeric is stored as a
+number now. Digits are not quantities, and identity data is mostly digits.
+
+Sections beyond the core six are OFFERED behind «بخش‌های بیشتر» and do not count
+against completeness: an empty `health_ref` should be a choice, not a debt.
+
+13 new tests, including catalogue-integrity ones that fail if a section ever
+offers a key with no spec, if a select ships without options, or if a section
+is added without a label and a purpose. 72/72 dashboard tests, typecheck and
+`next build` pass.
+
 ## 2026-07-30 — Section editing moves out of the card and into a dialog (D-187d)
 
 Owner, with a screenshot: pressing «ویرایش» opened the form *inside* the card,

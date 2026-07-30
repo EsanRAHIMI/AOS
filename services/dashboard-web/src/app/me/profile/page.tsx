@@ -5,7 +5,7 @@ import { AddDocument } from './controls';
 import { IdentityHeader, TabBar, TechnicalDetails } from './shell';
 import { SectionCard, DocumentCard, AttestationRow, HistoryTimeline, AttentionList } from './views';
 import {
-  SECTION_LABEL, SECTION_PURPOSE, completeness, expiryPhrase, CORE_SECTIONS,
+  SECTION_LABEL, SECTION_PURPOSE, SECTION_FIELDS, completeness, expiryPhrase, CORE_SECTIONS,
 } from './present';
 
 export const dynamic = 'force-dynamic';
@@ -92,6 +92,10 @@ export default async function OwnerProfilePage({ searchParams }: { searchParams:
 
   const activeClaims = claims.filter((c) => !c.revokedAt);
 
+  // Catalogue sections the owner has neither filled nor been prompted for.
+  const optionalSections = Object.keys(SECTION_FIELDS)
+    .filter((name) => !entity.sections?.[name] && !comp.missing.includes(name));
+
   return (
     /* The page's own language is Persian, so the SHELL is rtl and every label,
      * heading and layout axis follows from that. Individual content nodes then
@@ -159,6 +163,27 @@ export default async function OwnerProfilePage({ searchParams }: { searchParams:
               />
             ))}
           </div>
+
+          {/* Beyond the core six, the rest of the catalogue is offered rather
+            * than pushed: these are the sections a real life actually needs
+            * (residency, languages, health, legal…), but none of them counts
+            * against completeness, so an empty one is a choice, not a debt. */}
+          {optionalSections.length > 0 && (
+            <details className="prof-more-sections">
+              <summary>بخش‌های بیشتر ({optionalSections.length})</summary>
+              <div className="prof-sections" style={{ marginTop: 12 }}>
+                {optionalSections.map((name) => (
+                  <SectionCard
+                    key={name}
+                    entityId={entity.entityId}
+                    name={name}
+                    section={null}
+                    purpose={SECTION_PURPOSE[name] ?? `بخش «${SECTION_LABEL[name] ?? name}» هنوز پر نشده است.`}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
           {sections.length === 0 && comp.missing.length === CORE_SECTIONS.length && (
             <p className="prof-lead">با «افزودن» روی یکی از کارت‌های بالا شروع کنید — مثلاً هویت یا راه‌های تماس.</p>
           )}

@@ -23,7 +23,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { saveSectionAction, createDocumentAction, archiveDocumentAction, documentUrlAction } from './actions';
 import { bidiProps } from '@/lib/rtl';
-import { SECTION_LABEL, SECTION_FIELDS, fieldLabel } from './present';
+import { SECTION_LABEL, SECTION_FIELDS, fieldLabel, fieldSpec } from './present';
 
 type Row = { k: string; v: string };
 
@@ -84,6 +84,55 @@ function Modal({
   );
 }
 
+/* ------------------------------------------------------------ value control */
+
+/**
+ * The control follows the field's declared TYPE (D-187e): a date gets a date
+ * picker, an enum gets a select, a long value gets a textarea. This is not
+ * decoration — free text for `gender` or `residency_status` produces values the
+ * system cannot read back, and a hand-typed date is the single most common way
+ * an expiry watch silently stops working.
+ *
+ * A key the owner invented has no spec, so it stays a plain direction-aware
+ * text box: unknown fields must still be editable, just not second-guessed.
+ */
+function ValueInput({
+  id, fieldKey, value, onChange,
+}: {
+  id: string;
+  fieldKey: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const spec = fieldSpec(fieldKey);
+  const common = { id, value, onChange: (e: { target: { value: string } }) => onChange(e.target.value) };
+
+  if (spec?.type === 'select' && spec.options) {
+    return (
+      <select {...common}>
+        <option value="">— انتخاب کنید —</option>
+        {spec.options.map((o) => <option key={o.id} value={o.id}>{o.fa}</option>)}
+      </select>
+    );
+  }
+
+  if (spec?.type === 'longtext') {
+    return <textarea {...common} rows={3} {...bidiProps(value)} placeholder={spec.placeholder} />;
+  }
+
+  const type = spec?.type === 'date' ? 'date'
+    : spec?.type === 'number' ? 'number'
+      : spec?.type === 'email' ? 'email'
+        : spec?.type === 'url' ? 'url'
+          : spec?.type === 'phone' ? 'tel'
+            : 'text';
+
+  // Dates and machine identifiers are always ltr; prose follows its own script.
+  const dir = spec?.ltr || spec?.type === 'date' || spec?.type === 'number' ? { dir: 'ltr' as const } : bidiProps(value);
+
+  return <input {...common} type={type} placeholder={spec?.placeholder ?? 'مقدار'} {...dir} />;
+}
+
 /* ----------------------------------------------------------- section editor */
 
 export function SectionEditor({
@@ -124,10 +173,16 @@ export function SectionEditor({
     for (const r of rows) {
       const key = r.k.trim();
       if (!key) continue;
-      // Keep numbers and booleans typed; everything else stays a string.
       const raw = r.v.trim();
-      data[key] = raw === 'true' ? true : raw === 'false' ? false
-        : raw !== '' && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+      const spec = fieldSpec(key);
+      /* Only a field DECLARED numeric is stored as a number. The previous
+       * "looks like a number → make it one" rule quietly corrupted real
+       * identifiers: a national id of 0012345678 lost its leading zeros, and
+       * an IBAN or phone number could too. Digits are not the same thing as
+       * quantities, and identity data is mostly the former. */
+      data[key] = spec?.type === 'number' && raw !== '' && !Number.isNaN(Number(raw))
+        ? Number(raw)
+        : raw;
     }
     const res = await saveSectionAction(entityId, section, data, vis);
     setBusy(false);
@@ -176,19 +231,18 @@ export function SectionEditor({
                   onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))}
                 />
                 {/* The owner sees now, not after saving, how this row will read. */}
-                <span className="prof-fedit-as" {...bidiProps(r.k ? fieldLabel(r.k) : '')}>
-                  {r.k ? `نمایش: ${fieldLabel(r.k)}` : ''}
+                <span className="prof-fedit-as" {...bidiProps(r.k ? (fieldSpec(r.k)?.hint ?? fieldLabel(r.k)) : '')}>
+                  {r.k ? (fieldSpec(r.k)?.hint ?? `نمایش: ${fieldLabel(r.k)}`) : ''}
                 </span>
               </div>
 
               <div className="prof-fedit-val">
                 <label htmlFor={`${uid}-v-${i}`}>مقدار</label>
-                <input
+                <ValueInput
                   id={`${uid}-v-${i}`}
+                  fieldKey={r.k}
                   value={r.v}
-                  placeholder="مقدار"
-                  {...bidiProps(r.v)}
-                  onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)))}
+                  onChange={(v) => setRows(rows.map((x, j) => (j === i ? { ...x, v } : x)))}
                 />
               </div>
 
