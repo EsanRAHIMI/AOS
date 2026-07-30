@@ -14,7 +14,7 @@ import { genId, nowIso } from '../utils/index.js';
 import { IsoDate } from '../schemas/common.js';
 import { ScopeFieldsSchema } from '../schemas/scope.js';
 import { sha256 } from '../research/providers.js';
-import { assessMissionHealth, buildMissionContext, type MissionActor } from '../missions/index.js';
+import { assessMissionHealth, buildMissionContext, computeNextAction, type MissionActor } from '../missions/index.js';
 
 export const WatchKind = z.enum([
   'daily_briefing', 'mission_review', 'overdue_commitments', 'stale_goals',
@@ -118,6 +118,18 @@ export interface OwnerBriefing {
   recentResearch: string[];
   selfDevProposals: string[];
   language: 'fa' | 'en';
+  /** D-178b — the ONE thing to start next, with a deep link that opens Jarvis
+   *  already scoped to it. A briefing that lists ten priorities and no first
+   *  step is a report; this makes it an instruction. */
+  nextAction: {
+    nodeId: string;
+    title: string;
+    /** Vision → … → task: why this is the right next thing. */
+    chain: string;
+    reason: string;
+    /** Deep link into the assistant, pre-scoped to this mission node. */
+    continueInJarvis: string;
+  } | null;
   /** True when EVERY section is empty — honestly "nothing to report" instead
    *  of manufacturing content. */
   empty: boolean;
@@ -132,6 +144,14 @@ export interface OwnerBriefing {
 export async function buildOwnerBriefing(missionActor: MissionActor, input: OwnerBriefingInput, language: 'fa' | 'en' = 'fa'): Promise<OwnerBriefing> {
   const health = await assessMissionHealth(missionActor);
   const missionCtx = await buildMissionContext(missionActor, { limit: 8 });
+  const next = await computeNextAction(missionActor);
+  const nextAction = next ? {
+    nodeId: next.node.nodeId,
+    title: next.node.title,
+    chain: next.chain,
+    reason: next.reason,
+    continueInJarvis: `/jarvis?missionNodeId=${encodeURIComponent(next.node.nodeId)}`,
+  } : null;
   const priorities = missionCtx.lines.slice(0, 5);
   const overdue = [...input.overdueTasks, ...health.overdue.map((n) => `${n.title} (due ${n.dueAt?.slice(0, 10) ?? '?'})`)];
   const risks = health.blocked.map((n) => `Blocked: ${n.title}${n.blockedReason ? ` — ${n.blockedReason}` : ''}`);
@@ -139,11 +159,14 @@ export async function buildOwnerBriefing(missionActor: MissionActor, input: Owne
   const empty = !priorities.length && !overdue.length && !input.pendingApprovals.length && !decisionsNeeded.length && !risks.length && !input.recentResearch.length && !input.selfDevProposals.length;
   const headline = empty
     ? (language === 'fa' ? 'امروز موردی برای گزارش نیست — هیچ کار عقب‌افتاده، تصمیم باز یا مأموریت فعالی ثبت نشده.' : 'Nothing to report today — no overdue work, open decisions or active missions recorded.')
-    : (language === 'fa' ? `اولویت‌های امروز شما (${priorities.length}) و ${overdue.length} مورد عقب‌افتاده.` : `Your ${priorities.length} priorities today, ${overdue.length} overdue.`);
+    : (language === 'fa'
+      ? `اولویت‌های امروز شما (${priorities.length}) و ${overdue.length} مورد عقب‌افتاده.${nextAction ? ` قدم بعدی: ${nextAction.title}.` : ''}`
+      : `Your ${priorities.length} priorities today, ${overdue.length} overdue.${nextAction ? ` Next: ${nextAction.title}.` : ''}`);
   return {
     generatedAt: nowIso(), headline, priorities, overdue,
     activeMissions: missionCtx.lines, decisionsNeeded: [...decisionsNeeded, ...input.pendingApprovals.map((a) => `Approval pending: ${a}`)],
-    risks, opportunities: [], recentResearch: input.recentResearch, selfDevProposals: input.selfDevProposals, language, empty,
+    risks, opportunities: [], recentResearch: input.recentResearch, selfDevProposals: input.selfDevProposals,
+    nextAction, language, empty,
   };
 }
 

@@ -34,6 +34,8 @@ export function getDb(): Db {
   return db;
 }
 
+export * from './indexes.js';
+
 /** Typed collection accessor keyed by the canonical COLLECTIONS names. */
 export function collection<T extends Document = Document>(name: CollectionName): Collection<T> {
   return getDb().collection<T>(name);

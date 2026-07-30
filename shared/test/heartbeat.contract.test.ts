@@ -10,7 +10,7 @@ import { createFakeDb } from './helpers/fake-db.js';
 import { COLLECTIONS } from '../src/constants/index.js';
 import { createMissionNode, type MissionActor } from '../src/missions/index.js';
 import { createWatch, fireWatch, type WatchActor } from '../src/watches/index.js';
-import { appendLedger } from '../src/cin/index.js';
+import { appendLedger, createEntity, createDocument } from '../src/cin/index.js';
 import {
   runHeartbeatOnce, listProactiveEvents, setProactiveEventStatus, lastHeartbeat,
   type HeartbeatActor,
@@ -85,6 +85,34 @@ describe('heartbeat pulse', () => {
     const alert = created.find((e) => e.kind === 'trust_chain_broken');
     expect(alert).toBeDefined();
     expect(alert!.priority).toBe('critical');
+  });
+
+  it('warns before a document expires, and escalates once it has (D-186)', async () => {
+    const owner = (await createEntity(
+      { actorId: 'esan', scope: 'user', tenantId: null },
+      { entityType: 'person', name: 'Owner', tags: ['owner'] },
+    )).entity;
+    const soon = new Date(Date.now() + 12 * 86_400_000).toISOString();
+    const gone = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    await createDocument({ actorId: 'esan' }, { ownerEntityId: owner.entityId, title: 'پاسپورت', docType: 'identity', expiresAt: soon });
+    await createDocument({ actorId: 'esan' }, { ownerEntityId: owner.entityId, title: 'قرارداد', docType: 'contract', expiresAt: gone });
+    await createDocument({ actorId: 'esan' }, { ownerEntityId: owner.entityId, title: 'گواهی', docType: 'education', expiresAt: new Date(Date.now() + 900 * 86_400_000).toISOString() });
+
+    const { run, created } = await runHeartbeatOnce(actor);
+    expect(run.checks).toContain('documents');
+
+    const expiring = created.find((e) => e.kind === 'document_expiring');
+    const expired = created.find((e) => e.kind === 'document_expired');
+    expect(expiring?.title).toContain('پاسپورت');
+    expect(expiring?.priority).toBe('critical');      // <= 14 days
+    expect(expired?.title).toContain('قرارداد');
+    expect(expired?.priority).toBe('critical');
+    // The document far in the future must NOT produce noise.
+    expect(created.filter((e) => e.kind.startsWith('document_'))).toHaveLength(2);
+
+    // Deduped across pulses, exactly like every other finding.
+    const again = await runHeartbeatOnce(actor);
+    expect(again.created.filter((e) => e.kind.startsWith('document_'))).toHaveLength(0);
   });
 
   it('streams via cursor: listProactiveEvents(afterIso) returns only newer events', async () => {

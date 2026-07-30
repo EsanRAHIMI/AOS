@@ -228,6 +228,70 @@ export async function assessMissionHealth(actor: MissionActor, opts: { stalledAf
   return { overdue, reviewDue, stalled, blocked };
 }
 
+/**
+ * D-178b — THE next action: the single highest-priority thing the owner (or an
+ * agent) can actually start right now, plus the chain that explains why it
+ * matters.
+ *
+ * "Actionable" is deliberately strict, because a next action that turns out to
+ * be un-startable is worse than none:
+ *   - it is a task/action leaf (visions and programs are not startable work),
+ *   - it is not blocked, and
+ *   - every dependency it declares is completed/cancelled.
+ * Doability outranks priority — a doable normal task beats a blocked critical
+ * one, since the critical one cannot be worked on at all.
+ */
+export interface NextAction {
+  node: MissionNode;
+  /** Vision → Objective → … → this task. The "why", not just the "what". */
+  chain: string;
+  /** Plain-language justification for the ranking, shown to the owner. */
+  reason: string;
+}
+
+const PRIORITY_RANK: Record<MissionNode['priority'], number> = { low: 0, normal: 1, high: 2, critical: 3 };
+
+export async function computeNextAction(actor: MissionActor): Promise<NextAction | null> {
+  // One bounded read of the live tree: leaves to rank, ancestors to explain.
+  const live = await listMissionNodes(actor, { statuses: ['active', 'blocked', 'stalled', 'draft'], limit: 400 });
+  const byId = new Map(live.map((n) => [n.nodeId, n]));
+  const leaves = live.filter((n) => (n.nodeType === 'task' || n.nodeType === 'action') && n.status !== 'completed' && n.status !== 'cancelled');
+  if (!leaves.length) return null;
+
+  /** A dependency only stops work if it is still open — and an unknown/pruned
+   *  dependency counts as open rather than silently vanishing. */
+  const depsSatisfied = (n: MissionNode): boolean => n.dependencies.every((id) => {
+    const dep = byId.get(id);
+    return dep ? dep.status === 'completed' || dep.status === 'cancelled' : false;
+  });
+
+  const scored = leaves.map((n) => {
+    const unblocked = n.status !== 'blocked';
+    const ready = unblocked && depsSatisfied(n);
+    return { n, ready, unblocked, rank: PRIORITY_RANK[n.priority] };
+  }).sort((a, b) =>
+    Number(b.ready) - Number(a.ready)
+    || b.rank - a.rank
+    || Date.parse(a.n.createdAt) - Date.parse(b.n.createdAt), // stable: oldest first
+  );
+
+  const top = scored[0];
+  if (!top) return null;
+
+  const parts = [top.n.title];
+  let cur = top.n.parentId ? byId.get(top.n.parentId) : undefined;
+  let hops = 0;
+  while (cur && hops < 6) { parts.unshift(cur.title); cur = cur.parentId ? byId.get(cur.parentId) : undefined; hops += 1; }
+
+  const reason = top.ready
+    ? `${top.n.priority} priority, unblocked, dependencies clear`
+    : top.unblocked
+      ? `${top.n.priority} priority, but waiting on ${top.n.dependencies.length} dependency/dependencies`
+      : `${top.n.priority} priority, currently blocked${top.n.blockedReason ? `: ${top.n.blockedReason}` : ''}`;
+
+  return { node: top.n, chain: parts.join(' → '), reason };
+}
+
 /** Compact context lines for the Jarvis packet — how today's work connects
  *  upward (mandate: explain how tasks connect to a larger objective). */
 export async function buildMissionContext(actor: MissionActor, opts: { limit?: number } = {}): Promise<{ lines: string[]; text: string }> {

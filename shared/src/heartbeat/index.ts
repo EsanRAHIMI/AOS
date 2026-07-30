@@ -22,10 +22,15 @@ import { genId, nowIso } from '../utils/index.js';
 import { assessMissionHealth, type MissionActor } from '../missions/index.js';
 import { listRecentFirings } from '../watches/index.js';
 import { verifyChain } from '../cin/ledger.js';
+import { listDocuments } from '../cin/documents.js';
+import { listEntities } from '../cin/entities.js';
 
 export const ProactiveEventKind = z.enum([
   'mission_overdue', 'mission_stalled', 'mission_blocked', 'mission_review_due',
   'watch_alert', 'trust_chain_broken', 'system_notice',
+  // CIN-1b (D-186): the owner's paperwork expires whether or not anyone is
+  // watching it. Now the system watches.
+  'document_expiring', 'document_expired',
 ]);
 export type ProactiveEventKind = z.infer<typeof ProactiveEventKind>;
 
@@ -109,7 +114,7 @@ export interface HeartbeatResult {
  */
 export async function runHeartbeatOnce(
   actor: HeartbeatActor,
-  opts: { verifyTrustChain?: boolean; stalledAfterDays?: number; publish?: Publish } = {},
+  opts: { verifyTrustChain?: boolean; stalledAfterDays?: number; publish?: Publish; watchDocuments?: boolean } = {},
 ): Promise<HeartbeatResult> {
   const started = Date.now();
   const checks: string[] = [];
@@ -131,7 +136,41 @@ export async function runHeartbeatOnce(
     candidates.push({ kind: 'watch_alert', priority: 'attention', title: f.headline, detail: f.detail ?? '', refIds: [f.firingId], dedupKey: f.dedupKey });
   }
 
-  // 3) Trust-chain integrity (CIN ledger) — a broken chain is a critical event.
+  // 3) Documents: a passport or contract expiring is exactly the kind of thing
+  //    a person forgets and a system should not. The query is index-backed
+  //    ({ownerEntityId, expiresAt}) so this stays cheap on every pulse.
+  if (opts.watchDocuments !== false) {
+    try {
+      const people = await listEntities({ entityType: 'person' });
+      const owner = people.find((e) => e.tags.includes('owner') || e.tags.includes('founder')) ?? people[0];
+      if (owner) {
+        checks.push('documents');
+        const docs = await listDocuments({ ownerEntityId: owner.entityId });
+        for (const d of docs) {
+          if (d.status === 'expired') {
+            candidates.push({
+              kind: 'document_expired', priority: 'critical',
+              title: `منقضی شده: ${d.title}`,
+              detail: `${d.docType}${d.issuer ? ` · ${d.issuer}` : ''} — تاریخ انقضا ${d.expiresAt?.slice(0, 10) ?? ''}`,
+              refIds: [d.docId], dedupKey: `doc-expired:${d.docId}`,
+            });
+          } else if (d.status === 'expiring') {
+            const days = d.expiresAt ? Math.max(0, Math.ceil((Date.parse(d.expiresAt) - Date.now()) / 86_400_000)) : 0;
+            candidates.push({
+              kind: 'document_expiring', priority: days <= 14 ? 'critical' : 'attention',
+              title: `${days} روز تا انقضای ${d.title}`,
+              detail: `${d.docType}${d.issuer ? ` · ${d.issuer}` : ''}`,
+              refIds: [d.docId], dedupKey: `doc-expiring:${d.docId}`,
+            });
+          }
+        }
+      }
+    } catch {
+      /* the CIN graph may not be seeded yet — never break the pulse for it */
+    }
+  }
+
+  // 4) Trust-chain integrity (CIN ledger) — a broken chain is a critical event.
   if (opts.verifyTrustChain !== false) {
     const chain = await verifyChain();
     checks.push('trust_chain');

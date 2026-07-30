@@ -81,6 +81,23 @@ class FakeCursor {
     return this;
   }
   limit(n: number): this { this.rows = this.rows.slice(0, n); return this; }
+
+  /* Cursor surface used by streaming readers (D-186). `verifyChain` walks the
+   * ledger with `.batchSize()` + `for await` instead of `toArray()` so its
+   * memory does not grow with the chain — the fake has to speak the same
+   * driver API or the suites would only ever exercise the buffered path. */
+  batchSize(_n: number): this { return this; }
+
+  async next(): Promise<Doc | null> {
+    const row = this.rows.shift();
+    return row ? project(row, this.projection) : null;
+  }
+
+  async close(): Promise<void> { this.rows = []; }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<Doc> {
+    for (const row of this.rows) yield project(row, this.projection);
+  }
   skip(n: number): this { this.rows = this.rows.slice(n); return this; }
   async toArray(): Promise<Doc[]> { return this.rows.map((r) => project(r, this.projection)); }
 }

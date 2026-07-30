@@ -393,3 +393,39 @@ planner, monitor, browser-testing). Impact is evidence-backed and never faked �
 improvement yet" is a valid honest result. Memory maintenance keeps the latest summary per scope and
 deprecates the rest; future agents load compressed_contexts → active skills → reliability → patterns →
 raw evidence last.
+
+---
+
+## Storage contract on MongoDB Atlas (D-186)
+
+The index plan lives in **`shared/src/db/indexes.ts`** — one declarative list
+(`INDEX_PLAN`, 39 entries), applied by `ensureIndexes()`. The gateway applies it
+fail-soft on boot; `scripts/ensure-indexes.mjs` applies it to a fresh cluster or
+restored backup before any service points at it (`--plan` previews it).
+
+Two kinds of index, and the difference matters:
+
+- **PERFORMANCE** — makes a real query shape an index scan. Derived from the
+  query shapes actually in the code, so it must be updated when a filter or
+  sort changes.
+- **CONSTRAINT** — unique / partial-unique. These are *correctness*, not speed:
+
+| Constraint | Guarantees |
+| --- | --- |
+| `loop_inbox {actorId, eventKey}` unique | Loop ingestion is idempotent under concurrency (gate G4) |
+| `cin_ledger {chainId, seq}` unique | The hash chain stays linear with multiple writers |
+| `cin_relations {from,to,type}` unique *partial* `status:'active'` | One active edge per relationship; superseded rows stay for history |
+| `cin_keys` active-key partial unique | One active signing key per entity |
+| `heartbeat_runs {at}` TTL | Pulse history self-expires instead of growing forever |
+
+Rules for anyone (human or agent) adding storage:
+
+1. **Never rely on read-then-write for uniqueness.** Add the unique index and
+   handle `E11000` as the expected race outcome (`isDuplicateKey`).
+2. **Never `toArray()` an unbounded collection.** Use a `batchSize` cursor and
+   close it (`verifyChain`), or a bounded `sort+limit` read (`ledgerHead`).
+3. **A new query shape requires a new plan entry**, with its `reason` filled in.
+4. **Prove it against a real server**, not the in-memory fake — the fake has no
+   planner and no constraints. `scripts/atlas-storage-verify.mjs` asserts index
+   existence, real duplicate rejection, and `explain()` IXSCAN-not-COLLSCAN on
+   the hot paths.

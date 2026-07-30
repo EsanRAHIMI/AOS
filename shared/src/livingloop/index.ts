@@ -18,7 +18,7 @@ import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { assessMissionHealth, listMissionNodes, type MissionActor } from '../missions/index.js';
 import { listProactiveEvents, type HeartbeatActor } from '../heartbeat/index.js';
-import { canonicalJson, sha256Hex, appendLedger, listLedger } from '../cin/ledger.js';
+import { canonicalJson, sha256Hex, appendLedger, ledgerHead } from '../cin/ledger.js';
 import { recordMemory } from '../memory2/index.js';
 
 /* ============================== schemas ================================ */
@@ -148,19 +148,40 @@ export interface LoopDeps {
 
 /* ============================== intake ================================= */
 
+/**
+ * Ingest one event, exactly once (gate G4).
+ *
+ * Idempotency is enforced by the unique index on `{actorId, eventKey}`, not by
+ * the read below: a check-then-insert is a race, and this inbox has concurrent
+ * producers by design (the heartbeat bridge, the SSE stream, the API and
+ * replays can all fire at the same instant). The pre-check is only a cheap
+ * fast path; the DUPLICATE-KEY branch is the one that makes the guarantee
+ * true. If the index is missing, this still behaves correctly for a single
+ * writer — but `ensureIndexes()` is what makes it correct in general.
+ */
 export async function ingestLoopEvent(
   actor: LoopActor,
   input: { eventKey: string; type: string; source?: string; payload?: Record<string, unknown>; replayOf?: string | null },
 ): Promise<{ event: LoopInboxEvent; duplicate: boolean }> {
   const existing = await inboxCol().findOne({ eventKey: input.eventKey, actorId: actor.actorId });
   if (existing) return { event: LoopInboxEventSchema.parse(existing), duplicate: true };
+
   const event: LoopInboxEvent = LoopInboxEventSchema.parse({
     inboxId: genId('lin'), eventKey: input.eventKey, source: input.source ?? 'api',
     type: input.type, payload: input.payload ?? {}, actorId: actor.actorId,
     replayOf: input.replayOf ?? null, receivedAt: nowIso(),
   });
-  await inboxCol().insertOne(event as never);
-  return { event, duplicate: false };
+  try {
+    await inboxCol().insertOne(event as never);
+    return { event, duplicate: false };
+  } catch (err) {
+    if (!(err && typeof err === 'object' && (err as { code?: number }).code === 11000)) throw err;
+    // Lost the race: another producer inserted this exact eventKey first.
+    // That is the correct outcome, not an error — return THEIR record.
+    const winner = await inboxCol().findOne({ eventKey: input.eventKey, actorId: actor.actorId });
+    if (!winner) throw err; // constraint fired but the row is gone: real problem
+    return { event: LoopInboxEventSchema.parse(winner), duplicate: true };
+  }
 }
 
 /** Replay (gate G5): clone as a NEW pending event, explicitly marked. */
@@ -189,13 +210,14 @@ export async function requeueDeadEvent(actor: LoopActor, inboxId: string): Promi
 export async function buildOwnerSnapshot(actor: LoopActor): Promise<OwnerStateSnapshot> {
   const missionActor: MissionActor = { actorId: actor.actorId, scope: 'user', tenantId: actor.tenantId ?? null };
   const hbActor: HeartbeatActor = { actorId: actor.actorId, scope: 'user', tenantId: actor.tenantId ?? null };
-  const [health, activeNodes, openEvents, ledgerTail] = await Promise.all([
+  const [health, activeNodes, openEvents, head] = await Promise.all([
     assessMissionHealth(missionActor),
     listMissionNodes(missionActor, { statuses: ['active', 'blocked', 'stalled'], limit: 200 }),
     listProactiveEvents(hbActor, { limit: 100 }),
-    listLedger({ limit: 1000 }),
+    // O(1) index-backed head. This used to pull up to 1000 ledger records on
+    // EVERY cycle just to read the last one — cost that grew with history.
+    ledgerHead(),
   ]);
-  const head = ledgerTail[ledgerTail.length - 1];
   const state: Record<string, unknown> = {
     missionsActive: activeNodes.length,
     missionsOverdue: health.overdue.map((n) => n.nodeId).sort(),

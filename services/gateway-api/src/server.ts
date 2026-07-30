@@ -232,6 +232,8 @@ import {
   pickActivePriorityFact,
   composeJarvisResponseFallback,
   answerIgnoresStatedPriority,
+  // D-186 — central Atlas index plan.
+  ensureIndexes,
 } from '@factory/shared';
 import { createFactoryService, type FactoryService } from '@factory/service-kit';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -349,6 +351,19 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
   await tasks.createIndex({ taskId: 1 }, { unique: true });
   await approvals.createIndex({ approvalId: 1 }, { unique: true });
   await infra.createIndex({ requestId: 1 }, { unique: true });
+
+  // D-186 — the Atlas index plan for every collection the shared modules own
+  // (CIN, living loop, heartbeat, K2 memory/missions/sessions). Idempotent, so
+  // it is safe on every boot; fail-soft, so a rejected index never blocks
+  // startup. A FAILED unique index is real news — it means existing data
+  // violates an invariant the code assumes — so it is logged loudly.
+  try {
+    const idx = await ensureIndexes();
+    if (idx.created.length) console.info('[gateway-api] mongo indexes created:', idx.created.join(', '));
+    if (idx.failed.length) console.error('[gateway-api] MONGO INDEXES FAILED (data may violate an invariant):', idx.failed);
+  } catch (err) {
+    console.error('[gateway-api] ensureIndexes threw — continuing boot without the index plan', err);
+  }
 
   // Seed the runtime safe-mode setting from env on first boot (env = default).
   const SAFE_MODE_SETTING = 'safe_mode';

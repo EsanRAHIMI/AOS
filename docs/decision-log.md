@@ -2,6 +2,60 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Storage that actually scales on Atlas: one index plan, DB-enforced invariants (D-186)
+
+Owner's instruction: data and tables must be stored, read and written
+*correctly and scalably* in MongoDB Atlas. Auditing what we had, the answer was
+uncomfortable: **not one CIN, living-loop, heartbeat or K2 collection had a
+single index.** Every read was a collection scan. On a laptop with 40 rows that
+is invisible; on Atlas with a year of ledger records it is the whole system.
+
+- **`shared/src/db/indexes.ts` — one declarative plan, 39 indexes.** Central,
+  not scattered `createIndex` calls next to queries, so the storage contract is
+  reviewable in one file. Each entry carries a `reason`, and the plan
+  distinguishes two kinds:
+  - **PERFORMANCE** indexes (make a real query shape fast),
+  - **CONSTRAINT** indexes (unique/partial — they *are* a correctness
+    guarantee, not an optimisation).
+  Keys were derived from the REAL query shapes in the code, not guessed:
+  memory2/jarvis/missions filter on `createdBy` (not `actorId`), turns sort by
+  `index`, steps by `{runId, index, createdAt}`.
+- **Idempotency and chain linearity are now enforced by the DATABASE.**
+  `loop_inbox {actorId, eventKey}` unique is what actually makes ingestion
+  idempotent under concurrency (gate G4); `cin_ledger {chainId, seq}` unique is
+  what makes the hash chain linear. The previous design relied on a
+  single-writer-per-process assumption that a second gateway replica would have
+  silently broken. `ingestLoopEvent` and `appendLedger` now treat E11000 as the
+  expected outcome of a race — `appendLedger` re-reads the head and retries (6
+  attempts), `ingestLoopEvent` returns the winner's record as `duplicate: true`.
+- **Reads are bounded.** `verifyChain()` streamed the whole ledger into memory
+  via `toArray()`; it now walks a `batchSize(500)` cursor and closes it, so
+  verification cost is constant in memory regardless of chain length. Added
+  `ledgerHead()` (`sort desc, limit 1`) and used it in `buildOwnerSnapshot`,
+  which was fetching 1000 ledger rows to look at one.
+- **Heartbeat watches document expiry** (`document_expiring` /
+  `document_expired`, index-backed, deduped like every other finding, wrapped so
+  an unseeded CIN graph can never break the pulse). A passport expiring is
+  exactly what a person forgets and a system should not.
+- **`scripts/ensure-indexes.mjs`** applies the plan to a fresh cluster before
+  any service points at it (`--plan` to preview). A failed UNIQUE index is
+  reported as what it is: existing data that violates an invariant the code
+  assumes. The gateway also applies the plan fail-soft on boot.
+- **`scripts/atlas-storage-verify.mjs` — 11 checks against a REAL server**,
+  because the in-memory fake has no planner and no constraints and therefore
+  proves none of this. It asserts every planned index exists, that the database
+  itself (not the app layer) rejects duplicates, and via `explain()` that the
+  hot paths are **IXSCAN and not COLLSCAN**. 11/11 passing.
+
+Two things surfaced while verifying and were fixed in the code rather than
+worked around: the test fake didn't implement the cursor API the streaming
+reader now uses (`next` / `batchSize` / `close` / async iteration), so it was
+extended to match real driver behaviour; and `computeNextAction` — the "single
+highest-priority thing you can start right now" behind the owner briefing's
+Continue-in-Jarvis deep link — had a full contract test but no implementation.
+It exists now: doability outranks priority, since a blocked critical task is
+work nobody can start.
+
 ## 2026-07-25 — CIN-1b: the owner finally has a profile, records and documents (D-185)
 
 Owner's observation, and it was correct: for a system of this size there was
