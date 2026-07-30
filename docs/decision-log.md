@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Section editing moves out of the card and into a dialog (D-187d)
+
+Owner, with a screenshot: pressing «ویرایش» opened the form *inside* the card,
+which overflowed a ~290px grid cell, spilled over neighbouring cards and left
+the inputs too narrow to read. An editor cannot live inside the thing it edits
+when that thing is a tile — this was structural, not a spacing bug.
+
+- **Native `<dialog>` + `showModal()`**, chosen over a hand-rolled overlay for
+  two reasons: the top layer escapes every ancestor's `overflow` and stacking
+  context, so the clipping/collision class of bug cannot recur; and Esc-to-close,
+  focus trapping, page inertness and `::backdrop` come from the platform
+  instead of from code we would own forever. React keeps the state; `onCancel`
+  is intercepted so the DOM cannot drift out of sync.
+- **Rows are labelled halves** («نام فیلد» / «مقدار») that stack instead of
+  shrinking on narrow screens, each with a live preview of how the key will
+  read once saved («نمایش: نام کامل»). Keys stay `dir="ltr"` (they are machine
+  identifiers); values follow their own script.
+- **`SECTION_FIELDS` offers per-section keys as chips** — an empty editor
+  asking for a "key" is a blank-page problem, making the owner invent both the
+  schema and the content. Offers only: anything else can still be typed,
+  already-present keys are filtered out, and nothing is required.
+- The dialog states that saving **replaces the section**, so version-bumping is
+  never a surprise, and reopening always restarts from saved truth rather than
+  an abandoned edit.
+
+Eight editor tests lock the structure in: the form markup sits inside a
+`<dialog>` (closed, no `open` attribute) rather than in the card's flow, the
+card footer contributes only its trigger, suggestions exclude existing keys,
+and every control is reachable through its label. One earlier assertion was
+correctly scoped down — raw keys ARE legitimate inside the editor, so
+"no raw keys" now applies to the display region only. 59/59 dashboard tests,
+typecheck and `next build` pass.
+
 ## 2026-07-30 — Bidi on the profile: alignment follows the text, not the page (D-187b)
 
 Owner: Persian must be right-aligned and English left-aligned, or readability

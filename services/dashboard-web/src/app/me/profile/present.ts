@@ -44,6 +44,30 @@ export const SECTION_PURPOSE: Record<string, string> = {
   capabilities: 'اختیارات و توانایی‌هایی که به سیستم داده‌اید.',
 };
 
+/**
+ * Fields worth offering per section (D-187d).
+ *
+ * An empty editor asking for a "key" is a blank page problem: the owner has to
+ * invent both the schema and the content. These are OFFERS, not a schema —
+ * anything else can still be typed, and nothing here is required.
+ */
+export const SECTION_FIELDS: Record<string, string[]> = {
+  identity: ['full_name', 'first_name', 'last_name', 'national_id', 'birth_date', 'birth_place', 'nationality', 'gender'],
+  contact: ['email', 'phone', 'mobile', 'address', 'city', 'country', 'postal_code', 'timezone', 'website', 'linkedin', 'github'],
+  education: ['degree', 'field', 'university', 'graduation_year', 'gpa'],
+  credentials: ['title', 'institution', 'reference', 'start_date', 'end_date'],
+  employment: ['company', 'role', 'title', 'start_date', 'end_date', 'summary'],
+  skills: ['skill', 'level', 'years', 'languages'],
+  financial: ['bank', 'iban', 'account', 'currency'],
+  assets: ['title', 'description', 'value', 'currency'],
+  legal: ['title', 'status', 'reference', 'notes'],
+  goals: ['title', 'description', 'end_date'],
+  capabilities: ['title', 'description', 'level'],
+  memberships: ['institution', 'role', 'start_date', 'end_date'],
+  achievements: ['title', 'description', 'end_date'],
+  preferences: ['language', 'timezone', 'notes'],
+};
+
 /** Field labels seen in practice. Unknown keys fall back to humanise(). */
 const FIELD_LABEL: Record<string, string> = {
   full_name: 'نام کامل', first_name: 'نام', last_name: 'نام خانوادگی', display_name: 'نام نمایشی',

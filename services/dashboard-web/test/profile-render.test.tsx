@@ -91,8 +91,12 @@ describe('section cards', () => {
     expect(out).toContain('شمارهٔ پاسپورت');
     expect(out).toContain('1990-04-11');       // timestamp trimmed to a date
     expect(out).toContain('فقط خودم');          // visibility in plain words
-    expect(out).not.toContain('full_name');     // raw key never leads
     expect(out).toContain('v3');                // version stays, as secondary meta
+
+    // Raw keys are legitimate INSIDE the editor dialog (you are editing the
+    // stored shape), so scope this to what the card actually displays.
+    const displayed = out.slice(out.indexOf('prof-fields'), out.indexOf('prof-sec-foot'));
+    expect(displayed).not.toContain('full_name');
   });
 
   it('survives an object-valued field instead of printing [object Object]', () => {
