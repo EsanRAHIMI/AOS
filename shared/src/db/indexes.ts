@@ -221,6 +221,18 @@ export const INDEX_PLAN: IndexPlanEntry[] = [
   },
   /* --- D-192: Google Calendar / Tasks mirror -------------------------- */
   {
+    collection: COLLECTIONS.OAUTH_STATES,
+    keys: { state: 1 },
+    options: { unique: true, name: 'oauth_state_unique' },
+    reason: 'CONSTRAINT: a state is single-use; a duplicate would let a callback be replayed.',
+  },
+  {
+    collection: COLLECTIONS.OAUTH_STATES,
+    keys: { ttlAt: 1 },
+    options: { name: 'oauth_state_ttl', expireAfterSeconds: 0 },
+    reason: 'TTL: abandoned consent attempts must not accumulate. Indexed on ttlAt (a real Date) — a TTL index on an ISO string is created without complaint and then never deletes anything.',
+  },
+  {
     collection: COLLECTIONS.GOOGLE_TOKENS,
     keys: { actorId: 1, provider: 1 },
     options: { unique: true, name: 'actor_provider_unique' },

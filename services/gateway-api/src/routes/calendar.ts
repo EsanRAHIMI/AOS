@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 import {
   googleAvailability, googleConfig, buildAuthUrl, exchangeCode, fetchAccountEmail,
   storeGrant, getGrant, deleteGrant, vaultAvailability,
+  rememberOAuthState, consumeOAuthState,
   syncAll, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
   ensureAosCalendar, createEvent, createTask, classifyWrite,
   failure, success, ERROR_CODES,
@@ -22,27 +23,42 @@ import type { GatewayDeps, FastifyReplyLike } from './deps.js';
 const OWNER = 'owner';
 
 /**
- * Pending OAuth states, in memory with a short TTL.
+ * The consent landing page (D-192d).
  *
- * Deliberately not persisted: a state is single-use and lives for seconds, and
- * a gateway restart mid-consent should invalidate it rather than leave a
- * replayable token in the database.
+ * The callback used to answer with a bare 302. A redirect that fails — a
+ * blocked navigation, an embedded browser view, a wrong base URL — leaves the
+ * owner stranded on Google's page with no idea whether it worked, which is
+ * exactly what happened. An OAuth callback should always render something the
+ * human can read and act on; the automatic redirect is a convenience layered
+ * on top, not the only path back.
  */
-const pendingStates = new Map<string, number>();
-const STATE_TTL_MS = 10 * 60_000;
-
-function mintState(): string {
-  const state = randomBytes(24).toString('base64url');
-  pendingStates.set(state, Date.now() + STATE_TTL_MS);
-  for (const [k, exp] of pendingStates) if (exp < Date.now()) pendingStates.delete(k);
-  return state;
-}
-
-function consumeState(state: string): boolean {
-  const exp = pendingStates.get(state);
-  if (!exp) return false;
-  pendingStates.delete(state);      // single use, always
-  return exp >= Date.now();
+function landing(dash: string, ok: boolean, title: string, detail: string): string {
+  const target = `${dash}/calendar?connect=${ok ? 'ok' : encodeURIComponent(title)}`;
+  const esc = (t: string) => t.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] as string));
+  return `<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="2;url=${esc(target)}">
+<title>${esc(title)}</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#070a12;color:#eef1f8;
+       font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+  .c{max-width:520px;padding:34px 30px;border-radius:22px;text-align:right;
+     background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 44%),
+                linear-gradient(180deg,rgba(22,28,46,.72),rgba(10,14,24,.88));
+     border:1px solid rgba(255,255,255,.14);
+     box-shadow:0 1px 0 0 rgba(255,255,255,.22) inset,0 24px 70px -18px rgba(0,0,0,.8)}
+  h1{margin:0 0 10px;font-size:19px}
+  p{margin:0 0 18px;font-size:13px;line-height:1.9;color:#97a0b8}
+  a{display:inline-block;padding:10px 18px;border-radius:999px;text-decoration:none;color:#eef1f8;
+    border:1px solid rgba(110,168,255,.45);background:rgba(110,168,255,.16);font-size:13px}
+  .d{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:8px;
+     background:${ok ? '#45e0a8' : '#ff6b81'}}
+</style>
+<div class="c">
+  <h1><span class="d"></span>${esc(title)}</h1>
+  <p>${esc(detail)}</p>
+  <a href="${esc(target)}">بازگشت به داشبورد</a>
+</div>`;
 }
 
 export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps): void {
@@ -92,7 +108,9 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     if (!cfg) return reply.code(501).send(failure(ERROR_CODES.VALIDATION, googleAvailability().reason));
     const vault = vaultAvailability();
     if (!vault.configured) return reply.code(501).send(failure(ERROR_CODES.VALIDATION, vault.reason));
-    return success({ url: buildAuthUrl(cfg, mintState()) });
+    const state = randomBytes(24).toString('base64url');
+    await rememberOAuthState(state);
+    return success({ url: buildAuthUrl(cfg, state) });
   });
 
   /**
@@ -101,15 +119,22 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
    */
   app.get('/v1/calendar/oauth/callback', async (req, reply) => {
     const q = req.query as { code?: string; state?: string; error?: string };
-    const dash = process.env.FACTORY_PUBLIC_URL || 'http://localhost:4100';
-    const back = (status: string) => reply.redirect(`${dash}/calendar?connect=${encodeURIComponent(status)}`);
+    const dash = (process.env.FACTORY_PUBLIC_URL || 'http://localhost:4100').trim().replace(/\/+$/, '');
+    const page = (ok: boolean, title: string, detail: string) =>
+      reply.code(200).header('content-type', 'text/html; charset=utf-8').send(landing(dash, ok, title, detail));
 
-    if (q.error) return back(q.error);
-    if (!q.code || !q.state) return back('missing_code');
-    if (!consumeState(q.state)) return back('bad_state');
+    // Logged unconditionally: when a connect goes wrong, the first question is
+    // always "did Google actually come back to us?".
+    deps.ctx.log.info({ hasCode: Boolean(q.code), hasState: Boolean(q.state), error: q.error ?? '' }, 'calendar oauth callback');
+
+    if (q.error) return page(false, 'گوگل اجازه نداد', `${q.error} — اگر access_denied است، ایمیل خود را در Test users اضافه کنید یا اپ را Publish کنید.`);
+    if (!q.code || !q.state) return page(false, 'پاسخ ناقص از گوگل', 'کد یا state برنگشت. دوباره از صفحهٔ تقویم شروع کنید.');
+    if (!(await consumeOAuthState(q.state))) {
+      return page(false, 'درخواست معتبر نبود', 'این درخواست قبلاً استفاده شده یا منقضی شده است. یک‌بار دیگر «اتصال به گوگل» را بزنید.');
+    }
 
     const cfg = googleConfig();
-    if (!cfg) return back('not_configured');
+    if (!cfg) return page(false, 'تنظیم نشده', googleAvailability().reason);
 
     try {
       const tok = await exchangeCode(cfg, q.code);
@@ -122,12 +147,15 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
         scopes: (tok.scope ?? '').split(' ').filter(Boolean),
         accountEmail: email,
       });
-      // First sync immediately: an empty calendar page after connecting looks
-      // broken even when it is merely unsynced.
-      await syncAll(OWNER).catch(() => undefined);
-      return back('ok');
+      // First sync immediately: an empty calendar page right after connecting
+      // looks broken even when it is merely unsynced.
+      const results = await syncAll(OWNER).catch(() => []);
+      const total = results.reduce((n, r) => n + r.upserted, 0);
+      return page(true, 'اتصال برقرار شد', `${email || 'حساب گوگل'} وصل شد و ${total} مورد همگام‌سازی شد.`);
     } catch (err) {
-      return back(err instanceof Error ? err.message.slice(0, 80) : 'failed');
+      const message = err instanceof Error ? err.message : 'failed';
+      deps.ctx.log.error({ err }, 'calendar oauth exchange failed');
+      return page(false, 'تبادل توکن ناموفق بود', message.slice(0, 200));
     }
   });
 

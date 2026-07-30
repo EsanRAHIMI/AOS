@@ -2,6 +2,39 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — The OAuth callback always lands somewhere (D-192d)
+
+Owner completed Google consent and the browser stayed on Google's page — they
+had to navigate back by hand. Two defects, one of which I had built in:
+
+- **The consent `state` lived in a process `Map`.** The gateway runs under
+  `--watch` in development and restarts on every save, so a state minted before
+  a restart was gone when Google redirected back: the owner consented and the
+  callback rejected it. It is now a TTL'd Mongo record — durable, single-use,
+  and cheap.
+- **The callback answered with a bare 302.** A redirect that does not take —
+  blocked navigation, an embedded browser view, a wrong base URL — leaves the
+  owner stranded with no idea whether it worked. It now returns a real landing
+  page in the same Liquid Glass material: it states the outcome, auto-redirects,
+  and always offers a manual button back. An OAuth callback should never be a
+  silent hop.
+- The callback also logs unconditionally, because the first question when a
+  connect goes wrong is "did Google actually come back to us at all?".
+
+Two things I checked rather than assumed, and one bug that fell out:
+
+- I suspected the inline comment in `FACTORY_PUBLIC_URL=http://localhost:4100 #
+  dashboard public URL` was corrupting the redirect. Tested Node's `--env-file`
+  parser directly: it strips inline comments correctly. Hypothesis wrong.
+- The TTL index for oauth states was first pointed at `expiresAt`, an ISO
+  **string**. MongoDB TTL indexes only act on BSON **Dates** — pointed at a
+  string, the index is created without complaint and then never deletes
+  anything. That is the worst kind of cleanup: one that looks configured. Now
+  indexed on a real `Date` field, with a test asserting the stored type.
+
+The in-memory test fake gained `deleteOne` to match driver semantics.
+301/301 shared, 98/98 dashboard, all packages typecheck.
+
 ## 2026-07-31 — Calendar becomes reachable: routes, page, sidebar (D-192b)
 
 The sync core landed with no way to reach it — no route, no page, no link. The

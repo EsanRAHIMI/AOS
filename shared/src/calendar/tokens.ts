@@ -186,3 +186,49 @@ export async function deleteGrant(actorId: string): Promise<boolean> {
   const res = await col().deleteOne({ actorId, provider: 'google' });
   return res.deletedCount > 0;
 }
+
+/* --------------------------------------------------------- oauth state ---- */
+
+/**
+ * Pending OAuth `state` values, in Mongo rather than in process memory
+ * (D-192d).
+ *
+ * The first version kept them in a `Map`. In development the gateway runs
+ * under `--watch` and restarts on every file save, so a state minted before a
+ * restart was gone by the time Google redirected back — the owner completed
+ * consent and the callback rejected it. A durable store with a TTL removes
+ * that failure entirely and costs one tiny write per connect.
+ */
+export interface OAuthState {
+  state: string;
+  createdAt: string;
+  expiresAt: string;
+  /** The SAME instant as `expiresAt`, as a BSON Date.
+   *  MongoDB TTL indexes only act on Date fields — pointed at an ISO string
+   *  the index is created happily and then never deletes anything, which is
+   *  the worst kind of cleanup: one that looks configured. */
+  ttlAt: Date;
+}
+
+const statesCol = () => collection<OAuthState>(COLLECTIONS.OAUTH_STATES);
+
+export const OAUTH_STATE_TTL_MS = 15 * 60_000;
+
+export async function rememberOAuthState(state: string): Promise<void> {
+  const now = Date.now();
+  const expires = new Date(now + OAUTH_STATE_TTL_MS);
+  await statesCol().insertOne({
+    state,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: expires.toISOString(),
+    ttlAt: expires,
+  } as never);
+}
+
+/** Single use: consuming it deletes it, so a replayed callback fails. */
+export async function consumeOAuthState(state: string): Promise<boolean> {
+  const doc = await statesCol().findOne({ state });
+  if (!doc) return false;
+  await statesCol().deleteOne({ state });
+  return Date.parse(doc.expiresAt) >= Date.now();
+}

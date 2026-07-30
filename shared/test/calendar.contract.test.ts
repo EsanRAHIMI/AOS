@@ -147,3 +147,33 @@ describe('write policy — the owner keeps their calendar', () => {
     expect(classifyWrite({ op: 'create', calendar: null }).sensitivity).toBe('approval');
   });
 });
+
+describe('oauth state — durable, single use, time-boxed', () => {
+  it('survives being minted and consumed across calls (no in-process map)', async () => {
+    const { rememberOAuthState, consumeOAuthState } = await import('../src/calendar/tokens.js');
+    await rememberOAuthState('abc');
+    expect(await consumeOAuthState('abc')).toBe(true);
+  });
+
+  it('is single use — a replayed callback must fail', async () => {
+    const { rememberOAuthState, consumeOAuthState } = await import('../src/calendar/tokens.js');
+    await rememberOAuthState('once');
+    expect(await consumeOAuthState('once')).toBe(true);
+    expect(await consumeOAuthState('once')).toBe(false);
+  });
+
+  it('rejects a state that was never minted', async () => {
+    const { consumeOAuthState } = await import('../src/calendar/tokens.js');
+    expect(await consumeOAuthState('forged')).toBe(false);
+  });
+
+  it('carries a real Date for the TTL index, not just an ISO string', async () => {
+    const { rememberOAuthState } = await import('../src/calendar/tokens.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await rememberOAuthState('dated');
+    const doc = await collection(COLLECTIONS.OAUTH_STATES).findOne({ state: 'dated' });
+    // Mongo TTL only acts on Date fields; an ISO string index never deletes.
+    expect(doc?.ttlAt instanceof Date).toBe(true);
+  });
+});

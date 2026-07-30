@@ -313,6 +313,9 @@ export const COLLECTIONS = {
   /* --- D-192: Google Calendar / Tasks integration ------------------------ */
   /** Encrypted OAuth grants, one per owner. Never contains a plaintext token. */
   GOOGLE_TOKENS: 'google_tokens',
+  /** Pending OAuth `state` values. Durable so a gateway restart mid-consent
+   *  does not strand the owner on Google's page. TTL-expired. */
+  OAUTH_STATES: 'oauth_states',
   /** Per-calendar sync state: syncToken, last full sync, watch channel. */
   CALENDAR_SYNC_STATE: 'calendar_sync_state',
   /** Local mirror of Google events — what the UI and heartbeat read. */
