@@ -4,6 +4,39 @@
 document is the source of truth for how Jarvis behaves; keep it in sync with
 `shared/src/jarvis`, `shared/src/agentcore`, and `services/gateway-api/src/routes/jarvis.ts`.
 
+## ONE assistant (D-184)
+
+The dashboard used to run **two** different chat surfaces:
+
+| surface | engine | verdict |
+|---|---|---|
+| `OperatorConsole` (floating, every page) | `/v1/operator/*` — deterministic goal→tool-step mapping, its own session model, plus the `/v1/voice/*` path | **removed** |
+| `/jarvis` stage command bar | `/v1/jarvis/*` — the K2 shared multi-turn agent loop, governed tool registry, Memory v2, missions, approval pause/resume | **kept** |
+
+Two assistants meant two memories, two histories and two behaviours for the
+same question. There is now exactly one agent, on two surfaces:
+
+- **`JarvisDock`** (`components/JarvisDock.tsx`) — mounted once in
+  `app/layout.tsx`, so it is available on every page and its state survives
+  navigation. Collapsed it shows the real briefing priority; expanded it is a
+  conversation with **live tool steps**, inline **approvals**, and the current
+  pathname passed as context so "open this" means the right thing on the page
+  you are on. `⌘K` / `Ctrl+K` toggles it; `Esc` closes.
+- **`/jarvis` stage** — the same agent full-screen, with the board. The dock
+  hides itself there so a page never shows two inputs.
+
+Both call the same server actions (`app/jarvis/actions.ts`) and the same
+streaming route (`/api/jarvis-stream`), and both resolve the same session, so
+a conversation started on the stage continues in the dock on any other page,
+with the same memory.
+
+**Removed with the console:** `hooks/useRealtimeVoiceSession.ts` (its only
+consumer), and the `op-working-bar` / `op-mono` / `op-sweep` CSS. Kept
+deliberately: `app/operator/actions.ts` (the homepage still uses
+`getLiveStateAction`), the `/voice` pages (a read-only archive of the legacy
+pipeline's recorded sessions — their copy now points at Jarvis), and every
+gateway route, which is kernel surface and out of scope for a UI change.
+
 ## 1. What Jarvis is
 
 Jarvis is the persistent command intelligence between the owner and the OS —

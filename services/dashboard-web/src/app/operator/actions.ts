@@ -179,7 +179,7 @@ const EMPTY_LIVE_STATE: LiveStateView = { activeSessions: [], recentSessions: []
 
 /**
  * Phase AF.4.1 — the one real read behind both the homepage Active
- * Operations panel and `OperatorConsole`'s on-mount reload. Real, persisted
+ * Operations panel reload. Real, persisted
  * data only (see `GET /v1/operator/live-state`'s header comment in
  * gateway-api) — no field here is fabricated for a "not yet happened" case;
  * arrays are simply empty when there's genuinely nothing to show.

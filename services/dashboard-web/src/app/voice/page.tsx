@@ -12,12 +12,12 @@ export default async function VoicePage() {
   ]);
   return (
     <>
-      <PageHeader title="Voice Operator" subtitle="Your always-available operator copilot. Speak or type from the floating dock on any page — it explains, asks before acting, executes only through safe approved tools, and learns." actions={<Link href="/voice/settings" className="btn btn-ghost">Settings</Link>} />
+      <PageHeader title="Voice Operator" subtitle="Archive of the legacy voice-operator pipeline (sessions, tool calls, learned memories). The live assistant on every page is now Jarvis — the dock at the bottom of the screen, or /jarvis full-screen (D-184)." actions={<Link href="/voice/settings" className="btn btn-ghost">Settings</Link>} />
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <MetricCard label="Sessions" value={(sessions ?? []).length} />
         <MetricCard label="Tool calls" value={(calls ?? []).length} />
         <MetricCard label="Learned memories" value={(memories ?? []).length} />
-        <MetricCard label="Dock" value="floating" hint="on every page" tone="ok" />
+        <MetricCard label="Live assistant" value="Jarvis" hint="dock on every page · /jarvis" tone="ok" />
       </div>
       <div className="card">
         <div className="label" style={{ marginBottom: 8 }}>Try saying</div>

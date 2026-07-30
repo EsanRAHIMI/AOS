@@ -5,11 +5,10 @@ import { redirect } from 'next/navigation';
 import { Sidebar } from '@/components/Sidebar';
 import { MobileTopBar, MobileTabBar } from '@/components/MobileChrome';
 import { SafeModeBanner } from '@/components/SafeModeBanner';
-import { OperatorConsole } from '@/components/OperatorConsole';
+import { JarvisDock } from '@/components/JarvisDock';
 import { RtlAutoDir } from '@/components/RtlAutoDir';
 import { getSession } from '@/lib/auth';
 import { gateway } from '@/lib/gateway';
-import { getBriefingAction } from '@/app/jarvis/actions';
 
 export const metadata: Metadata = {
   title: 'Factory · Autonomous OS Control Room',
@@ -48,11 +47,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     );
   }
 
-  // Phase AF.1 Step 1 — fetch once at the layout level (mounted once, not
-  // per-page) so the persistent Jarvis shell's ambient bar shows the real
-  // priority on first paint instead of a blank state until a client fetch
-  // resolves. The shell refreshes this itself afterward (OperatorConsole).
-  const [safe, initialBriefing] = await Promise.all([gateway.safeMode(), getBriefingAction()]);
+  // D-184: ONE assistant for the whole system. `JarvisDock` is the K2 Jarvis
+  // agent (same sessions, memory and tools as the /jarvis stage) mounted once
+  // here, so it is available on every page and its state survives navigation.
+  // It fetches its own briefing; the layout only needs safe-mode now.
+  const safe = await gateway.safeMode();
   const user = { email: session.email, role: session.role };
   return (
     <html lang="en">
@@ -67,7 +66,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </main>
         </div>
         <MobileTabBar />
-        <OperatorConsole role={session.role} initialBriefing={initialBriefing} />
+        <JarvisDock role={session.role} />
       </body>
     </html>
   );

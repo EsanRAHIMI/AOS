@@ -20,8 +20,8 @@ import type { BlockId } from '@/lib/realtimeBlocks';
  *
  * A lightweight `window` CustomEvent (`aos:invalidate-blocks`) is the
  * invalidation bus — the same pattern already used for `aos:jarvis`
- * (UniverseZone → OperatorConsole). This lets components OUTSIDE this
- * provider's tree (the persistent OperatorConsole, mounted at the layout
+ * (UniverseZone → the persistent assistant). This lets components OUTSIDE
+ * this provider's tree (JarvisDock, mounted at the layout
  * level, above/outside page.tsx) request a refresh too, via
  * `invalidateBlocks()`, without a second data-fetching mechanism or a
  * second SSE connection.
@@ -128,7 +128,7 @@ export function useOptionalRefresh(): (blocks: BlockId[]) => void {
 }
 
 /** Callable from anywhere, including components outside the provider tree
- *  (the persistent OperatorConsole at the layout level). A no-op if no
+ *  (the persistent JarvisDock at the layout level). A no-op if no
  *  UniverseProvider is currently mounted — harmless, since Next.js already
  *  refetches `page.tsx` fresh (it's `force-dynamic`) on navigation back to
  *  the homepage. */

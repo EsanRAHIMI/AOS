@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic';
  *
  * Phase AF.4.1 — also fetches the live operation feed on first paint, so
  * active/recent operations survive a refresh instead of only existing in
- * `OperatorConsole`'s React memory (the exact bug reported by real-user
+ * the persistent assistant's React memory (the exact bug reported by real-user
  * testing). Added to the same `Promise.all`, so this doesn't add a serial
  * round trip to the page's first paint.
  */

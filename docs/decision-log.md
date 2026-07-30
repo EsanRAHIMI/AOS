@@ -2,6 +2,40 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-25 — ONE assistant: the operator console is removed, Jarvis goes system-wide (D-184)
+
+The dashboard shipped two chat surfaces with different engines: the globally
+mounted `OperatorConsole` (deterministic `/v1/operator/*` goal→tool-step
+mapping + the `/v1/voice/*` path, its own session model) and the `/jarvis`
+stage command bar (the real K2 agent: shared multi-turn loop, governed tool
+registry, Memory v2, missions, approval pause/resume). Two assistants meant
+two memories, two histories and two answers to the same question.
+
+- **Kept and generalised:** the K2 agent. New `components/JarvisDock.tsx` is
+  mounted once in `app/layout.tsx`, so ONE assistant is available on every
+  page and survives navigation. Collapsed = the real briefing priority;
+  expanded = conversation with **live tool steps** (streamed from
+  `/api/jarvis-stream`), inline **approvals**, and the current pathname sent
+  as context. `⌘K`/`Ctrl+K` toggles, `Esc` closes. It hides itself on
+  `/jarvis`, where the same agent is already full-screen — one page never
+  shows two inputs.
+- **One identity, not two:** the dock and the stage resolve the SAME session
+  through the same server actions, so a conversation started on the stage
+  continues in the dock on any other page, with the same memory.
+- **Deleted:** `components/OperatorConsole.tsx` (694 lines),
+  `hooks/useRealtimeVoiceSession.ts` (its only consumer), and the orphaned
+  `op-working-bar` / `op-mono` / `op-sweep` CSS.
+- **Deliberately kept:** `app/operator/actions.ts` — the homepage still uses
+  `getLiveStateAction`; the `/voice` pages as a read-only archive of the
+  legacy pipeline's recorded sessions (their copy now points at Jarvis); and
+  every gateway route, which is kernel surface, not a UI decision.
+- **Behaviour preserved:** approval decisions still call
+  `invalidateBlocks(blocksForApprovalDecision())`, so the homepage's live
+  blocks refresh exactly as they did under the old console.
+- Verification: dashboard typecheck clean; no dangling imports; the only
+  remaining mentions of the old console are historical notes in this log and
+  the file that replaced it.
+
 ## 2026-07-25 — CIN-2c: the Jarvis infinite board + black-hole restore point (D-183)
 
 Spec: `docs/cin-v2/jarvis-board.md`.
