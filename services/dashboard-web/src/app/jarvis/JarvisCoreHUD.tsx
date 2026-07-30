@@ -22,7 +22,7 @@ import { resolveJarvisEnsemble } from './jarvisStage';
 import { createNeuralMeshPainter } from './neuralMesh3d';
 import JarvisBoard from './board/JarvisBoard';
 import { UtteranceGate } from '@/lib/utteranceGate';
-import { dirProps } from '@/lib/rtl';
+import { bidiProps } from '@/lib/rtl';
 
 type CoreState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting' | 'alert' | 'degraded';
 type RGB = [number, number, number];
@@ -74,9 +74,9 @@ function TelemCell({
 }) {
   return (
     <div className={`jarvis-telem-cell jarvis-telem-cell--${slot} jarvis-telem-cell--${cell?.tone ?? 'muted'}`}>
-      <span className="jarvis-telem-k">{label}</span>
-      <span className="jarvis-telem-v">{cell?.value ?? '…'}</span>
-      <span className="jarvis-telem-d">{cell?.detail ?? 'loading'}</span>
+      <span className="jarvis-telem-k" dir="ltr">{label}</span>
+      <span className="jarvis-telem-v" dir="ltr">{cell?.value ?? '…'}</span>
+      <span className="jarvis-telem-d" {...bidiProps(cell?.detail)}>{cell?.detail ?? 'loading'}</span>
     </div>
   );
 }
@@ -608,7 +608,7 @@ export default function JarvisCoreHUD() {
   }
 
   return (
-    <div className="jarvis-live-stage" {...dirProps(caption)}>
+    <div className="jarvis-live-stage" dir="ltr">
       {/* CIN-2c — infinite 3D board beneath the presence layer. It owns pan /
           zoom / card placement and reports its world origin so the singularity
           stays the centre of the board. */}
@@ -627,10 +627,11 @@ export default function JarvisCoreHUD() {
       </div>
       <div className="jarvis-live-caption">
         <span className={`jarvis-live-dot jarvis-live-dot--${uiState}`} />
-        <span key={caption} className="jarvis-live-caption-text">{caption}</span>
+        <span key={caption} className="jarvis-live-caption-text" {...bidiProps(caption)}>{caption}</span>
       </div>
       <form
         className={`jarvis-live-cmdbar${listening ? ' jarvis-live-cmdbar--listening' : ''}`}
+        dir="rtl"
         onSubmit={(e) => { e.preventDefault(); void submitTurn(input, 'text'); }}
       >
         {speechSupported ? (
@@ -652,7 +653,7 @@ export default function JarvisCoreHUD() {
           disabled={busy || listening}
           readOnly={listening}
           data-auto-dir=""
-          {...dirProps((listening && interimHint ? interimHint : input) || CMD_PLACEHOLDER)}
+          {...bidiProps((listening && interimHint ? interimHint : input) || CMD_PLACEHOLDER)}
         />
         <button type="submit" disabled={busy || listening || !input.trim()} aria-label="ارسال">
           {busy ? '…' : '↵'}

@@ -678,3 +678,33 @@ button { font: inherit; }
   position: absolute; inset: 0; display: block; width: 100%; height: 100%;
   pointer-events: none; z-index: 1;
 }
+
+/* CIN-2c / D-183.12 — bidi readability. The stage hosts Persian and English
+   side by side, so every free-text node resolves its OWN base direction
+   (`plaintext`) and aligns to that direction's start edge. Without this an
+   English string inside an RTL container renders right-aligned with flipped
+   punctuation, and a Persian string inside an LTR container does the reverse. */
+.jarvis-live-caption-text,
+.jarvis-telem-d,
+.jboard-card-title,
+.jboard-card-sub,
+.jboard-card-empty,
+.jboard-chip,
+.jboard-note,
+.jboard-stat {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+/* Numeric / code-like tokens never re-order: metric values, zoom readout and
+   the telemetry key+value are always logical LTR. */
+.jboard-metric,
+.jboard-zpct,
+.jarvis-telem-k,
+.jarvis-telem-v {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.jarvis-telem-cell--loop .jarvis-telem-v,
+.jarvis-telem-cell--trust .jarvis-telem-v { text-align: end; }
+/* An RTL card mirrors its own affordances (dot/title order, action row). */
+.jboard-card[dir='rtl'] .jboard-card-actions { flex-direction: row-reverse; }

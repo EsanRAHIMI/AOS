@@ -30,6 +30,7 @@ import {
   resolveScope, resolveOrbit, saveBoardProfile, type BoardProfile, type BoardRole,
 } from './boardProfile';
 import { loadBoardGraphAction } from './boardSources';
+import { bidiProps } from '@/lib/rtl';
 
 const REFRESH_MS = 12_000;
 
@@ -752,6 +753,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
               data-card-id={card.id}
               {...(isSelf ? { 'data-card-fixed': 'true' } : {})}
               className={`jboard-card jboard-card--${card.scope}${focus ? ' jboard-card--focus' : ''}${isSelf ? ' jboard-card--self' : ''}${lod}${far ? ' jboard-card--far' : ''}`}
+              {...bidiProps(card.title)}
               style={{
                 // The self nameplate hangs below the singularity (offset is
                 // inside the scaled transform, so it tracks the black hole as
@@ -766,19 +768,19 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
             >
               <header className="jboard-card-h">
                 <span className="jboard-card-dot" style={{ background: rgba(card.accent, 0.55 + card.activity * 0.45) }} />
-                <span className="jboard-card-title">{card.title}</span>
+                <span className="jboard-card-title" {...bidiProps(card.title)}>{card.title}</span>
                 {(pinned || card.activity > 0.6) && (
                   <span className="jboard-card-live" style={{ color: rgba(card.accent, 0.9) }}>
                     {pinned ? '📌' : '●'}
                   </span>
                 )}
               </header>
-              <p className="jboard-card-sub">{card.subtitle}</p>
+              <p className="jboard-card-sub" {...bidiProps(card.subtitle)}>{card.subtitle}</p>
               <div className="jboard-card-metrics">
                 {card.metrics.length === 0 && card.emptyHint ? (
-                  <span className="jboard-card-empty">{card.emptyHint}</span>
+                  <span className="jboard-card-empty" {...bidiProps(card.emptyHint)}>{card.emptyHint}</span>
                 ) : card.metrics.map((m) => (
-                  <span key={m.k} className="jboard-metric">
+                  <span key={m.k} className="jboard-metric" dir="ltr">
                     <b style={{ color: m.heat && m.heat > 0.5 ? rgba(card.accent, 1) : undefined }}>{m.v}</b>
                     <i>{m.k}</i>
                   </span>
@@ -810,8 +812,8 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         })}
       </div>
 
-      <div className="jboard-hud">
-        <div className="jboard-zoom" role="group" aria-label="زوم برد">
+      <div className="jboard-hud" dir="rtl">
+        <div className="jboard-zoom" role="group" aria-label="زوم برد" dir="ltr">
           <button type="button" className="jboard-zbtn" onClick={() => zoomStep(-0.35)} title="کوچک‌نمایی (−)" aria-label="کوچک‌نمایی">−</button>
           <input
             className="jboard-zslider"
@@ -839,7 +841,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         <button type="button" className="jboard-btn" onClick={() => setPanelOpen((v) => !v)} title="شخصی‌سازی برد">
           چیدمان
         </button>
-        <span className="jboard-stat">
+        <span className="jboard-stat" dir="rtl">
           {loading ? 'در حال بارگذاری…' : `${screen.length} کارت · ${orbitsInUse} مدار`}
           {!loading && drawnLinks > 0 ? ` · ${drawnLinks} داده در پرواز` : ''}
           {focusId ? ' · فوکوس روی یک کارت — کلیک روی فضای خالی برای خروج' : ''}
@@ -854,7 +856,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       </div>
 
       {panelOpen && (
-        <aside className="jboard-panel" onPointerDown={(e) => e.stopPropagation()}>
+        <aside className="jboard-panel" dir="rtl" onPointerDown={(e) => e.stopPropagation()}>
           <h3>چیدمان برد</h3>
           <label className="jboard-row">
             <span>نقش</span>
@@ -880,6 +882,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
                   <button
                     type="button"
                     className={`jboard-chip${hidden ? ' jboard-chip--off' : ''}`}
+                    {...bidiProps(c.title)}
                     onClick={() => {
                       const cur = profileRef.current;
                       const hiddenCards = { ...cur.hiddenCards };

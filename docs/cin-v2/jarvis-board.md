@@ -139,6 +139,28 @@ horizon (`bhKeepout × 1.35`), so nothing visible is cut — it only limits the
 canvas's *hit area*. Inside the disc: drag orbits Gargantua exactly as before.
 Outside: events reach the board and pan the world.
 
+### Bidi readability (D-183.12)
+
+The stage carries Persian and English at the same time, so **direction is a
+property of each text node, never of the page**:
+
+- the stage wrapper is explicitly `dir="ltr"` and no longer inherits its
+  direction from the caption. Previously a Persian caption made the whole
+  stage `rtl`, and every English card title inside it rendered right-aligned
+  with flipped punctuation.
+- `bidiProps(text)` (in `lib/rtl.ts`) states a direction **both ways** —
+  unlike `dirProps`, which omits `dir` for Latin text and is therefore only
+  safe inside an LTR container. Card titles, subtitles, empty hints, chips,
+  the caption and the telemetry detail all use it.
+- metric values, the zoom readout and telemetry keys are `direction: ltr;
+  unicode-bidi: isolate` — numbers and units must never re-order.
+- free-text nodes also carry `unicode-bidi: plaintext; text-align: start`, so
+  even text that arrives without an explicit `dir` resolves its own base
+  direction and aligns to the correct edge.
+- chrome that is Persian by design (the command bar, the board HUD, the
+  layout panel) keeps `dir="rtl"` so its *controls* sit where a Persian
+  reader expects them, while the text inside still follows its own script.
+
 ## 4. Personalisation
 
 Cards are role-dependent by design. `boardProfile.ts` ships presets for

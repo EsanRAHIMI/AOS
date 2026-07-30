@@ -34,3 +34,17 @@ export function dirProps(text: string | null | undefined): { dir?: 'rtl' } {
   if (!text || !containsRtl(text)) return {};
   return { dir: 'rtl' };
 }
+
+/**
+ * EXPLICIT direction for both scripts (D-183.12).
+ *
+ * `dirProps` deliberately omits `dir` for Latin text, which is right when the
+ * surrounding document is LTR. It is wrong inside a container that is already
+ * `dir="rtl"` — an English string then INHERITS rtl and renders right-aligned
+ * with its punctuation flipped. Anywhere Persian and English sit side by side
+ * (the Jarvis stage, every board card), each text node must state its own
+ * direction, so use this instead.
+ */
+export function bidiProps(text: string | null | undefined): { dir: 'rtl' | 'ltr' } {
+  return { dir: text && containsRtl(text) ? 'rtl' : 'ltr' };
+}
