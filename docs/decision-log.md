@@ -2,6 +2,44 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Field keys are a shared vocabulary, not per-user text (D-187f)
+
+Owner's question, and it was the right one: why is the field NAME editable —
+can everyone invent their own names? That breaks storage and reconciliation,
+and the editing UI is cluttered with something unnecessary.
+
+All three points are correct. Letting anyone type a key means `passport_no`,
+`passportNumber` and `pp` can all exist for the same fact. Then an agent asked
+for the owner's passport number has to guess; an attestation cannot name the
+field it verifies; and cross-entity matching degrades into comparing free text.
+A key is an interface between systems, and interfaces are not user content.
+
+- **Nobody types a key.** Catalogue fields are added by their name (the chips),
+  and a genuinely personal field is created from a LABEL whose key is derived
+  automatically. The key input is gone, and with it the «نمایش: …» preview line
+  that only existed to explain the key input — the row now simply shows the
+  field's label next to its value.
+- **Custom fields are namespaced `x_`**, exactly like a vendor-prefixed header.
+  They remain storable and queryable but are permanently distinguishable from
+  the canonical vocabulary, so no future matcher can mistake one for a standard
+  field. A test asserts the catalogue itself never contains an `x_` key, since
+  that would dissolve the distinction.
+- **Renaming in place is not offered, deliberately.** Changing a key means
+  moving a value from one field to another; doing it silently would orphan the
+  old value. Remove and add is honest about what happens in storage.
+- Fields outside the catalogue (custom or legacy) are labelled and tagged
+  «دلخواه» so their non-canonical status is visible rather than implied.
+
+Scope note for the future: `PUT /v1/cin/entities/:id/sections/:section` is
+owner/internal-guarded, so today only the owner writes. The vocabulary rule is
+what makes that safe to open up later — per-user key invention would have made
+multi-tenancy unmergeable.
+
+The tests caught a real Unicode defect on the way: the first slug rule stripped
+`\\p{M}` and ZWNJ, so «شمارهٔ» became «شماره» and «بیمه‌نامه» became «بیمه‌نامه»
+glued into one word. Both are letter-level in Persian, not punctuation, and are
+now preserved. 78/78 dashboard tests, typecheck and `next build` pass.
+
 ## 2026-07-30 — A field catalogue that survives real paperwork (D-187e)
 
 Owner: the identity and personal fields are not complete or practical in the

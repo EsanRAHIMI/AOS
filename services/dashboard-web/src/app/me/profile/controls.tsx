@@ -14,16 +14,21 @@
  * `::backdrop` come from the platform rather than from code we would have to
  * maintain.
  *
- * Sections are still edited as key/value rows — a profile may be verified by a
- * counterparty one day, so it must not degrade into an unparsed blob — but the
- * keys are now offered per section and every row shows the human label it will
- * render as. Saving replaces the whole section; the kernel version-bumps it and
- * writes a ledger record.
+ * Field KEYS are a shared vocabulary, not per-user text (D-187f). Nobody types
+ * a key here: catalogue fields are added by name, and a genuinely personal
+ * field is created from a LABEL whose key is derived and namespaced `x_`. That
+ * is what keeps `passport_no` meaning the same thing in every entity — without
+ * it, an agent asked for the owner's passport number would be guessing between
+ * `passport_no`, `passportNumber` and `pp`, and cross-entity matching would be
+ * comparing free text.
+ *
+ * Saving replaces the whole section; the kernel version-bumps it and writes a
+ * ledger record.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { saveSectionAction, createDocumentAction, archiveDocumentAction, documentUrlAction } from './actions';
 import { bidiProps } from '@/lib/rtl';
-import { SECTION_LABEL, SECTION_FIELDS, fieldLabel, fieldSpec } from './present';
+import { SECTION_LABEL, SECTION_FIELDS, fieldLabel, fieldSpec, customKey } from './present';
 
 type Row = { k: string; v: string };
 
@@ -133,6 +138,65 @@ function ValueInput({
   return <input {...common} type={type} placeholder={spec?.placeholder ?? 'مقدار'} {...dir} />;
 }
 
+/* ------------------------------------------------------ custom field adder */
+
+/**
+ * The only way to create a field outside the catalogue (D-187f).
+ *
+ * The owner types a LABEL, never a storage key — the key is derived and
+ * namespaced with `x_`, so personal fields can never be confused with the
+ * shared vocabulary that agents, attestations and cross-entity matching rely
+ * on. Duplicates are rejected here rather than silently overwriting a value.
+ */
+function CustomFieldAdder({ existing, onAdd }: { existing: string[]; onAdd: (key: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [err, setErr] = useState('');
+  const uid = useId();
+
+  const key = customKey(label);
+  const duplicate = key !== null && existing.includes(key);
+
+  const add = () => {
+    if (!key) { setErr('یک نام معتبر بنویسید.'); return; }
+    if (duplicate) { setErr('فیلدی با همین نام از قبل هست.'); return; }
+    onAdd(key);
+    setLabel('');
+    setErr('');
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className="btn btn-ghost prof-custom-open" onClick={() => setOpen(true)}>
+        + فیلد دلخواه
+      </button>
+    );
+  }
+
+  return (
+    <div className="prof-custom">
+      <label htmlFor={`${uid}-label`}>نام فیلد دلخواه</label>
+      <input
+        id={`${uid}-label`}
+        value={label}
+        placeholder="مثلاً شمارهٔ پروندهٔ بیمه"
+        {...bidiProps(label)}
+        onChange={(e) => { setLabel(e.target.value); setErr(''); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+      />
+      <div className="prof-custom-foot">
+        <button type="button" className="btn" onClick={add} disabled={!key || duplicate}>افزودن</button>
+        <button type="button" className="btn btn-ghost" onClick={() => { setOpen(false); setLabel(''); setErr(''); }}>انصراف</button>
+        {/* Say what will be stored. A namespaced key is a promise about how
+          * this field is treated later, so it should not be a surprise. */}
+        {key && !duplicate && <span className="prof-custom-key" dir="ltr">{key}</span>}
+        {(err || duplicate) && <span className="prof-modal-msg err">{err || 'فیلدی با همین نام از قبل هست.'}</span>}
+      </div>
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------- section editor */
 
 export function SectionEditor({
@@ -172,7 +236,7 @@ export function SectionEditor({
     const data: Record<string, unknown> = {};
     for (const r of rows) {
       const key = r.k.trim();
-      if (!key) continue;
+      if (!key) continue;   // defensive: the UI can no longer produce one
       const raw = r.v.trim();
       const spec = fieldSpec(key);
       /* Only a field DECLARED numeric is stored as a number. The previous
@@ -218,26 +282,22 @@ export function SectionEditor({
           <p className="prof-modal-empty">هنوز فیلدی ندارد — یکی از پیشنهادهای زیر را بزنید یا فیلد دلخواه بسازید.</p>
         )}
 
+        {/* A row shows its LABEL, never its storage key: keys are a shared
+          * vocabulary and renaming one in place would silently orphan the old
+          * value. Changing which field this is = remove it and add the right
+          * one, which is honest about what actually happens in storage. */}
         <div className="prof-fieldset">
           {rows.map((r, i) => (
-            <div key={`${uid}-${i}`} className="prof-fedit">
-              <div className="prof-fedit-key">
-                <label htmlFor={`${uid}-k-${i}`}>نام فیلد</label>
-                <input
-                  id={`${uid}-k-${i}`}
-                  value={r.k}
-                  placeholder="email"
-                  dir="ltr"
-                  onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))}
-                />
-                {/* The owner sees now, not after saving, how this row will read. */}
-                <span className="prof-fedit-as" {...bidiProps(r.k ? (fieldSpec(r.k)?.hint ?? fieldLabel(r.k)) : '')}>
-                  {r.k ? (fieldSpec(r.k)?.hint ?? `نمایش: ${fieldLabel(r.k)}`) : ''}
-                </span>
+            <div key={r.k} className="prof-fedit">
+              <div className="prof-fedit-name">
+                <label htmlFor={`${uid}-v-${i}`} {...bidiProps(fieldLabel(r.k))}>{fieldLabel(r.k)}</label>
+                {!fieldSpec(r.k) && <span className="prof-fedit-tag">دلخواه</span>}
+                {fieldSpec(r.k)?.hint && (
+                  <span className="prof-fedit-hint" {...bidiProps(fieldSpec(r.k)!.hint!)}>{fieldSpec(r.k)!.hint}</span>
+                )}
               </div>
 
               <div className="prof-fedit-val">
-                <label htmlFor={`${uid}-v-${i}`}>مقدار</label>
                 <ValueInput
                   id={`${uid}-v-${i}`}
                   fieldKey={r.k}
@@ -249,7 +309,7 @@ export function SectionEditor({
               <button
                 type="button"
                 className="prof-fedit-x"
-                aria-label={`حذف ${r.k ? fieldLabel(r.k) : 'فیلد'}`}
+                aria-label={`حذف ${fieldLabel(r.k)}`}
                 onClick={() => setRows(rows.filter((_, j) => j !== i))}
               >×</button>
             </div>
@@ -258,7 +318,7 @@ export function SectionEditor({
 
         {suggestions.length > 0 && (
           <div className="prof-suggest">
-            <span className="prof-suggest-l">افزودن سریع:</span>
+            <span className="prof-suggest-l">افزودن فیلد:</span>
             {suggestions.map((k) => (
               <button key={k} type="button" className="prof-chip" onClick={() => setRows([...rows, { k, v: '' }])}>
                 {fieldLabel(k)}
@@ -267,11 +327,12 @@ export function SectionEditor({
           </div>
         )}
 
-        <div className="prof-modal-row">
-          <button type="button" className="btn btn-ghost" onClick={() => setRows([...rows, { k: '', v: '' }])}>
-            + فیلد دلخواه
-          </button>
+        <CustomFieldAdder
+          existing={rows.map((r) => r.k)}
+          onAdd={(k) => setRows([...rows, { k, v: '' }])}
+        />
 
+        <div className="prof-modal-row">
           <label className="prof-modal-vis">
             <span>چه کسی این بخش را ببیند</span>
             <select value={vis} onChange={(e) => setVis(e.target.value)}>

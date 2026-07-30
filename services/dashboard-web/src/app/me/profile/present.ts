@@ -19,6 +19,8 @@
  *  - Keep the technical truth available; just stop leading with it.
  */
 
+import { RTL_SCRIPT_RE } from '@/lib/rtl';
+
 /* ------------------------------------------------------------------ labels */
 
 export const SECTION_LABEL: Record<string, string> = {
@@ -336,6 +338,52 @@ export function fieldSpec(key: string): FieldSpec | null {
   return FIELD_SPEC[key] ?? FIELD_SPEC[key.toLowerCase()] ?? null;
 }
 
+/* ------------------------------------------------------- key vocabulary */
+
+/**
+ * Custom fields are namespaced (D-187f).
+ *
+ * Field keys are a SHARED VOCABULARY, not per-user text. `passport_no` has to
+ * mean the same thing in every entity, or nothing downstream works: an agent
+ * asked for the owner's passport number would have to guess between
+ * `passport_no`, `passportNumber` and `pp`; an attestation could not say which
+ * field it verifies; and cross-entity matching would be comparing free text.
+ *
+ * So the editor no longer lets anyone type a key. Catalogue fields are chosen
+ * by name; anything genuinely personal gets an `x_` prefix, exactly like a
+ * vendor-prefixed header — it stays storable, queryable and clearly OUTSIDE
+ * the canonical vocabulary, so no future matcher mistakes it for one.
+ */
+export const CUSTOM_PREFIX = 'x_';
+
+export function isCustomKey(key: string): boolean {
+  return key.startsWith(CUSTOM_PREFIX);
+}
+
+/**
+ * Derive a safe storage key from a human label. Returns null when nothing
+ * usable survives, because a field with no key is not a field.
+ *
+ * Mongo forbids `$` at the start and `.` anywhere in a field name; Unicode
+ * letters are otherwise fine, so a Persian label keeps its meaning instead of
+ * degrading into `custom_3`.
+ */
+export function customKey(label: string): string | null {
+  const slug = label
+    .trim()
+    .replace(/[.$]/g, '')
+    .replace(/\s+/g, '_')
+    /* Keep marks (\p{M}) and ZWNJ: in Persian these are not decoration.
+     * Dropping U+0654 turns «شمارهٔ» into «شماره», and dropping U+200C glues
+     * «شماره‌پرونده» into «شمارهپرونده» — the label would silently stop being
+     * the word the owner typed. */
+    .replace(/[^\p{L}\p{M}\p{N}_‌]/gu, '')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  return slug ? `${CUSTOM_PREFIX}${slug}` : null;
+}
+
 /** Display text for a stored enum value (`male` → `مرد`). */
 export function optionLabel(key: string, value: unknown): string | null {
   const spec = fieldSpec(key);
@@ -353,7 +401,12 @@ export function humanise(key: string): string {
 }
 
 export function fieldLabel(key: string): string {
-  return fieldSpec(key)?.label ?? humanise(key);
+  const spec = fieldSpec(key);
+  if (spec) return spec.label;
+  // A custom key carries its own label: `x_رنگ_مورد_علاقه` → «رنگ مورد علاقه».
+  // Persian survives verbatim; Latin gets title-cased by humanise().
+  const bare = isCustomKey(key) ? key.slice(CUSTOM_PREFIX.length) : key;
+  return RTL_SCRIPT_RE.test(bare) ? bare.replace(/_/g, ' ').trim() : humanise(bare);
 }
 
 export const VISIBILITY_LABEL: Record<string, string> = {

@@ -39,16 +39,18 @@ describe('section editor', () => {
     expect(footer).toContain('prof-sec-meta');
   });
 
-  it('labels both halves of a field row and previews how the key will read', () => {
+  it('shows each row by its LABEL and never exposes an editable key (D-187f)', () => {
     const out = html(<SectionEditor entityId="e1" section="identity" initial={{ full_name: 'احسان' }} visibility="private" />);
-    expect(out).toContain('نام فیلد');
-    expect(out).toContain('مقدار');
-    expect(out).toContain('نمایش: نام کامل');   // key → human label, before saving
+    expect(out).toContain('نام کامل');
+    // The storage key must not appear as an input the owner can retype:
+    // renaming in place would orphan the stored value and fork the vocabulary.
+    expect(out).not.toContain('value="full_name"');
+    expect(out).not.toContain('نام فیلد<');
   });
 
   it('offers section-appropriate fields and hides ones already present', () => {
     const out = html(<SectionEditor entityId="e1" section="contact" initial={{ email: 'a@b.com' }} visibility="private" />);
-    expect(out).toContain('افزودن سریع:');
+    expect(out).toContain('افزودن فیلد:');
     expect(out).toContain('تلفن');       // suggested, not yet present
     expect(out).toContain('نشانی');
     // `email` is already a row, so it must not also be offered.
@@ -56,12 +58,24 @@ describe('section editor', () => {
     expect(suggest).not.toContain('>ایمیل<');
   });
 
-  it('keeps the key input ltr and the value input direction-aware', () => {
+  it('keeps the value input direction-aware', () => {
     const out = html(<SectionEditor entityId="e1" section="identity" initial={{ full_name: 'احسان رحیمی' }} visibility="private" />);
-    // Keys are always machine identifiers.
-    expect(out).toContain('placeholder="email" dir="ltr"');
-    // The value carries the direction of what it holds.
     expect(out).toContain('dir="rtl"');
+    // A latin-only identifier field stays ltr regardless of the rtl dialog.
+    const en = html(<SectionEditor entityId="e1" section="identity" initial={{ national_id: '0012345678' }} visibility="private" />);
+    expect(en).toContain('dir="ltr"');
+  });
+
+  it('creates a custom field from a LABEL, with a namespaced key (D-187f)', () => {
+    const out = html(<SectionEditor entityId="e1" section="identity" initial={{}} visibility="private" />);
+    // Closed by default — the catalogue is the primary path.
+    expect(out).toContain('+ فیلد دلخواه');
+  });
+
+  it('marks a field outside the catalogue so it is visibly not canonical', () => {
+    const out = html(<SectionEditor entityId="e1" section="identity" initial={{ x_رنگ_مورد_علاقه: 'آبی' }} visibility="private" />);
+    expect(out).toContain('دلخواه');
+    expect(out).toContain('رنگ مورد علاقه');   // label reconstructed from the key
   });
 
   it('explains that saving replaces the section — versioning is not a surprise', () => {

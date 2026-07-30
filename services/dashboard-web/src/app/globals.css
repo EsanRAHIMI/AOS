@@ -1170,3 +1170,38 @@ button { font: inherit; }
 .prof-fedit textarea:focus, .prof-fedit select:focus {
   outline: none; border-color: rgba(110, 168, 255, 0.55); background: rgba(110, 168, 255, 0.06);
 }
+
+/* ------------------------------------------- D-187f: field rows show labels
+   Storage keys are a shared vocabulary, so the editor shows the field's LABEL
+   and its value — never an editable key. Two columns instead of three also
+   leaves the value control wide enough to actually use. */
+.prof-fedit { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) auto; }
+.prof-fedit-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-top: 7px; }
+.prof-fedit-name > label { font-size: 12.5px; color: var(--text); }
+.prof-fedit-tag {
+  align-self: flex-start; font-size: 9.5px; color: var(--muted);
+  padding: 1px 7px; border-radius: var(--r-pill); border: 1px dashed rgba(255, 255, 255, 0.18);
+}
+.prof-fedit-hint { font-size: 10px; color: var(--muted); opacity: 0.8; line-height: 1.6; }
+.prof-fedit-x { margin-top: 4px; }
+
+.prof-custom-open { align-self: flex-start; }
+.prof-custom {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 12px 14px; border-radius: var(--r-sm);
+  border: 1px dashed rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.02);
+}
+.prof-custom > label { font-size: 11px; color: var(--muted); text-align: start; }
+.prof-custom > input {
+  padding: 8px 11px; border-radius: 9px; font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.04);
+  color: var(--text); unicode-bidi: plaintext; text-align: start;
+}
+.prof-custom > input:focus { outline: none; border-color: rgba(110, 168, 255, 0.55); }
+.prof-custom-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prof-custom-key { font-size: 10.5px; color: var(--muted); opacity: 0.7; font-family: ui-monospace, monospace; }
+
+@media (max-width: 620px) {
+  .prof-fedit { grid-template-columns: minmax(0, 1fr) auto; }
+  .prof-fedit-name { padding-top: 0; }
+}
