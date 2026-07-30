@@ -1205,3 +1205,106 @@ button { font: inherit; }
   .prof-fedit { grid-template-columns: minmax(0, 1fr) auto; }
   .prof-fedit-name { padding-top: 0; }
 }
+
+/* ==================================================== D-189 — rich replies
+   The assistant's answers are structured content (headings, lists, label/value
+   facts), not a paragraph blob. These styles are shared by the dock and the
+   /jarvis stage so one reply looks the same wherever it is read. */
+.rt { display: flex; flex-direction: column; gap: 9px; }
+.rt > *:first-child { margin-top: 0; }
+.rt > *:last-child { margin-bottom: 0; }
+
+.rt-h {
+  margin: 4px 0 0; font-size: 12px; font-weight: 650; letter-spacing: 0.2px;
+  color: var(--text); text-align: start;
+}
+.rt-h::before {
+  content: ''; display: inline-block; width: 3px; height: 11px; border-radius: 2px;
+  background: var(--accent); margin-inline-end: 7px; vertical-align: -1px;
+}
+.rt-p { margin: 0; font-size: 12.5px; line-height: 1.85; color: var(--text); text-align: start; }
+
+.rt-ul, .rt-ol { margin: 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 5px; }
+.rt-ul { list-style: none; padding-inline-start: 4px; }
+.rt-ul > li { position: relative; padding-inline-start: 14px; font-size: 12.5px; line-height: 1.8; text-align: start; }
+.rt-ul > li::before {
+  content: ''; position: absolute; inset-inline-start: 2px; top: 8px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.75;
+}
+.rt-ol > li { font-size: 12.5px; line-height: 1.8; text-align: start; }
+.rt-ol > li::marker { color: var(--muted); font-size: 11px; }
+
+/* Label/value rows — most of what this assistant reports is facts about
+   records, and a fact reads far better as a row than as a sentence. */
+.rt-facts {
+  margin: 0; display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: 1px; border-radius: var(--r-sm); overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.rt-fact { display: contents; }
+.rt-facts dt {
+  padding: 6px 10px; font-size: 11px; color: var(--muted);
+  background: rgba(255, 255, 255, 0.025); text-align: start; white-space: nowrap;
+}
+.rt-facts dd {
+  margin: 0; padding: 6px 10px; font-size: 12.5px; color: var(--text);
+  background: rgba(255, 255, 255, 0.012); text-align: start;
+  overflow-wrap: anywhere; unicode-bidi: isolate;
+}
+
+.rt-quote {
+  margin: 0; padding: 7px 12px; border-inline-start: 2px solid var(--accent);
+  background: rgba(110, 168, 255, 0.06); border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  font-size: 12.5px; line-height: 1.8; color: var(--muted); text-align: start;
+}
+.rt-pre {
+  margin: 0; padding: 10px 12px; border-radius: var(--r-sm); overflow-x: auto;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.6;
+}
+.rt-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  padding: 1px 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.07);
+}
+
+/* ------------------------------------------------ dock message composition */
+.jdock-msg { display: flex; gap: 9px; align-items: flex-start; }
+.jdock-msg--you { justify-content: flex-start; }
+.jdock-body { min-width: 0; flex: 1; }
+
+/* The owner's own words read as a quiet quoted line, not a competing bubble —
+   what matters on screen is the answer. */
+.jdock-msg--you .jdock-body {
+  padding: 7px 11px; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.jdock-you-text { margin: 0; font-size: 12.5px; line-height: 1.75; color: var(--muted); text-align: start; }
+
+.jdock-avatar {
+  flex: none; width: 24px; height: 24px; border-radius: 8px; margin-top: 1px;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #0a0f1c;
+  background: linear-gradient(140deg, var(--accent), var(--accent-2));
+}
+.jdock-avatar--live { animation: op-pulse 1.2s ease-in-out infinite; }
+
+.jdock-did { margin-top: 8px; }
+.jdock-did > summary {
+  cursor: pointer; font-size: 10.5px; color: var(--muted-2); list-style: none;
+  padding: 3px 8px; border-radius: var(--r-pill); display: inline-block;
+  border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02);
+}
+.jdock-did > summary::-webkit-details-marker { display: none; }
+.jdock-did > summary:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.2); }
+.jdock-did .jdock-steps { margin-top: 7px; }
+
+/* Three-dot thinking indicator — a real state, not a spinner for decoration. */
+.jdock-typing { display: inline-flex; gap: 4px; align-items: center; padding: 6px 2px; }
+.jdock-typing i {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--muted);
+  animation: jdock-blink 1.2s ease-in-out infinite;
+}
+.jdock-typing i:nth-child(2) { animation-delay: 0.18s; }
+.jdock-typing i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes jdock-blink { 0%, 60%, 100% { opacity: 0.28; } 30% { opacity: 1; } }
+
+.jdock-scroll { gap: 16px; }

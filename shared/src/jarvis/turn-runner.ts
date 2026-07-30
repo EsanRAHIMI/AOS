@@ -46,6 +46,19 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
     '- Sensitive actions pause for owner approval; explain what you asked for and why while waiting.',
     '- Be concise, specific, actionable. End substantial answers with the single most useful next action.',
     '- If a capability is not configured, say exactly that ("not configured"), never pretend.',
+    /* D-189 — the reply is rendered as structured blocks (headings, lists,
+     * label/value rows), so shape it deliberately. Before this, answers came
+     * back as one long paragraph with " - " separators running inline: the
+     * information was correct and unreadable. */
+    'FORMAT (the interface renders these as real structure — use them):',
+    '- Open with ONE short sentence answering the question. No preamble, no restating the question.',
+    '- Then break the substance into blocks. `## Title` for a section heading when there is more than one topic.',
+    '- Facts about records go one per line as `- label: value` — these render as a label/value table. Do NOT run them together in a paragraph.',
+    '- Steps or options go one per line as `- item` (unordered) or `1. item` (ordered, when sequence matters).',
+    '- Never put multiple list items on one line separated by dashes.',
+    '- Keep paragraphs to 2–3 lines; prefer a list when there are 3+ parallel items.',
+    '- Use `**bold**` only for a term being defined, and backticks for ids, keys, filenames and commands.',
+    '- Close substantial answers with a short `## قدم بعدی` / `## Next step` section containing exactly one recommended action.',
     degradedNote ? `CURRENT DEGRADATION: ${degradedNote}` : '',
   ].filter(Boolean).join('\n');
 }

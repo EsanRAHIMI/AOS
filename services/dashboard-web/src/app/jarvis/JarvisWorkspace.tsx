@@ -16,6 +16,7 @@ import {
   onboardingQuestionsAction, submitOnboardingAction, personalStateAction,
   type JarvisSessionView, type JarvisTurnView, type OnboardingQuestion,
 } from './actions';
+import { RichText } from '@/components/RichText';
 import { dirProps } from '@/lib/rtl';
 
 type IntelStatus = Awaited<ReturnType<typeof intelligenceStatusAction>>;
@@ -207,8 +208,10 @@ export default function JarvisWorkspace() {
                 <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div {...dirProps(t.userText)} style={{ alignSelf: 'flex-end', maxWidth: '80%', background: 'rgba(89,194,255,0.14)', padding: '9px 13px', borderRadius: 14, borderTopRightRadius: 4, whiteSpace: 'pre-wrap' }}>{t.userText}</div>
                   {(t.replyText || t.status === 'completed') && (
-                    <div {...dirProps(t.replyText)} style={{ alignSelf: 'flex-start', maxWidth: '85%', background: 'rgba(255,255,255,0.045)', padding: '10px 14px', borderRadius: 14, borderTopLeftRadius: 4, whiteSpace: 'pre-wrap' }}>
-                      {t.replyText}
+                    <div style={{ alignSelf: 'flex-start', maxWidth: '85%', background: 'rgba(255,255,255,0.045)', padding: '10px 14px', borderRadius: 14, borderTopLeftRadius: 4 }}>
+                      {/* D-189 — same structured renderer as the dock, so one
+                        * reply reads identically wherever it is opened. */}
+                      <RichText text={t.replyText} />
                       <div style={{ marginTop: 6, fontSize: 11, opacity: 0.5, display: 'flex', gap: 10 }} data-no-auto-dir="">
                         {t.reasoningMode === 'none' ? <span>⚠︎ degraded (no model)</span> : <span>{t.provider || 'model'}</span>}
                         {t.costUsd > 0 && <span>${t.costUsd.toFixed(4)}</span>}

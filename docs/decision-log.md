@@ -2,6 +2,41 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-30 — Assistant replies become structure, not a wall of prose (D-189)
+
+Owner: the answers look primitive and the surface looks like a throwaway
+chatbot. Both were true, and they were the same defect at two levels — the
+reply had no structure to render, and the renderer would not have rendered it.
+
+- **The renderer was `<p>{text}</p>`.** A reply listing eleven identity facts
+  arrived as one paragraph with " - " separators running inline. Now
+  `lib/richtext.ts` parses a reply into BLOCKS (heading, paragraph, bullets,
+  numbers, label/value facts, quote, code) and `RichText` builds React elements
+  from them.
+- **Deliberately a small parser, not a markdown dependency.** Two reasons that
+  actually matter here: the output is a data structure rather than HTML, so the
+  renderer never touches `dangerouslySetInnerHTML` — model output is untrusted
+  input and must not get an HTML channel to the DOM; and it handles the shape
+  this system's models really produce, including the inline `- a - b - c` run,
+  which no markdown parser recovers because syntactically it is not a list.
+  That recovery is explicit, guarded (2+ separators, so an ordinary hyphenated
+  sentence is untouched) and pinned by a test using the owner's real reply.
+- **`label: value` lines become a table**, because most of what this assistant
+  reports is facts about records, and a fact reads better as a row than as a
+  clause inside a sentence.
+- **The model is now told to produce structure**: one-sentence answer first,
+  then sections; facts one per line; never multiple list items on one line;
+  close with a single next step. Formatting the output and instructing the
+  output are one change — either alone would have half-worked.
+- **The surface**: replies get an agent avatar and structured body, the owner's
+  own words become a quiet quoted line rather than a competing bubble, tool
+  steps collapse behind «کاری که انجام دادم» instead of hanging under every
+  answer, and a real three-dot thinking state replaces the empty gap.
+
+The same renderer is used by the dock and the `/jarvis` stage, so one reply
+reads identically wherever it is opened. 12 parser tests; 90/90 dashboard,
+280/280 shared, typecheck clean.
+
 ## 2026-07-30 — Jarvis could not see the owner (D-188)
 
 Owner's screenshot: a profile holding full name (fa + en), national id,

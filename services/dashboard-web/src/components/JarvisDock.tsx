@@ -29,6 +29,7 @@ import {
 import { invalidateBlocks } from '@/components/UniverseProvider';
 import { blocksForApprovalDecision } from '@/lib/realtimeBlocks';
 import { bidiProps } from '@/lib/rtl';
+import { RichText } from '@/components/RichText';
 
 type DockState = 'idle' | 'thinking' | 'acting' | 'waiting_approval' | 'error';
 
@@ -297,20 +298,44 @@ export function JarvisDock({ role }: { role: string }) {
               </p>
             )}
             {msgs.map((m, i) => (
-              <div key={i} className={`jdock-msg jdock-msg--${m.who}`}>
-                <span className="jdock-who" dir="ltr">{m.who === 'you' ? 'YOU' : 'JARVIS'}</span>
-                <p {...bidiProps(m.text)}>{m.text}</p>
-                {m.steps && m.steps.length > 0 && (
-                  <ul className="jdock-steps">
-                    {m.steps.map((s, k) => <li key={k} {...bidiProps(s)}>{s}</li>)}
-                  </ul>
+              <article key={i} className={`jdock-msg jdock-msg--${m.who}`}>
+                {m.who === 'jarvis' ? (
+                  <>
+                    <div className="jdock-avatar" aria-hidden>J</div>
+                    <div className="jdock-body">
+                      {/* Structured, not a wall of prose: headings, lists and
+                        * label/value rows come from the reply itself. */}
+                      <RichText text={m.text} />
+                      {m.steps && m.steps.length > 0 && (
+                        <details className="jdock-did">
+                          <summary>{m.steps.length} کاری که انجام دادم</summary>
+                          <ul className="jdock-steps">
+                            {m.steps.map((s, k) => <li key={k} {...bidiProps(s)}>{s}</li>)}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="jdock-body">
+                    <p className="jdock-you-text" {...bidiProps(m.text)}>{m.text}</p>
+                  </div>
                 )}
-              </div>
+              </article>
             ))}
-            {busy && steps.length > 0 && (
-              <ul className="jdock-steps jdock-steps--live">
-                {steps.map((s, k) => <li key={k} {...bidiProps(s)}>{s}</li>)}
-              </ul>
+            {busy && (
+              <div className="jdock-msg jdock-msg--jarvis">
+                <div className="jdock-avatar jdock-avatar--live" aria-hidden>J</div>
+                <div className="jdock-body">
+                  {steps.length > 0 ? (
+                    <ul className="jdock-steps jdock-steps--live">
+                      {steps.map((s, k) => <li key={k} {...bidiProps(s)}>{s}</li>)}
+                    </ul>
+                  ) : (
+                    <span className="jdock-typing" aria-label="در حال کار"><i /><i /><i /></span>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
