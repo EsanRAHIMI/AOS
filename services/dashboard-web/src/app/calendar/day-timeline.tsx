@@ -200,6 +200,13 @@ export function DayTimeline({
 
             <div className="daytl-note-new">
               <textarea
+                /* Explicit, because implicit was ambiguous (D-198b). React
+                 * reported a hydration mismatch here: the server HTML carried
+                 * `dir="rtl"` and the client props did not. An attribute React
+                 * does not own is an attribute it cannot reconcile — so own it.
+                 * `auto` is also the right behaviour: a note may be Persian or
+                 * a pasted English link, and the browser picks per content. */
+                dir="auto"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="یادداشتی برای این رویداد بنویسید…"

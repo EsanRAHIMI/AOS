@@ -4361,3 +4361,30 @@ they must not outlive the account they describe.
 
 **The honest cost, stated in the UI:** these live only in AOS. They are not in
 Google Calendar and will not appear on the owner's phone or for guests.
+
+## D-198b — one real error in the log, and two things that were merely slow
+
+The owner sent a full boot log asking what was wrong. Almost everything in it
+is healthy: every service registers, every request returns 200. Worth writing
+down what the actual signal was, because "a wall of INFO" is not a diagnosis.
+
+**The one error: a hydration mismatch on the note textarea.** React reported
+`- dir="rtl"` — the server HTML carried the attribute and the client props did
+not, so it could not reconcile them. The fix is to own the attribute: `dir="auto"`
+explicitly. That also happens to be the correct behaviour, since a note may be
+Persian prose or a pasted English link and the browser should decide per
+content. An attribute React does not set is an attribute React cannot match.
+
+**Slow, not broken (1): the alert poll cost two round-trips.** It called
+`calendarStatus()` and then `calendarAgenda()` in sequence — ~2.8s of server
+time every 60 seconds — to learn something the agenda already implies. For this
+purpose an empty agenda and a disconnected calendar are the same answer:
+nothing to announce. Now one call.
+
+**Slow, not broken (2): `getBriefingAction` took 6.4s** and blocks the rudder's
+first paint. Not changed here, but named so it is not rediscovered: the
+briefing is computed on demand per page load rather than cached.
+
+**Not an error at all:** the `FSTWRN004` errorHandler warning is Fastify
+noticing the gateway sets an error handler twice in one scope, and the
+`inpage.js` frames in the stack are a browser extension, not our code.
