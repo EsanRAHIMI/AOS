@@ -4420,3 +4420,36 @@ browser extension before React loads — `inpage.js` frames are in the hydration
 stack. `suppressHydrationWarning` declares that mismatch expected, so it stops
 masking real ones. Suppressing a warning you have not diagnosed is how the
 clock bug hid behind it for a turn.
+
+## D-199 — the fix was right, the data was old
+
+The owner saw `<ul><li><p>Whey shake</p></li>…</ul><h3></h3>` in a day view,
+after D-197 had already added `plainText` and I had tested it.
+
+**Both facts were true.** `plainText` is correct and runs in `toEvent` — on
+every event the sync WRITES. But D-196 made sync incremental: `updatedMin`
+re-fetches only events whose `updated` stamp has moved. A breakfast reminder
+mirrored before D-197 has not changed since, so it is never re-fetched, and its
+raw HTML sits in Mongo forever. The fix worked perfectly on data that no longer
+arrives.
+
+This is the shape of the mistake worth remembering: **fixing a transform at the
+write boundary does nothing for rows already written.** Either migrate them or
+clean at the read boundary.
+
+**Chosen: clean at read.** `readAgenda` and `readTasks` run `plainText` over
+`description`, `location` and `notes`. Every stale row heals on the next page
+load — no migration script, no forced re-sync, nothing for the owner to run.
+`plainText` is idempotent, so cleaning already-clean text costs a regex pass.
+
+**Also tightened the conversion.** `<li><p>text</p></li>` is one bullet, not a
+bullet followed by two blank lines: the inner block is unwrapped before the
+block-level newlines are applied. The owner's exact string now renders as
+
+```
+• Whey shake
+• Fruit
+• Dates
+```
+
+and that exact string is a test, so it cannot regress quietly.

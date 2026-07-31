@@ -202,6 +202,11 @@ export function plainText(html: string): string {
   if (!html) return '';
   return html
     .replace(/<\s*br\s*\/?>/gi, '\n')
+    /* A list item is often wrapped: `<li><p>text</p></li>`. Unwrapping the
+     * inner block first means one bullet on one line, instead of a bullet
+     * followed by two blank lines. */
+    .replace(/<\s*li[^>]*>\s*<\s*p[^>]*>/gi, '<li>')
+    .replace(/<\/\s*p\s*>\s*<\/\s*li\s*>/gi, '</li>')
     .replace(/<\/\s*(p|div|li|tr|h[1-6])\s*>/gi, '\n')
     .replace(/<\s*li[^>]*>/gi, '• ')
     .replace(/<[^>]+>/g, '')
@@ -758,7 +763,18 @@ export async function readAgenda(q: AgendaQuery): Promise<CalendarEvent[]> {
     .sort({ start: 1 })
     .limit(Math.min(q.limit ?? 250, 500))
     .toArray();
-  return docs.map((d) => CalendarEventSchema.parse(d));
+  /* Sanitise on READ as well as on write (D-199).
+   *
+   * `toEvent` has stripped HTML since D-197, but rows mirrored before that
+   * still hold `<ul><li><p>…` verbatim — and the incremental sync only
+   * re-fetches events whose `updated` stamp moved, so an unchanged event keeps
+   * its stale description forever. Cleaning here heals every old row on the
+   * next page load, with no migration and no re-sync. `plainText` is
+   * idempotent, so doing it twice costs nothing. */
+  return docs.map((d) => {
+    const ev = CalendarEventSchema.parse(d);
+    return { ...ev, description: plainText(ev.description), location: plainText(ev.location) };
+  });
 }
 
 export async function readTasks(actorId: string, opts: { includeCompleted?: boolean; limit?: number } = {}): Promise<CalendarTask[]> {
@@ -770,7 +786,11 @@ export async function readTasks(actorId: string, opts: { includeCompleted?: bool
     .sort({ due: 1 })
     .limit(Math.min(opts.limit ?? 200, 500))
     .toArray();
-  return docs.map((d) => CalendarTaskSchema.parse(d));
+  // Same healing as events: Google Tasks notes can carry markup too.
+  return docs.map((d) => {
+    const t = CalendarTaskSchema.parse(d);
+    return { ...t, notes: plainText(t.notes) };
+  });
 }
 
 export async function syncStates(actorId: string): Promise<SyncState[]> {

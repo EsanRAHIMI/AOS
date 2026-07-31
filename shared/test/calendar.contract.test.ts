@@ -455,3 +455,69 @@ describe('event reminders are mirrored', () => {
     expect(parsed.reminders.overrides).toEqual([]);
   });
 });
+
+/**
+ * D-199 — the description the owner actually saw.
+ *
+ * `<ul><li><p>Whey shake</p></li>…</ul><h3></h3>` was printed verbatim in the
+ * day view. `plainText` had existed since D-197 and was correct — but it only
+ * ran on WRITE, and the incremental sync re-fetches nothing whose `updated`
+ * stamp has not moved. An event mirrored before D-197 therefore kept its raw
+ * HTML forever. Sanitising on read as well heals every stale row.
+ */
+describe('stale HTML descriptions heal on read', () => {
+  it('converts the exact markup the owner reported into a readable list', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    expect(plainText('<ul><li><p>Whey shake</p></li><li><p>Fruit</p></li><li><p>Dates</p></li></ul><h3></h3>'))
+      .toBe('• Whey shake\n• Fruit\n• Dates');
+  });
+
+  it('does not leave a bullet stranded on its own line', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    const out = plainText('<ul><li><p>یک</p></li></ul>');
+    expect(out).toBe('• یک');
+    expect(out).not.toMatch(/•\s*\n/);
+  });
+
+  it('is idempotent, so cleaning an already-clean row is free', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    const once = plainText('<ul><li><p>a</p></li><li><p>b</p></li></ul>');
+    expect(plainText(once)).toBe(once);
+  });
+
+  it('drops an empty heading rather than leaving a blank line', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    expect(plainText('<p>متن</p><h3></h3>')).toBe('متن');
+  });
+
+  it('cleans a row that was stored before the fix, without a re-sync', async () => {
+    const { storeGrant } = await import('../src/calendar/tokens.js');
+    const { readAgenda } = await import('../src/calendar/sync.js');
+    const { getDb } = await import('../src/db/index.js');
+
+    await storeGrant({
+      actorId: 'owner', accountEmail: 'o@e.com', refreshToken: 'r', accessToken: 'a',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(), scopes: [],
+    }, ENV);
+    await getDb().collection('calendars').insertOne({
+      actorId: 'owner', account: 'o@e.com', calendarId: 'c', summary: 'C', description: '',
+      timeZone: 'UTC', accessRole: 'owner', primary: true, selected: true, enabled: true,
+      isAosCalendar: false, backgroundColor: '', updatedAt: new Date().toISOString(),
+    } as never);
+    await getDb().collection('calendar_events').insertOne({
+      actorId: 'owner', account: 'o@e.com', calendarId: 'c', eventId: 'old',
+      summary: 'Breakfast', description: '<ul><li><p>Whey shake</p></li></ul>',
+      location: '', start: '2026-08-03T08:00:00.000Z', end: '2026-08-03T08:30:00.000Z',
+      allDay: false, status: 'confirmed', timeZone: 'UTC', recurringEventId: '',
+      eventType: 'default', hangoutLink: '', htmlLink: '', organizerEmail: '',
+      attendees: [], etag: '', updated: '', createdByAos: false,
+      syncedAt: new Date().toISOString(),
+    } as never);
+
+    const events = await readAgenda({
+      actorId: 'owner', fromIso: '2026-08-01T00:00:00.000Z', toIso: '2026-08-05T00:00:00.000Z',
+    });
+    expect(events[0].description).toBe('• Whey shake');
+    expect(events[0].description).not.toContain('<');
+  });
+});
