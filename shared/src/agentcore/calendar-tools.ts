@@ -318,7 +318,9 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
        * for — asking permission for it is friction, not governance. */
       if (cls.sensitivity === 'approval' && args.confirm !== true) return needsConfirm(cls.reason);
 
-      const created = await createEvent({
+      let created: Record<string, unknown>;
+      try {
+        created = await createEvent({
         actorId: CALENDAR_ACTOR_ID,
         calendarId: target?.calendarId,
         summary: String(args.summary),
@@ -329,10 +331,26 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
         timeZone: args.timeZone as string | undefined,
         attendees: args.attendees as string[] | undefined,
         withMeet: Boolean(args.withMeet),
-      });
+        });
+      } catch (err) {
+        /* A thrown Google call used to escape the executor and reach the model
+         * as an unlabelled failure, which it then narrated as success. Catch it
+         * and say what happened, in words the reply can repeat. */
+        return { ok: false, summary: `FAILED — رویداد ساخته نشد: ${err instanceof Error ? err.message : String(err)}. Tell the owner it did NOT happen and why.` };
+      }
+
+      /* Verification (D-196). The owner was told "با موفقیت ثبت شد" for an
+       * event that did not exist. A write is not done because a call returned
+       * — it is done when the thing is there. Google echoes the stored event,
+       * so an id is proof; no id means no event, whatever the status code. */
+      const eventId = String(created.id ?? '');
+      if (!eventId) {
+        return { ok: false, summary: 'FAILED — گوگل شناسه‌ای برنگرداند، پس رویداد ثبت نشده. Tell the owner it did NOT happen.' };
+      }
+
       return {
         ok: true,
-        summary: `Created "${args.summary}" in «${target?.summary || target?.calendarId}» — ${String(args.start)} → ${String(args.end)}. id=${String(created.id ?? '')}. Tell the owner it is DONE and name the calendar.`,
+        summary: `DONE — "${args.summary}" ثبت شد در «${target?.summary || target?.calendarId}»، ${String(args.start)} → ${String(args.end)}. id=${eventId}${created.htmlLink ? ` link=${String(created.htmlLink)}` : ''}. Confirm to the owner and name the calendar.`,
         data: created,
       };
     },

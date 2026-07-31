@@ -16,18 +16,15 @@ import { getDb } from '../src/db/index.js';
 /**
  * Run a write and report how far it got.
  *
- * Past the policy, the executor calls Google — which is unconfigured here and
- * throws. That throw is the PASS signal for these tests: it means nothing
- * refused the write. Asserting on it directly is what distinguishes "the gate
- * opened" from "the gate never existed".
+ * Past the policy, the executor calls Google — unconfigured here, so it comes
+ * back as `FAILED —`. That is the PASS signal: it means nothing REFUSED the
+ * write, which is what distinguishes "the gate opened" from "the gate never
+ * existed". Since D-196 the executor catches its own errors, so a thrown
+ * exception here is itself a regression.
  */
 async function attemptWrite(args: Record<string, unknown>): Promise<string> {
-  try {
-    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor(args, ctx);
-    return res.summary;
-  } catch (err) {
-    return `REACHED_GOOGLE: ${err instanceof Error ? err.message : String(err)}`;
-  }
+  const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor(args, ctx);
+  return res.summary.includes('FAILED') ? `REACHED_GOOGLE: ${res.summary}` : res.summary;
 }
 
 const KEY = '0'.repeat(64);

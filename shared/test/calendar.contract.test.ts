@@ -329,3 +329,80 @@ describe('staged month windows', () => {
     expect(monthBoundary(-1, new Date('2026-01-20T00:00:00Z'))).toBe('2025-12-01T00:00:00.000Z');
   });
 });
+
+/**
+ * D-196 — why the mirror was incomplete no matter how often sync was pressed.
+ *
+ * The old event sync used Google's `syncToken`. A token series cannot carry
+ * `timeMin`/`timeMax`, so it had to walk the calendar's entire history — with
+ * `singleEvents: true`, every instance of every recurrence ever. It never
+ * finished, so no token was ever stored, so the next press started the same
+ * endless walk. Events that plainly existed in Google never appeared here.
+ *
+ * These pin the replacement: bounded window + `updatedMin`.
+ */
+describe('event sync is bounded and incremental', () => {
+  it('reaches one month back and three forward — the months anyone looks at', async () => {
+    const { standardWindow } = await import('../src/calendar/sync.js');
+    const w = standardWindow(new Date('2026-07-31T10:00:00Z'));
+    expect(w.from).toBe('2026-06-01T00:00:00.000Z');
+    expect(w.to).toBe('2026-10-01T00:00:00.000Z');
+  });
+
+  it('covers the whole priming range, so staged loading never shows a month the sync will not maintain', async () => {
+    const { standardWindow, PRIME_WINDOWS, monthBoundary } = await import('../src/calendar/sync.js');
+    const now = new Date('2026-07-31T10:00:00Z');
+    const w = standardWindow(now);
+    for (const p of PRIME_WINDOWS) {
+      expect(monthBoundary(p.fromMonth, now) >= w.from).toBe(true);
+      expect(monthBoundary(p.toMonth, now) <= w.to).toBe(true);
+    }
+  });
+
+  it('rolls the window across a year boundary', async () => {
+    const { standardWindow } = await import('../src/calendar/sync.js');
+    expect(standardWindow(new Date('2026-11-15T00:00:00Z')).to).toBe('2027-02-01T00:00:00.000Z');
+    expect(standardWindow(new Date('2026-01-05T00:00:00Z')).from).toBe('2025-12-01T00:00:00.000Z');
+  });
+
+  it('no longer stores a sync token — the mechanism that could not converge is gone', async () => {
+    const src = await import('node:fs').then((fs) => fs.promises.readFile(
+      new URL('../src/calendar/sync.ts', import.meta.url), 'utf8',
+    ));
+    // A token would silently reintroduce the unbounded walk.
+    expect(src).not.toContain('syncToken: nextToken');
+    expect(src).not.toContain('isSyncTokenGone');
+  });
+
+  it('keeps showDeleted, without which a cancelled event lives in the mirror forever', async () => {
+    const src = await import('node:fs').then((fs) => fs.promises.readFile(
+      new URL('../src/calendar/sync.ts', import.meta.url), 'utf8',
+    ));
+    expect(src).toContain('showDeleted: true');
+  });
+});
+
+describe('AOS calendar naming', () => {
+  it('is short — it sits in the owner\'s Google sidebar next to "کار" and "خانواده"', () => {
+    expect(AOS_CALENDAR_SUMMARY).toBe('AOS');
+  });
+});
+
+describe('migration off the sync-token design', () => {
+  it('re-reads the whole window once for a calendar left over from the token era', async () => {
+    // The leftover row's `lastSyncAt` came from a walk that never finished.
+    // Treating it as a watermark would fetch only deltas and freeze the
+    // mirror incomplete — exactly the state the owner was stuck in.
+    const { getDb } = await import('../src/db/index.js');
+    await getDb().collection('calendar_sync_state').insertOne({
+      actorId: 'owner', resourceId: 'primary', kind: 'events',
+      syncToken: 'CJj_leftover', lastFullSyncAt: '', lastSyncAt: '2026-07-30T10:00:00.000Z',
+      lastError: '', fullResyncCount: 0, updatedAt: '2026-07-30T10:00:00.000Z',
+    } as never);
+    const { syncEvents } = await import('../src/calendar/sync.js');
+    const res = await syncEvents('owner', 'primary', {} as NodeJS.ProcessEnv);
+    // Google is unconfigured here, so it fails — but it must have decided on a
+    // FULL pass, which is the thing being asserted.
+    expect(res.fullSync).toBe(true);
+  });
+});

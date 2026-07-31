@@ -4237,3 +4237,51 @@ restate what they already said.
 **The lesson worth keeping.** Governance is for consequences that outlive the
 conversation. Every gate on something reversible, private, and explicitly
 requested is not safety — it is a system arguing with its owner.
+
+## D-196 — the sync design was wrong, not merely slow
+
+The owner: "چرا خودت با دقت کدها رو بررسی نمی‌کنی؟" Fair. I had been patching
+symptoms. Reading the sync path properly found one root cause behind two of the
+three complaints.
+
+**Root cause.** Event sync used Google's `syncToken` series. Per the official
+sync guide a token is incompatible with `timeMin`/`timeMax`, so a tokenised
+series must walk the calendar's ENTIRE history — and with `singleEvents: true`
+that means every instance of every recurrence since the calendar was created.
+On a real calendar that is thousands of pages. It never finished, so no token
+was ever stored, so the next press of "همگام‌سازی" started the same endless
+walk. Events plainly present in Google never appeared. Pressing sync harder
+could not fix it; the mechanism could not converge.
+
+**Replacement.** Stop mirroring history. Nobody looks at 2019.
+
+```
+window  = one month back, three forward (standardWindow)
+refresh = same window + updatedMin  → only what changed
+          + showDeleted             → cancellations still arrive
+```
+
+`updatedMin` is illegal with a sync token and perfectly legal with time bounds,
+so this is ONE mechanism instead of two, always bounded, and cheap after the
+first pass. `lastSyncAt` is the entire state — no tokens, no 410 recovery,
+nothing that can wedge. The watermark advances only on success, or a failed
+pass would silently skip everything that changed during it, and it is backdated
+a minute because two clocks are involved and a missed event is worse than a
+re-read.
+
+**Migration.** A row left by the token design has a `lastSyncAt` from a walk
+that never completed. Trusting it as a watermark would fetch only deltas and
+freeze the incomplete mirror permanently. The leftover token is the marker: if
+one is present, that calendar gets one full window pass.
+
+**The false success.** Jarvis reported "با موفقیت ثبت شد" for an event that did
+not exist: `createEvent` threw, the throw escaped the executor, and the model
+narrated the unlabelled failure as success. Now the executor catches it and
+returns `FAILED — … Tell the owner it did NOT happen and why`, and success
+requires proof — Google echoes the stored event, so no id means no event
+whatever the status code. A write is done when the thing is there, not when a
+call returns.
+
+**Naming.** `AOS · Autonomous OS` → `AOS`. It is a calendar name in the owner's
+Google sidebar next to "کار" and "خانواده". The old name is kept as an alias so
+the already-created calendar is still recognised as ours.

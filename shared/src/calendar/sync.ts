@@ -130,36 +130,20 @@ const stateCol = () => collection<SyncState>(COLLECTIONS.CALENDAR_SYNC_STATE);
 
 /* --------------------------------------------------------------- constants */
 
-/**
- * The ONE parameter set for event syncs.
- *
- * Rule 3 above: these must be byte-identical between the initial full sync and
- * every incremental one. Anything time-bounded (`timeMin`, `timeMax`) is
- * deliberately absent — it is illegal alongside a sync token, and a mirror
- * bounded by a moving window would quietly lose events as the window slides.
- */
-const EVENT_SYNC_PARAMS = {
-  maxResults: 250,
-  singleEvents: true,       // expand recurrences into instances we can render
-  showDeleted: true,        // required: this is how deletions reach us
-} as const;
-
-export const AOS_CALENDAR_SUMMARY = 'AOS · Autonomous OS';
+/* Short on purpose (D-196): this string is a calendar name in the owner's
+ * Google Calendar sidebar, next to names like "کار" and "خانواده". */
+export const AOS_CALENDAR_SUMMARY = 'AOS';
+/** Names this system has used for its own calendar, so older ones are still recognised. */
+const AOS_CALENDAR_ALIASES = new Set([AOS_CALENDAR_SUMMARY, 'AOS · Autonomous OS']);
 
 /**
  * Priming windows, in the order the owner actually looks at them (D-194):
  * this month first, then next, then last, then the month after next.
  *
- * These are BOUNDED reads (`timeMin`/`timeMax`) and deliberately carry NO sync
- * token — the official sync guide forbids combining the two, and a request that
- * mixes them is rejected. So the two mechanisms serve different jobs and are
- * never mixed in one series:
- *
- *   priming  → bounded, throwaway, makes the grid usable in seconds
- *   series   → unbounded, tokenised, makes every later update cheap
- *
- * A first sync used to be one unbounded walk of every calendar across all time,
- * which is why connecting took so long before anything appeared.
+ * A first sync used to be one unbounded walk of every calendar across all
+ * time, which is why connecting took minutes before anything appeared. These
+ * windows are read in viewing order so the current month is on screen while
+ * the rest is still arriving.
  */
 export const PRIME_WINDOWS: ReadonlyArray<{ label: string; fromMonth: number; toMonth: number }> = [
   { label: 'current', fromMonth: 0, toMonth: 1 },
@@ -269,7 +253,7 @@ export async function syncCalendarList(actorId: string, env: NodeJS.ProcessEnv =
     primary: Boolean(c.primary),
     selected: c.selected !== false,
     backgroundColor: String(c.backgroundColor ?? ''),
-    isAosCalendar: String(c.summary ?? '') === AOS_CALENDAR_SUMMARY,
+    isAosCalendar: AOS_CALENDAR_ALIASES.has(String(c.summary ?? '')),
     enabled: false,      // replaced below by the owner's stored choice
     updatedAt: now,
   }));
@@ -452,85 +436,145 @@ export interface SyncResult {
   error: string;
 }
 
-export async function syncEvents(
-  actorId: string, calendarId: string, env: NodeJS.ProcessEnv = process.env,
-): Promise<SyncResult> {
+/**
+ * Event sync — bounded windows with an incremental refresh (rewritten D-196).
+ *
+ * The previous design used Google's `syncToken` series. It was correct by the
+ * letter of the sync guide and wrong for this system, for a reason the guide
+ * states plainly: a sync token is incompatible with `timeMin`/`timeMax`, so a
+ * tokenised series must walk the calendar's ENTIRE history — and with
+ * `singleEvents: true` that means every instance of every recurrence since the
+ * calendar was created. On a real calendar that is thousands of pages. In
+ * development it never finished: the dev server restarted, no token was ever
+ * stored, and the next sync started the same endless walk again. The owner
+ * pressed "همگام‌سازی" repeatedly and events legitimately in their Google
+ * Calendar never appeared. That is the bug.
+ *
+ * The fix is to stop trying to mirror all of history. Nobody looks at 2019.
+ * Sync becomes:
+ *
+ *   window  = the months actually on screen (`PRIME_WINDOWS`, extendable)
+ *   refresh = the same window plus `updatedMin`, which returns ONLY what
+ *             changed since the last pass, plus `showDeleted` so cancellations
+ *             are seen
+ *
+ * `updatedMin` is incompatible with a sync token but perfectly legal with time
+ * bounds, so this is one mechanism instead of two, always bounded, and cheap
+ * on every pass after the first. Deleting a stale row is handled by
+ * `showDeleted`; an event dragged into the window from outside still arrives,
+ * because moving it updates it.
+ */
+export interface SyncResult {
+  resourceId: string;
+  upserted: number;
+  deleted: number;
+  fullSync: boolean;
+  pages: number;
+  error: string;
+}
+
+/** Every request in the window series shares these — see D-194/D-196. */
+const WINDOW_PARAMS = { maxResults: 250, singleEvents: true, showDeleted: true } as const;
+
+/**
+ * Sync one calendar over one time window.
+ *
+ * `updatedMin` turns the second and every later pass into a delta. It is
+ * deliberately backdated by a minute: Google's `updated` stamps and our clock
+ * are not the same clock, and losing an event is far worse than re-reading one.
+ */
+export async function syncEventWindow(
+  actorId: string, calendarId: string, fromIso: string, toIso: string,
+  updatedMin: string, env: NodeJS.ProcessEnv = process.env,
+): Promise<{ upserted: number; deleted: number; pages: number; error: string }> {
   const account = (await getGrant(actorId))?.accountEmail ?? '';
-  const prior = await readState(actorId, calendarId, 'events');
-  let syncToken = prior?.syncToken ?? '';
-  let fullSync = !syncToken;
   let upserted = 0;
   let deleted = 0;
   let pages = 0;
 
-  const runPass = async (token: string): Promise<string> => {
+  try {
     let pageToken = '';
-    let nextSync = '';
     for (;;) {
-      const res = await googleCall<{
-        items?: Array<Record<string, unknown>>; nextPageToken?: string; nextSyncToken?: string;
-      }>(actorId, CALENDAR_API, `/calendars/${encodeURIComponent(calendarId)}/events`, {
-        query: { ...EVENT_SYNC_PARAMS, syncToken: token || undefined, pageToken: pageToken || undefined },
-        env,
-      });
+      const res = await googleCall<{ items?: Array<Record<string, unknown>>; nextPageToken?: string }>(
+        actorId, CALENDAR_API, `/calendars/${encodeURIComponent(calendarId)}/events`,
+        {
+          query: {
+            ...WINDOW_PARAMS,
+            timeMin: fromIso,
+            timeMax: toIso,
+            updatedMin: updatedMin || undefined,
+            pageToken: pageToken || undefined,
+          },
+          env,
+        },
+      );
       pages += 1;
 
       for (const raw of res.items ?? []) {
         const ev = toEvent(actorId, calendarId, raw, account);
         if (!ev.eventId) continue;
-        // Rule 2: cancellations arrive as items and must leave the mirror.
+        // A cancellation is a result, not an absence — it must leave the mirror.
         if (ev.status === 'cancelled') {
           const r = await eventsCol().deleteOne({ actorId, calendarId, eventId: ev.eventId });
           deleted += r.deletedCount ?? 0;
-        } else {
-          if (await upsertEvent(ev)) upserted += 1;
+        } else if (await upsertEvent(ev)) {
+          upserted += 1;
         }
       }
 
-      // Rule 5: the sync token only appears on the final page.
-      if (res.nextPageToken) { pageToken = res.nextPageToken; continue; }
-      nextSync = res.nextSyncToken ?? '';
-      break;
+      if (!res.nextPageToken) break;
+      pageToken = res.nextPageToken;
     }
-    return nextSync;
-  };
-
-  let nextToken = '';
-  try {
-    nextToken = await runPass(syncToken);
   } catch (err) {
-    if (err instanceof GoogleApiError && err.isSyncTokenGone) {
-      // Rule 4: the mirror for this calendar is now untrustworthy. Drop it and
-      // rebuild rather than merging old rows with a fresh full sync.
-      await eventsCol().deleteMany({ actorId, calendarId });
-      syncToken = '';
-      fullSync = true;
-      upserted = 0;
-      deleted = 0;
-      nextToken = await runPass('');
-      await writeState(SyncStateSchema.parse({
-        actorId, resourceId: calendarId, kind: 'events', syncToken: nextToken,
-        lastFullSyncAt: nowIso(), lastSyncAt: nowIso(), lastError: '',
-        fullResyncCount: (prior?.fullResyncCount ?? 0) + 1, updatedAt: nowIso(),
-      }));
-      return { resourceId: calendarId, upserted, deleted, fullSync, pages, error: '' };
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    await writeState(SyncStateSchema.parse({
-      actorId, resourceId: calendarId, kind: 'events', syncToken: prior?.syncToken ?? '',
-      lastFullSyncAt: prior?.lastFullSyncAt ?? '', lastSyncAt: nowIso(), lastError: message,
-      fullResyncCount: prior?.fullResyncCount ?? 0, updatedAt: nowIso(),
-    }));
-    return { resourceId: calendarId, upserted, deleted, fullSync, pages, error: message };
+    return { upserted, deleted, pages, error: err instanceof Error ? err.message : String(err) };
   }
+  return { upserted, deleted, pages, error: '' };
+}
+
+/** How far the mirror reaches: one month back, three forward. */
+export function standardWindow(now: Date = new Date()): { from: string; to: string } {
+  return { from: monthBoundary(-1, now), to: monthBoundary(3, now) };
+}
+
+/**
+ * Sync one calendar across the standard window.
+ *
+ * First pass reads the window in full; later passes read only what changed.
+ * `lastSyncAt` is stored per calendar and is the whole of the state — no
+ * tokens, no 410 recovery, nothing that can wedge.
+ */
+export async function syncEvents(
+  actorId: string, calendarId: string, env: NodeJS.ProcessEnv = process.env,
+): Promise<SyncResult> {
+  const prior = await readState(actorId, calendarId, 'events');
+  /* Migration (D-196). A row left by the token design carries a `lastSyncAt`
+   * from a walk that never completed, so trusting it as a watermark would
+   * fetch only changes and freeze an incomplete mirror permanently. The
+   * leftover token is the marker: if one is present, this calendar has never
+   * had a trustworthy full pass and gets one now. */
+  const staleTokenEra = Boolean(prior?.syncToken);
+  const first = !prior?.lastSyncAt || staleTokenEra;
+  const { from, to } = standardWindow();
+  // Back off a minute: two clocks, and a missed event is worse than a re-read.
+  const updatedMin = first ? '' : new Date(new Date(prior!.lastSyncAt).getTime() - 60_000).toISOString();
+
+  const res = await syncEventWindow(actorId, calendarId, from, to, updatedMin, env);
 
   await writeState(SyncStateSchema.parse({
-    actorId, resourceId: calendarId, kind: 'events', syncToken: nextToken,
-    lastFullSyncAt: fullSync ? nowIso() : (prior?.lastFullSyncAt ?? ''),
-    lastSyncAt: nowIso(), lastError: '',
+    actorId, resourceId: calendarId, kind: 'events',
+    syncToken: '',                                   // retired: see the note above
+    lastFullSyncAt: first ? nowIso() : (prior?.lastFullSyncAt ?? ''),
+    // Only advance the watermark on success, or a failed pass would silently
+    // skip everything that changed during it.
+    lastSyncAt: res.error ? (prior?.lastSyncAt ?? '') : nowIso(),
+    lastError: res.error,
     fullResyncCount: prior?.fullResyncCount ?? 0, updatedAt: nowIso(),
   }));
-  return { resourceId: calendarId, upserted, deleted, fullSync, pages, error: '' };
+
+  return {
+    resourceId: calendarId, upserted: res.upserted, deleted: res.deleted,
+    fullSync: first, pages: res.pages, error: res.error,
+  };
 }
 
 /* --------------------------------------------------------------- task sync */
@@ -698,10 +742,13 @@ export async function syncFirstPaint(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<PrimeResult[]> {
   const calendars = await syncCalendarList(actorId, env);
-  const tokens = new Map(
-    (await syncStates(actorId)).filter((s) => s.kind === 'events').map((s) => [s.resourceId, s.syncToken]),
+  /* Coldness is now "never synced", not "has no sync token" — tokens were
+   * retired in D-196 and a token check here would prime every calendar on
+   * every run, spending quota to re-read what is already mirrored. */
+  const synced = new Map(
+    (await syncStates(actorId)).filter((st) => st.kind === 'events').map((st) => [st.resourceId, st.lastSyncAt]),
   );
-  const cold = calendars.filter((c) => c.enabled && !tokens.get(c.calendarId));
+  const cold = calendars.filter((c) => c.enabled && !synced.get(c.calendarId));
   if (cold.length === 0) return [];
 
   const out: PrimeResult[] = [];
