@@ -1879,3 +1879,42 @@ button { font: inherit; }
 }
 .daytl-note-new textarea:focus { outline: none; border-color: rgba(255,255,255,.28); }
 .daytl-note-note { margin: 8px 0 0; font-size: .66rem; color: var(--muted); }
+
+/* ---------------------------------------------- owner preferences (D-202) */
+
+.prefs-page { display: flex; flex-direction: column; gap: 18px; }
+.prefs { display: flex; flex-direction: column; gap: 14px; }
+.prefs-card { padding: 18px 20px; }
+.prefs-card h2 { margin: 0 0 6px; font-size: .95rem; }
+
+.prefs-grid {
+  display: grid; gap: 14px 18px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.prefs-grid label { display: flex; flex-direction: column; gap: 5px; }
+.prefs-grid label > span { font-size: .76rem; color: var(--muted); }
+.prefs-grid em {
+  font-style: normal; font-size: .66rem; color: var(--muted); opacity: .8;
+  unicode-bidi: plaintext;
+}
+.prefs-grid select,
+.prefs-grid input {
+  font: inherit; font-size: .82rem; color: var(--fg);
+  padding: 8px 10px; border-radius: 10px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: saturate(160%) blur(10px);
+}
+.prefs-grid select:focus,
+.prefs-grid input:focus { outline: none; border-color: rgba(255,255,255,.30); }
+
+/* The preview is the verification: a zone name proves nothing, a clock does. */
+.prefs-preview { display: flex; flex-wrap: wrap; gap: 10px 32px; margin: 10px 0 0; }
+.prefs-preview > div { display: flex; flex-direction: column; gap: 3px; }
+.prefs-preview dt { font-size: .68rem; color: var(--muted); margin: 0; }
+.prefs-preview dd {
+  margin: 0; font-size: 1.05rem; font-variant-numeric: tabular-nums;
+  unicode-bidi: plaintext;
+}
+
+.prefs-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

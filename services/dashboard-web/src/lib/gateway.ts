@@ -391,6 +391,9 @@ export const gateway = {
     call<{ calendarId: string; enabled: boolean; removed: number }>('/v1/calendar/calendars/toggle',
       { method: 'POST', body: JSON.stringify({ calendarId, enabled }) }),
   calendarSync: () => call<{ results: Array<Record<string, unknown>> }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
+  ownerPreferences: () => call<{ preferences: Record<string, unknown> }>('/v1/settings/preferences'),
+  saveOwnerPreferences: (patch: Record<string, unknown>) =>
+    call<{ preferences: Record<string, unknown> }>('/v1/settings/preferences', { method: 'PUT', body: JSON.stringify(patch) }),
   calendarNotes: (eventIds: string[]) => call<{ notes: Record<string, Array<Record<string, unknown>>> }>(
     `/v1/calendar/notes?eventIds=${encodeURIComponent(eventIds.join(','))}`),
   calendarSaveNote: (body: { calendarId: string; eventId: string; body: string; noteId?: string }) =>

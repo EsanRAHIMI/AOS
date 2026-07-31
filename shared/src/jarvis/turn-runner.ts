@@ -25,6 +25,7 @@ import {
 } from './session.js';
 import { classifyIntentFallback, composeJarvisResponseFallback, buildJarvisContextPacket, detectLanguage } from './index.js';
 import { buildOwnerIdentityContext } from '../cin/context.js';
+import { getPreferences, DEFAULT_PREFERENCES, type OwnerPreferences } from '../settings/index.js';
 import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
@@ -129,8 +130,8 @@ export interface JarvisTurnResult {
  * is stated unambiguously: an exact instant, the zone it is expressed in, and
  * the same day in both calendars the owner uses.
  */
-export function nowContext(now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): string {
-  const zone = env.OWNER_TIMEZONE || env.TZ || 'Asia/Tehran';
+export function nowContext(now: Date = new Date(), prefs: OwnerPreferences = DEFAULT_PREFERENCES): string {
+  const zone = prefs.timezone;
   const fmt = (opts: Intl.DateTimeFormatOptions, locale = 'en-GB') =>
     new Intl.DateTimeFormat(locale, { timeZone: zone, ...opts }).format(now);
 
@@ -144,7 +145,8 @@ export function nowContext(now: Date = new Date(), env: NodeJS.ProcessEnv = proc
   return [
     'RIGHT NOW — use these values for every date you write. Never guess a date, and never take one from memory:',
     `- current instant: ${now.toISOString()} (UTC)`,
-    `- owner's timezone: ${zone}`,
+    `- owner's timezone: ${zone} (from their settings — they may have travelled; trust this over anything you remember)`,
+    `- owner's currency: ${prefs.currency} · language: ${prefs.language} · calendar: ${prefs.calendarSystem}`,
     `- today, local: ${isoDay} (${weekday}) — ${jalali}`,
     `- local time now: ${clock}`,
     `- "today" = ${isoDay}. "tomorrow" = ${new Date(now.getTime() + 86_400_000).toISOString().slice(0, 10)}. "yesterday" = ${new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)}.`,
@@ -170,13 +172,15 @@ export async function assembleTurnContext(
    * missions and a transcript but no identity, so it truthfully reported that
    * nothing personal was on file while the CIN entity held a full profile. */
   const identity = await buildOwnerIdentityContext();
+  // One source of truth for zone, language, currency and calendar (D-202).
+  const prefs = await getPreferences();
   /* Transcript LAST, not first (D-200). It is the context most likely to
    * answer a follow-up, and the nearer it sits to the question the more
    * reliably it is used. Standing facts — who the owner is, what they have
    * recorded — go above it, because they do not change turn to turn. */
   const parts = [
     // First, and non-negotiable: the model cannot read a clock (D-201).
-    nowContext(new Date(), env),
+    nowContext(new Date(), prefs),
     identity.text,
     mem.text ? `OWNER MEMORY (provenance-tagged — [CONFIRMED] owner-stated, [INFERRED] concluded, [TEMP] conversational):\n${mem.text}` : 'OWNER MEMORY: none recorded yet.',
     missions.text ? `ACTIVE MISSION HIERARCHY (today's work connects upward through these):\n${missions.text}` : 'ACTIVE MISSIONS: none yet.',

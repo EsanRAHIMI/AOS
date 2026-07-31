@@ -33,6 +33,7 @@ import { verifyChain } from '../cin/ledger.js';
 import { listDocuments } from '../cin/documents.js';
 import { buildOwnerIdentityContext } from '../cin/context.js';
 import { registerCalendarTools } from './calendar-tools.js';
+import { getPreferences, setPreferences, isValidTimezone, PreferencesPatchSchema } from '../settings/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -631,6 +632,73 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
     executor: async (): Promise<ToolResult> => {
       const check = await verifyChain();
       return { ok: check.ok, summary: check.ok ? `ledger intact: ${check.length} records, head ${check.headHash?.slice(0, 16) ?? 'empty'}` : `LEDGER BROKEN at seq ${check.brokenAtSeq}: ${check.reason}`, data: check };
+    },
+  });
+
+  /* ----------------------------- preferences ----------------------------- */
+  /* D-202. "I'm in Dubai now" must be a sentence, not a settings expedition —
+   * and the answer must persist, because a timezone the assistant knows only
+   * for this conversation is worse than one it does not know at all. */
+
+  registry.register({
+    definition: {
+      name: 'owner_preferences_read', version: '1.0.0',
+      purpose: "Read the owner's timezone, language, currency, calendar system, week start and clock format. Everything in AOS formats dates and money from these.",
+      family: 'settings', ownerModule: 'shared/src/settings', inputFields: {}, outputFields: {},
+      requiredActorScope: 'user', permission: '', riskLevel: 'low', policyCategory: 'read_only',
+      requiresApproval: false, ownerOnly: false, timeoutMs: 5000, maxRetries: 1, idempotent: true,
+      sideEffect: 'none', evidenceRequired: false, rollbackAvailable: false,
+      outputTrust: 'trusted_internal', available: true, unavailableReason: '',
+    },
+    inputSchema: z.object({}),
+    executor: async (): Promise<ToolResult> => {
+      const p = await getPreferences();
+      return {
+        ok: true,
+        summary: `timezone=${p.timezone} language=${p.language} currency=${p.currency} calendar=${p.calendarSystem} weekStartsOn=${p.weekStartsOn} clock=${p.hourCycle}`,
+        data: p,
+      };
+    },
+  });
+
+  registry.register({
+    definition: {
+      name: 'owner_preferences_update', version: '1.0.0',
+      purpose: "Change the owner's timezone, language, currency, calendar system, week start or clock format. Use when they say they have travelled or moved. Applies to the whole system immediately.",
+      family: 'settings', ownerModule: 'shared/src/settings', inputFields: {}, outputFields: {},
+      requiredActorScope: 'user', permission: '', riskLevel: 'low', policyCategory: 'internal_reversible',
+      requiresApproval: false, ownerOnly: true, timeoutMs: 5000, maxRetries: 0, idempotent: false,
+      sideEffect: 'internal_write', evidenceRequired: false, rollbackAvailable: true,
+      outputTrust: 'trusted_internal', available: true, unavailableReason: '',
+    },
+    inputSchema: z.object({
+      timezone: z.string().optional().describe('IANA zone, e.g. Asia/Dubai — NOT a city name or an offset'),
+      language: z.string().optional().describe('BCP-47, e.g. fa-IR or en-AE'),
+      currency: z.string().optional().describe('ISO 4217, e.g. AED'),
+      calendarSystem: z.enum(['gregorian', 'jalali', 'islamic']).optional(),
+      weekStartsOn: z.number().int().min(0).max(6).optional(),
+      hourCycle: z.enum(['h23', 'h12']).optional(),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      if (!ctx.isOwner) return { ok: false, summary: 'تنظیمات فقط توسط مالک سیستم تغییر می‌کند.' };
+      const patch = PreferencesPatchSchema.parse(args);
+      if (patch.timezone && !isValidTimezone(patch.timezone)) {
+        return {
+          ok: false,
+          summary: `"${patch.timezone}" is not an IANA timezone. Dubai is Asia/Dubai, Tehran is Asia/Tehran. Ask the owner which city they are in and convert it yourself — do not pass a city name or a UTC offset.`,
+        };
+      }
+      try {
+        const next = await setPreferences(patch);
+        const changed = Object.keys(patch).join(', ') || 'nothing';
+        return {
+          ok: true,
+          summary: `DONE — updated ${changed}. Now: timezone=${next.timezone} currency=${next.currency} language=${next.language} calendar=${next.calendarSystem}. Every date and price in AOS now uses these. Confirm to the owner and state the new local time.`,
+          data: next,
+        };
+      } catch (err) {
+        return { ok: false, summary: `FAILED — ${err instanceof Error ? err.message : String(err)}` };
+      }
     },
   });
 

@@ -4574,3 +4574,43 @@ only in the payload.
 
 Thirteen tests, including the Tehran midnight rollover and the exact "eventId:"
 line whose absence caused the refusal.
+
+## D-202 — the owner moved to Dubai and nothing noticed
+
+There was nothing to notice with. Timezone was an environment variable needing
+a restart. Calendar system was a URL parameter. Language was hard-coded Persian
+in a dozen strings. Currency did not exist at all. Four different mechanisms,
+one of them requiring a deploy, and Jarvis could see none of them.
+
+**Preferences are a record, not configuration.** One document, read by
+everything that formats a date, a time, a number or a price: the calendar grid,
+the alert sentences, and the RIGHT NOW block Jarvis reasons from. Fields:
+timezone, language, currency, calendar system (gregorian/jalali/islamic), week
+start, hour cycle, numerals.
+
+**Validated where the owner can still see the field.** A bad IANA zone does not
+fail loudly — `Intl` throws deep inside a formatter, on another page, hours
+later. `setPreferences` rejects it at the boundary, along with a currency that
+is not ISO 4217 and a language tag `Intl` cannot use. Reads never throw: a
+formatting call site cannot meaningfully handle "preferences unavailable", and
+a date in the wrong zone beats a page that fails to render.
+
+**The offset is computed per instant, never stored.** Dubai is +04:00 all year;
+London is not. A cached offset is a bug that appears twice a year.
+
+**Jarvis can change them.** `owner_preferences_read` / `_update`, so "من الان
+دبی هستم" is a sentence rather than a settings expedition — and it persists,
+because an assistant that knows your timezone for one conversation is worse
+than one that does not know it. A city name is rejected with the fix in the
+message ("Dubai is Asia/Dubai — convert it yourself"), not silently.
+
+**What is deliberately NOT here:** anything Google owns. An event keeps its own
+timezone. A meeting booked in Tehran does not move because the owner is in
+Dubai this week. This record governs how "today" and "2pm" are interpreted and
+how things are displayed — not what already happened.
+
+**The settings page leads with a live preview.** A timezone cannot be verified
+by reading its name — "Asia/Dubai" tells you nothing — but a clock reading
+14:32 tells you immediately whether it is right.
+
+Default is now Asia/Dubai + AED, since that is where the owner is.

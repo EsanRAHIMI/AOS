@@ -15,6 +15,7 @@ import {
   CALENDAR_ACTOR_ID, syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
   ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
   saveEventNote, readEventNotes, deleteEventNote,
+  getPreferences, setPreferences, PreferencesPatchSchema,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -245,6 +246,28 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
       const purged = await purgeMirror(OWNER);
       return { removed, purged };
     });
+  });
+
+  /* -------------------------------------------------- owner preferences */
+  /* Lives on the calendar router because timezone is its most consequential
+   * setting, but it is system-wide (D-202): language, currency and calendar
+   * system are read by every page and by Jarvis. */
+
+  app.get('/v1/settings/preferences', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    return handle(reply, async () => ({ preferences: await getPreferences() }));
+  });
+
+  app.put<{ Body: Record<string, unknown> }>('/v1/settings/preferences', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const parsed = PreferencesPatchSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return failure(ERROR_CODES.VALIDATION, parsed.error.message);
+    try {
+      return success({ preferences: await setPreferences(parsed.data) });
+    } catch (err) {
+      // A bad timezone must fail here, not silently inside a formatter later.
+      return failure(ERROR_CODES.VALIDATION, err instanceof Error ? err.message : 'invalid');
+    }
   });
 
   /* -------------------------------------------------------------- notes */

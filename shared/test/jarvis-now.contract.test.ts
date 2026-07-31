@@ -15,10 +15,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setTestDb, getDb } from '../src/db/index.js';
 import { createFakeDb } from './helpers/fake-db.js';
 import { nowContext, jarvisSystemPrompt } from '../src/jarvis/turn-runner.js';
+import { DEFAULT_PREFERENCES } from '../src/settings/preferences.js';
 import { buildCoreToolFamilies } from '../src/agentcore/families.js';
 import { storeGrant, CALENDAR_ACTOR_ID } from '../src/calendar/tokens.js';
 
-const ENV = { OWNER_TIMEZONE: 'Asia/Tehran', GOOGLE_TOKEN_ENC_KEY: '0'.repeat(64) } as unknown as NodeJS.ProcessEnv;
+const ENV = { GOOGLE_TOKEN_ENC_KEY: '0'.repeat(64) } as unknown as NodeJS.ProcessEnv;
+
+/* Preferences, not env (D-202): the timezone became a stored record the owner
+ * can change from the settings page and Jarvis can change on request. */
+const PREFS = { ...DEFAULT_PREFERENCES, timezone: 'Asia/Tehran' };
 beforeEach(() => { setTestDb(createFakeDb().db); });
 
 describe('nowContext', () => {
@@ -26,42 +31,42 @@ describe('nowContext', () => {
   const now = new Date('2026-07-31T10:05:00.000Z');
 
   it('states today as an absolute date, which is the input that was missing', () => {
-    expect(nowContext(now, ENV)).toContain('today, local: 2026-07-31');
+    expect(nowContext(now, PREFS)).toContain('today, local: 2026-07-31');
   });
 
   it('gives the exact instant, so nothing has to be inferred', () => {
-    expect(nowContext(now, ENV)).toContain('2026-07-31T10:05:00.000Z');
+    expect(nowContext(now, PREFS)).toContain('2026-07-31T10:05:00.000Z');
   });
 
   it('names the timezone — a time without one is a different meeting elsewhere', () => {
-    const out = nowContext(now, ENV);
+    const out = nowContext(now, PREFS);
     expect(out).toContain("owner's timezone: Asia/Tehran");
     expect(out).toContain('timeZone Asia/Tehran');
   });
 
   it('resolves the local clock in the owner\'s zone, not in UTC', () => {
     // Iran is UTC+03:30 all year — DST was abolished in 2022.
-    expect(nowContext(now, ENV)).toContain('local time now: 13:35');
+    expect(nowContext(now, PREFS)).toContain('local time now: 13:35');
   });
 
   it('spells out today, tomorrow and yesterday so no arithmetic is guessed', () => {
-    const out = nowContext(now, ENV);
+    const out = nowContext(now, PREFS);
     expect(out).toContain('"today" = 2026-07-31');
     expect(out).toContain('"tomorrow" = 2026-08-01');
     expect(out).toContain('"yesterday" = 2026-07-30');
   });
 
   it('gives the Jalali date too, since the owner schedules in both', () => {
-    expect(nowContext(now, ENV)).toMatch(/مرداد|امرداد/);
+    expect(nowContext(now, PREFS)).toMatch(/مرداد|امرداد/);
   });
 
   it('forbids taking the date from anywhere else', () => {
-    expect(nowContext(now, ENV)).toContain('Never guess a date');
+    expect(nowContext(now, PREFS)).toContain('Never guess a date');
   });
 
   it('rolls over midnight in the local zone, not UTC', () => {
     // 20:45 UTC is already 00:15 the NEXT day in Tehran.
-    expect(nowContext(new Date('2026-07-31T20:45:00.000Z'), ENV)).toContain('today, local: 2026-08-01');
+    expect(nowContext(new Date('2026-07-31T20:45:00.000Z'), PREFS)).toContain('today, local: 2026-08-01');
   });
 });
 
