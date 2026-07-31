@@ -6,12 +6,13 @@
  * real registered tools against a seeded mirror, because a tool that is merely
  * *registered* is exactly the failure mode this is fixing.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setTestDb } from '../src/db/index.js';
 import { createFakeDb } from './helpers/fake-db.js';
 import { buildCoreToolFamilies } from '../src/agentcore/families.js';
 import { storeGrant, CALENDAR_ACTOR_ID } from '../src/calendar/tokens.js';
 import { getDb } from '../src/db/index.js';
+import * as writeMod from '../src/calendar/write.js';
 
 /**
  * Run a write and report how far it got.
@@ -270,6 +271,74 @@ describe('calendar writes are callable, and gated where it actually matters', ()
  * from never having been created. This search removes all three filters, so
  * the answer is evidence instead of a guess, including the useful negative.
  */
+/**
+ * D-207 — "even this event I told it to change didn't change."
+ *
+ * `resolveTarget` was computed, used to decide the write needed no approval,
+ * and then thrown away: the actual PATCH used `args.calendarId` — whatever
+ * string the model happened to send — instead of the id `resolveTarget` had
+ * just resolved it to. When the model passes a name or "primary" instead of
+ * the literal Google id (which `describe()` prints for exactly this reason,
+ * but nothing forces the model to copy it), the write goes to a calendar
+ * path that does not exist, fails, and — before this fix — the executor had
+ * no try/catch to turn that into an honest FAILED result either.
+ */
+describe('calendar_update_event sends the write where the policy check looked (D-207)', () => {
+  it('resolves a calendar NAME to the real id before calling updateEvent', async () => {
+    await connect();
+    await seedEvent({ calendarId: 'g_real_id_123' });
+    await getDb().collection('calendars').insertOne({
+      actorId: GRANT_ACTOR, account: ACCOUNT, calendarId: 'g_real_id_123', summary: 'AOS',
+      description: '', timeZone: 'Asia/Dubai', accessRole: 'owner', primary: false,
+      selected: true, enabled: true, isAosCalendar: true, backgroundColor: '',
+      updatedAt: new Date().toISOString(),
+    } as never);
+
+    const spy = vi.spyOn(writeMod, 'updateEvent').mockResolvedValue({ id: 'ev1' } as never);
+    await buildCoreToolFamilies().get('calendar_update_event')!.executor(
+      { calendarId: 'AOS', eventId: 'ev1', start: '2026-07-31T18:30:00.000Z' }, ctx,
+    );
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ calendarId: 'g_real_id_123' }));
+    spy.mockRestore();
+  });
+
+  it('resolves "primary" the same way create does, not by passing the literal word through', async () => {
+    await connect();
+    await seedEvent({ calendarId: 'primary' }); // seedEvent's own calendar row IS 'primary'
+    const spy = vi.spyOn(writeMod, 'updateEvent').mockResolvedValue({ id: 'ev1' } as never);
+    await buildCoreToolFamilies().get('calendar_update_event')!.executor(
+      { calendarId: 'primary', eventId: 'ev1', start: '2026-07-31T18:30:00.000Z' }, ctx,
+    );
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ calendarId: 'primary' }));
+    spy.mockRestore();
+  });
+
+  it('reports FAILED, not DONE, when Google rejects the update', async () => {
+    await connect();
+    await seedEvent();
+    const spy = vi.spyOn(writeMod, 'updateEvent').mockRejectedValue(new Error('404 not found'));
+    const res = await buildCoreToolFamilies().get('calendar_update_event')!.executor(
+      { calendarId: 'primary', eventId: 'ev1', summary: 'x' }, ctx,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('FAILED');
+    expect(res.summary).not.toContain('DONE');
+    spy.mockRestore();
+  });
+
+  it('reports FAILED when Google returns no id, proof the change was never confirmed', async () => {
+    await connect();
+    await seedEvent();
+    const spy = vi.spyOn(writeMod, 'updateEvent').mockResolvedValue({} as never);
+    const res = await buildCoreToolFamilies().get('calendar_update_event')!.executor(
+      { calendarId: 'primary', eventId: 'ev1', summary: 'x' }, ctx,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('FAILED');
+    spy.mockRestore();
+  });
+});
+
 describe('calendar_find_event', () => {
   it('finds an event outside the date range every other read is scoped to', async () => {
     await connect();

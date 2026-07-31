@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { setTestDb, getDb } from '../src/db/index.js';
 import { createFakeDb } from './helpers/fake-db.js';
-import { foldFa, findEvents, readEventById, mirrorCoverage } from '../src/calendar/sync.js';
+import { foldFa, findEvents, readEventById, mirrorCoverage, mirrorWrittenEvent } from '../src/calendar/sync.js';
 import { storeGrant, CALENDAR_ACTOR_ID } from '../src/calendar/tokens.js';
 import { jarvisSystemPrompt } from '../src/jarvis/turn-runner.js';
 
@@ -143,6 +143,65 @@ describe('a move keeps the duration', () => {
   it('returns null for an unknown id rather than inventing a duration', async () => {
     await connect(); await seed();
     expect(await readEventById(CALENDAR_ACTOR_ID, 'nope')).toBeNull();
+  });
+});
+
+/**
+ * D-207 — "even this event I told it to change didn't change."
+ *
+ * Verbatim: extend the upcoming event by 30 minutes and start it two hours
+ * from now. Jarvis reported it done, with correct new times — Google really
+ * did echo them back. Two polls later, the alert fired again for the OLD
+ * time and the OLD 30-minute duration, as if nothing had happened. The write
+ * reached Google; it never reached the mirror, which is the only thing the
+ * grid, the agenda tool and the alert poll ever read. `upsertEvent`'s
+ * staleness guard — built to keep out-of-order SYNC PAGES from clobbering a
+ * newer row — silently rejected the mirror echo of the write, because the
+ * guard cannot tell "an old sync page arriving late" apart from "our own
+ * write, echoed immediately." `mirrorWrittenEvent` now forces the write:
+ * Google's own answer to a request THIS system just made is by definition
+ * the newest truth, whatever `updated` string is attached to it.
+ */
+describe('a write\'s own mirror echo is never rejected as stale (D-207)', () => {
+  const raw = (over: Record<string, unknown> = {}) => ({
+    id: 'ev1', status: 'confirmed', summary: 'آپدیت AOS',
+    start: { dateTime: '2026-07-31T18:30:00.000Z' },
+    end: { dateTime: '2026-07-31T19:30:00.000Z' },
+    updated: '2026-07-31T16:20:00.000Z',
+    ...over,
+  });
+
+  it('overwrites the mirror even when the echoed `updated` stamp is NOT newer', async () => {
+    await connect();
+    // The row already in the mirror claims to be newer than what Google just
+    // echoed back for our own write — the exact shape of the bug.
+    await seed({ updated: '2026-07-31T18:00:00.000Z' });
+    await mirrorWrittenEvent(CALENDAR_ACTOR_ID, 'aos', raw());
+    const ev = await readEventById(CALENDAR_ACTOR_ID, 'ev1');
+    expect(ev?.start).toBe('2026-07-31T18:30:00.000Z');
+    expect(ev?.end).toBe('2026-07-31T19:30:00.000Z');
+  });
+
+  it('overwrites the mirror when `updated` is identical, not only when it is older', async () => {
+    await connect();
+    await seed({ updated: '2026-07-31T16:20:00.000Z' });
+    await mirrorWrittenEvent(CALENDAR_ACTOR_ID, 'aos', raw({ summary: 'تغییر یافت' }));
+    const ev = await readEventById(CALENDAR_ACTOR_ID, 'ev1');
+    expect(ev?.summary).toBe('تغییر یافت');
+  });
+
+  it('still applies normally when the echoed stamp IS newer, the ordinary case', async () => {
+    await connect();
+    await seed({ updated: '2026-07-31T10:00:00.000Z' });
+    await mirrorWrittenEvent(CALENDAR_ACTOR_ID, 'aos', raw());
+    const ev = await readEventById(CALENDAR_ACTOR_ID, 'ev1');
+    expect(ev?.start).toBe('2026-07-31T18:30:00.000Z');
+  });
+
+  it('still removes a cancelled event rather than force-writing a ghost row', async () => {
+    await connect(); await seed();
+    await mirrorWrittenEvent(CALENDAR_ACTOR_ID, 'aos', raw({ status: 'cancelled' }));
+    expect(await readEventById(CALENDAR_ACTOR_ID, 'ev1')).toBeNull();
   });
 });
 

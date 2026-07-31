@@ -392,12 +392,14 @@ export async function ensureAosCalendar(actorId: string, env: NodeJS.ProcessEnv 
  * screen. Comparing `updated` makes that impossible: the mirror only ever
  * moves forward. This is what keeps staged loading from fighting live edits.
  */
-async function upsertEvent(ev: CalendarEvent): Promise<boolean> {
-  const existing = await eventsCol().findOne(
-    { actorId: ev.actorId, calendarId: ev.calendarId, eventId: ev.eventId },
-    { projection: { updated: 1 } as never },
-  );
-  if (existing?.updated && ev.updated && existing.updated > ev.updated) return false;
+async function upsertEvent(ev: CalendarEvent, opts: { force?: boolean } = {}): Promise<boolean> {
+  if (!opts.force) {
+    const existing = await eventsCol().findOne(
+      { actorId: ev.actorId, calendarId: ev.calendarId, eventId: ev.eventId },
+      { projection: { updated: 1 } as never },
+    );
+    if (existing?.updated && ev.updated && existing.updated > ev.updated) return false;
+  }
   await eventsCol().updateOne(
     { actorId: ev.actorId, calendarId: ev.calendarId, eventId: ev.eventId },
     { $set: ev },
@@ -407,13 +409,25 @@ async function upsertEvent(ev: CalendarEvent): Promise<boolean> {
 }
 
 /**
- * Mirror an event the system just wrote, using Google's own response (D-194).
+ * Mirror an event the system just wrote, using Google's own response (D-194,
+ * force-write added D-207).
  *
  * Without this, a new event is invisible until the next sync — so the owner
- * (or Jarvis) writes something, looks at the grid, and sees nothing. The
- * response body is not a guess: it is the authoritative representation Google
- * stored, `updated` stamp included, so the `updated` guard in `upsertEvent`
- * orders it correctly against any sync page still in flight.
+ * (or Jarvis) writes something, looks at the grid, and sees nothing.
+ *
+ * `force: true` — this is the ONE caller for which the ordinary staleness
+ * guard is actively wrong. That guard exists to protect against sync PAGES
+ * arriving out of order; this call is never a sync page, it is Google's own
+ * immediate, authoritative answer to a write WE just made, in THIS request.
+ * It is by definition the newest truth there is. An owner extended an event
+ * by 30 minutes and moved it two hours out — Jarvis reported the new times
+ * correctly, because Google echoed them back — and the alert fired again
+ * eight minutes later for the OLD, untouched time. The guard had compared
+ * `updated` and silently kept the stale row, so the write was real on Google
+ * and invisible everywhere this system reads from (the mirror is the only
+ * thing the grid, the agenda and the alerts ever look at). Forcing here does
+ * not weaken the guard for its real job — ordinary sync ingestion still calls
+ * `upsertEvent` without it, further down.
  */
 export async function mirrorWrittenEvent(
   actorId: string, calendarId: string, raw: Record<string, unknown>,
@@ -425,7 +439,7 @@ export async function mirrorWrittenEvent(
     await eventsCol().deleteOne({ actorId, calendarId, eventId: ev.eventId });
     return;
   }
-  await upsertEvent(ev);
+  await upsertEvent(ev, { force: true });
 }
 
 /** Forget an event the system just deleted, without waiting for a sync. */

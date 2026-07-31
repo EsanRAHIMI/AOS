@@ -536,19 +536,44 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
         }
       }
 
-      const updated = await updateEvent({
-        actorId: CALENDAR_ACTOR_ID,
-        calendarId: String(args.calendarId),
-        eventId: String(args.eventId),
-        patch: {
-          summary: args.summary as string | undefined,
-          description: args.description as string | undefined,
-          location: args.location as string | undefined,
-          start: args.start as string | undefined,
-          end,
-          timeZone: args.timeZone as string | undefined,
-        },
-      });
+      let updated: Record<string, unknown>;
+      try {
+        updated = await updateEvent({
+          actorId: CALENDAR_ACTOR_ID,
+          /* D-207 — the write went to `args.calendarId` verbatim, the raw
+           * argument the model supplied, while `target` (resolved two lines
+           * above, from the same argument) is what `classifyWrite` had already
+           * approved. The two only agree when the model happens to pass the
+           * exact Google calendar id. A name, "primary", or any other alias
+           * `resolveTarget` understands resolves correctly for the PERMISSION
+           * check and then goes to Google unresolved — a PATCH to a calendar
+           * path that does not exist, which fails in a way that never reaches
+           * the owner as a failure. `target` is guaranteed non-null here: any
+           * `calendar: null` case already returned via `cannotWrite` above. */
+          calendarId: target!.calendarId,
+          eventId: String(args.eventId),
+          patch: {
+            summary: args.summary as string | undefined,
+            description: args.description as string | undefined,
+            location: args.location as string | undefined,
+            start: args.start as string | undefined,
+            end,
+            timeZone: args.timeZone as string | undefined,
+          },
+        });
+      } catch (err) {
+        /* Same discipline as calendar_create_event (D-196): a thrown Google
+         * call must not let the model narrate a success it never confirmed. */
+        return { ok: false, summary: `FAILED — رویداد ویرایش نشد: ${err instanceof Error ? err.message : String(err)}. Tell the owner it did NOT change and why.` };
+      }
+
+      /* Proof of write, not just an unthrown call (D-207, mirrors D-196's rule
+       * for create): Google echoes the stored event back, id included. No id
+       * means no confirmed change, whatever the status code said. */
+      if (!updated.id) {
+        return { ok: false, summary: 'FAILED — گوگل رویداد به‌روزشده را تأیید نکرد، پس تغییر ثبت نشد. Tell the owner it did NOT change.' };
+      }
+
       return {
         ok: true,
         summary: `DONE — event ${args.eventId} updated.${preserved} Report the new start AND end to the owner so a wrong one is visible immediately.`,

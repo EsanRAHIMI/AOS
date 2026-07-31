@@ -4779,3 +4779,58 @@ only in a tool's live output is not actually enforced — anything the tool said
 before the rule existed is still sitting in every store that remembers
 conversations, and will keep resurfacing until the read path for that history
 is fixed too.
+
+## D-207 — a write that reached Google and stopped there
+
+Asked to extend the upcoming event by 30 minutes and start it two hours out,
+Jarvis reported it done with the correct new times. Two alert polls later, the
+reminder fired again for the OLD time and the OLD duration, as if nothing had
+happened. The owner: "even this event I told it to change didn't change and
+wasn't applied."
+
+**Two independent bugs, both in `calendar_update_event`.**
+
+1. `resolveTarget(args.calendarId)` was computed and used to decide the write
+   needed no approval — and then discarded. The actual `updateEvent()` call
+   used `args.calendarId` verbatim: whatever string the model sent. When that
+   string is the literal Google id, the two agree by coincidence. When it is a
+   name or `"primary"` — which the classification step explicitly supports and
+   the model has every reason to use — the PATCH goes to a calendar path that
+   does not exist. There was also no try/catch around the call (unlike
+   `calendar_create_event` since D-196) and no proof-of-write check, so a
+   thrown error had no honest path back to the model at all.
+
+2. Even with the right calendar id, `mirrorWrittenEvent` — which writes
+   Google's own response into the local mirror right after a write, so the
+   change is visible before the next sync — runs through the same
+   `upsertEvent` staleness guard that protects the mirror from out-of-order
+   incremental-sync pages. That guard compares `updated` timestamps and
+   rejects anything not strictly newer. It cannot tell "a delayed sync page"
+   apart from "Google's own answer to the write we just made, arriving
+   milliseconds later" — and the second one is the newest truth there is, by
+   definition, whatever timestamp is attached to it. The grid, the agenda tool
+   and the alert poll all read only the mirror, never Google, so a rejected
+   echo is invisible everywhere at once while the model — reading Google's
+   real response to compose its reply — reports it correctly.
+
+**Fix:**
+
+- `calendar_update_event` now calls `updateEvent()` with `target.calendarId`
+  (the id `resolveTarget` already resolved and `classifyWrite` already
+  approved), never the raw argument. `target` is guaranteed non-null past the
+  `blocked` check, so this is not a fallback — it replaces the raw value.
+- The call is wrapped in try/catch, returning `FAILED` with the real error on
+  a throw, and requires the response to echo an `id` before reporting `DONE`
+  — the same discipline D-196 put on create.
+- `mirrorWrittenEvent` now force-writes: `upsertEvent(ev, { force: true })`
+  skips the staleness comparison for this ONE caller only. Ordinary sync
+  ingestion elsewhere still calls `upsertEvent` with the guard active — this
+  does not weaken the guard's real job, it stops misapplying it to a case it
+  was never meant to cover.
+
+**The general rule this leaves behind:** a guard written for one kind of
+writer (a sync page that might arrive out of order) will silently misfire
+against a different writer (this system's own just-confirmed write) unless
+the two are told apart explicitly. "Newer" is not always about the clock — a
+write's echo of itself is authoritative regardless of what timestamp it
+carries.
