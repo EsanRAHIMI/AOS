@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { AgentToolRegistry, type ToolResult } from './registry.js';
 import {
   readAgenda, readTasks, listCalendars, classifyWrite,
-  createEvent, updateEvent, createTask, getGrant,
+  createEvent, updateEvent, createTask, getGrant, CALENDAR_ACTOR_ID,
   type CalendarEvent, type CalendarRef,
 } from '../calendar/index.js';
 
@@ -105,9 +105,17 @@ function def(name: string, purpose: string, opts: {
   };
 }
 
-/** True when a Google grant exists — every tool here is useless without one. */
-async function connected(actorId: string): Promise<string> {
-  const grant = await getGrant(actorId);
+/**
+ * Gate every calendar tool: right caller, live grant.
+ *
+ * The owner check is not ceremony. Because the grant is keyed on a fixed
+ * `CALENDAR_ACTOR_ID` rather than the caller, a tool that skipped this would
+ * hand any actor in the loop the owner's entire schedule. The fixed key buys
+ * correctness on one axis and must not cost it on the other.
+ */
+async function blockedReason(ctx: { isOwner: boolean }): Promise<string> {
+  if (!ctx.isOwner) return 'تقویم فقط برای مالک سیستم در دسترس است.';
+  const grant = await getGrant(CALENDAR_ACTOR_ID);
   if (!grant || grant.revokedAt) {
     return 'تقویم گوگل وصل نیست. از صفحهٔ /calendar وصل کنید.';
   }
@@ -126,15 +134,15 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       calendarIds: z.array(z.string()).optional().describe('restrict to specific calendars'),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
       const { from, to } = rangeFor(Number(args.days ?? 7), args.fromIso as string | undefined);
       const events = await readAgenda({
-        actorId: ctx.actorId, fromIso: from, toIso: to,
+        actorId: CALENDAR_ACTOR_ID, fromIso: from, toIso: to,
         calendarIds: args.calendarIds as string[] | undefined,
       });
       if (!events.length) return { ok: true, summary: `No events between ${from.slice(0, 10)} and ${to.slice(0, 10)}.` };
-      const names = await calendarNames(ctx.actorId);
+      const names = await calendarNames(CALENDAR_ACTOR_ID);
       return {
         ok: true,
         summary: `${events.length} event(s) ${from.slice(0, 10)} → ${to.slice(0, 10)}:\n${events.map((e) => describe(e, names)).join('\n')}`,
@@ -150,12 +158,12 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       withinMinutes: z.number().int().min(1).max(1440).optional().describe('lookahead window (default 240)'),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
       const minutes = Number(args.withinMinutes ?? 240);
-      const events = await upcomingEvents(ctx.actorId, minutes);
+      const events = await upcomingEvents(CALENDAR_ACTOR_ID, minutes);
       if (!events.length) return { ok: true, summary: `Nothing scheduled in the next ${minutes} minutes.` };
-      const names = await calendarNames(ctx.actorId);
+      const names = await calendarNames(CALENDAR_ACTOR_ID);
       const now = Date.now();
       const lines = events.map((e) => {
         const mins = Math.round((new Date(e.start).getTime() - now) / 60_000);
@@ -173,9 +181,9 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       limit: z.number().int().min(1).max(200).optional(),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
-      const tasks = await readTasks(ctx.actorId, {
+      const tasks = await readTasks(CALENDAR_ACTOR_ID, {
         includeCompleted: Boolean(args.includeCompleted),
         limit: Number(args.limit ?? 100),
       });
@@ -194,9 +202,9 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       'List the calendars connected to this system, with access role and whether they are enabled — needed to know where an event can be written.'),
     inputSchema: z.object({}),
     executor: async (_args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
-      const cals = await listCalendars(ctx.actorId);
+      const cals = await listCalendars(CALENDAR_ACTOR_ID);
       if (!cals.length) return { ok: true, summary: 'No calendars synced yet.' };
       return {
         ok: true,
@@ -229,18 +237,18 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       withMeet: z.boolean().optional(),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
       const target: CalendarRef | null = args.calendarId
-        ? (await listCalendars(ctx.actorId)).find((c) => c.calendarId === args.calendarId) ?? null
-        : (await listCalendars(ctx.actorId)).find((c) => c.isAosCalendar) ?? null;
+        ? (await listCalendars(CALENDAR_ACTOR_ID)).find((c) => c.calendarId === args.calendarId) ?? null
+        : (await listCalendars(CALENDAR_ACTOR_ID)).find((c) => c.isAosCalendar) ?? null;
       const cls = classifyWrite({
         op: 'create',
         calendar: target,
         hasAttendees: Boolean((args.attendees as string[] | undefined)?.length),
       });
       const created = await createEvent({
-        actorId: ctx.actorId,
+        actorId: CALENDAR_ACTOR_ID,
         calendarId: args.calendarId as string | undefined,
         summary: String(args.summary),
         description: args.description as string | undefined,
@@ -274,10 +282,10 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       timeZone: z.string().optional(),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
       const updated = await updateEvent({
-        actorId: ctx.actorId,
+        actorId: CALENDAR_ACTOR_ID,
         calendarId: String(args.calendarId),
         eventId: String(args.eventId),
         patch: {
@@ -303,10 +311,10 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       notes: z.string().optional(),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const blocked = await connected(ctx.actorId);
+      const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
       const task = await createTask({
-        actorId: ctx.actorId,
+        actorId: CALENDAR_ACTOR_ID,
         title: String(args.title),
         due: args.due as string | undefined,
         notes: args.notes as string | undefined,

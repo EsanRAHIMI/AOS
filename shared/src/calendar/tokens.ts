@@ -16,6 +16,26 @@
  * vault refuses to store anything and says exactly why — the kernel's honesty
  * rule applied to secrets: never pretend to have secured something.
  */
+
+/**
+ * The single actor the Google grant is stored under (D-195b).
+ *
+ * The calendar integration is deliberately single-owner: ONE Google account
+ * for the whole system, one grant, one mirror. The gateway routes have always
+ * keyed it on the literal `'owner'`.
+ *
+ * This exists because that literal was written out a second time. The Jarvis
+ * calendar tools resolved the grant with the loop's `ctx.actorId` — a real
+ * user id — found nothing, and reported "تقویم وصل نیست" to an owner whose
+ * calendar was connected and fully synced. The read was correct code against
+ * the wrong key.
+ *
+ * So the key is named once, here, and everything that touches a calendar grant
+ * imports it. A future move to per-user grants changes this file and the call
+ * sites it exposes, not a string scattered across services.
+ */
+export const CALENDAR_ACTOR_ID = 'owner';
+
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { collection } from '../db/index.js';

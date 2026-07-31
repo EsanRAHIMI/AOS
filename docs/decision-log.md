@@ -4118,3 +4118,29 @@ nothing. An English engine reading Persian text is not accented, it is noise,
 and the owner would have to sit through it to find that out.
 
 Free and in-app throughout: browser `speechSynthesis`, no cloud TTS, no cost.
+
+## D-195b — the calendar tools read the wrong key
+
+**Symptom.** A connected, fully synced calendar. Asked "برنامه امروزم چیه؟",
+Jarvis replied "تقویم گوگل شما به سیستم متصل نیست" and offered the connect
+link. The tool ran, the code was correct, the answer was false.
+
+**Cause.** The calendar integration is single-owner: one Google grant for the
+whole system, stored under the literal actor id `'owner'` by the gateway
+routes. The new tools resolved the grant with `ctx.actorId` — the loop's real
+user id. Different key, no grant, honest-sounding lie.
+
+**Fix.** The key is named once (`CALENDAR_ACTOR_ID` in
+`shared/src/calendar/tokens.ts`) and imported by both the gateway routes and
+the tools. A literal duplicated across two services is what made this possible;
+removing the duplicate is what prevents the next one. Moving to per-user grants
+later changes this constant and its call sites, not a string scattered around.
+
+**Second-order risk, closed in the same change.** With the grant on a fixed
+key, `ctx.actorId` no longer gates anything — any actor in the loop could have
+read the owner's schedule. Every calendar tool now checks `ctx.isOwner` first.
+The fixed key buys correctness on one axis; it must not cost it on the other.
+
+Both are pinned by tests that keep the mismatch in the fixture: the context
+carries a real user id (`esan`) while the grant sits under `'owner'`, so a
+regression fails rather than passing on a convenient fixture.

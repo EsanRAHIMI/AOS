@@ -12,7 +12,7 @@ import {
   googleAvailability, googleConfig, buildAuthUrl, exchangeCode, fetchAccountEmail,
   storeGrant, getGrant, deleteGrant, vaultAvailability,
   rememberOAuthState, consumeOAuthState,
-  syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
+  CALENDAR_ACTOR_ID, syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
   ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
@@ -20,7 +20,9 @@ import type { FastifyInstance } from '@factory/service-kit';
 import type { GatewayDeps, FastifyReplyLike } from './deps.js';
 
 /** Single-operator mode, like the rest of the control plane today. */
-const OWNER = 'owner';
+/* Imported, not re-declared (D-195b): this literal existing in two places is
+ * exactly how Jarvis ended up reading a grant that was never there. */
+const OWNER = CALENDAR_ACTOR_ID;
 
 /**
  * The consent landing page (D-192d).

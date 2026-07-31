@@ -10,11 +10,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setTestDb } from '../src/db/index.js';
 import { createFakeDb } from './helpers/fake-db.js';
 import { buildCoreToolFamilies } from '../src/agentcore/families.js';
-import { storeGrant } from '../src/calendar/tokens.js';
+import { storeGrant, CALENDAR_ACTOR_ID } from '../src/calendar/tokens.js';
 import { getDb } from '../src/db/index.js';
 
 const KEY = '0'.repeat(64);
 const ENV = { GOOGLE_TOKEN_ENC_KEY: KEY } as unknown as NodeJS.ProcessEnv;
+/* The loop hands tools a REAL user id — not the fixed key the calendar grant
+ * is stored under. That mismatch is the D-195b bug, so the fixture keeps it. */
 const ctx = {
   actorId: 'esan', role: 'owner' as const, isOwner: true, scope: 'user' as const,
   tenantId: null, userId: 'esan', runId: 'run_1', sessionId: 's1',
@@ -22,19 +24,20 @@ const ctx = {
 };
 
 const ACCOUNT = 'owner@example.com';
+const GRANT_ACTOR = CALENDAR_ACTOR_ID;   // 'owner' — NOT ctx.actorId
 
 beforeEach(() => { setTestDb(createFakeDb().db); });
 
 async function connect() {
   await storeGrant({
-    actorId: 'esan', accountEmail: ACCOUNT, refreshToken: 'r', accessToken: 'a',
+    actorId: GRANT_ACTOR, accountEmail: ACCOUNT, refreshToken: 'r', accessToken: 'a',
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(), scopes: [],
   }, ENV);
 }
 
 async function seedEvent(over: Record<string, unknown> = {}) {
   await getDb().collection('calendar_events').insertOne({
-    actorId: 'esan', account: ACCOUNT, calendarId: 'primary', eventId: 'ev1',
+    actorId: GRANT_ACTOR, account: ACCOUNT, calendarId: 'primary', eventId: 'ev1',
     summary: 'جلسهٔ طراحی', description: 'بررسی نسخهٔ جدید', location: 'دفتر',
     start: new Date(Date.now() + 30 * 60_000).toISOString(),
     end: new Date(Date.now() + 90 * 60_000).toISOString(),
@@ -45,7 +48,7 @@ async function seedEvent(over: Record<string, unknown> = {}) {
     ...over,
   } as never);
   await getDb().collection('calendars').insertOne({
-    actorId: 'esan', account: ACCOUNT, calendarId: 'primary', summary: 'تقویم اصلی',
+    actorId: GRANT_ACTOR, account: ACCOUNT, calendarId: 'primary', summary: 'تقویم اصلی',
     description: '', timeZone: 'Asia/Tehran', accessRole: 'owner', primary: true,
     selected: true, enabled: true, isAosCalendar: false, backgroundColor: '',
     updatedAt: new Date().toISOString(),
@@ -58,6 +61,25 @@ describe('calendar tool family', () => {
     for (const name of ['calendar_agenda', 'calendar_next', 'calendar_tasks', 'calendar_list']) {
       expect(r.get(name), `${name} must be registered`).toBeTruthy();
     }
+  });
+
+  it('resolves the grant by the owner key, not by the caller id (D-195b)', async () => {
+    // The regression: a connected, fully synced calendar reported
+    // "تقویم وصل نیست" because the tool looked it up under the loop's user id.
+    await connect();
+    await seedEvent();
+    const res = await buildCoreToolFamilies().get('calendar_agenda')!.executor({ days: 2 }, ctx);
+    expect(res.ok, res.summary).toBe(true);
+    expect(res.summary).not.toContain('وصل نیست');
+  });
+
+  it('refuses a non-owner caller — the fixed key must not become a back door', async () => {
+    await connect();
+    await seedEvent();
+    const res = await buildCoreToolFamilies().get('calendar_agenda')!
+      .executor({ days: 2 }, { ...ctx, isOwner: false, role: 'agent' as never });
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('مالک');
   });
 
   it('says plainly that the calendar is not connected instead of returning nothing', async () => {
@@ -100,7 +122,7 @@ describe('calendar tool family', () => {
   it('marks an overdue task rather than listing it like any other', async () => {
     await connect();
     await getDb().collection('calendar_tasks').insertOne({
-      actorId: 'esan', account: ACCOUNT, taskListId: '@default', taskId: 't1',
+      actorId: GRANT_ACTOR, account: ACCOUNT, taskListId: '@default', taskId: 't1',
       title: 'ارسال گزارش', notes: '', status: 'needsAction',
       due: new Date(Date.now() - 3 * 86_400_000).toISOString(),
       completed: '', parent: '', position: '', createdByAos: false, updated: '',
