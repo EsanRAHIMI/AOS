@@ -44,8 +44,16 @@ function describe(e: CalendarEvent, calNames: Map<string, string>): string {
   const when = e.allDay
     ? `${e.start.slice(0, 10)} (all-day)`
     : `${e.start} → ${e.end}`;
+  /* The ids are printed, not merely returned in `data` (D-201).
+   *
+   * Asked to move an event it had just found, Jarvis answered that it "was not
+   * stored with an id that allows editing" — because the summary it had read
+   * showed a title, a time and a calendar name, and `calendar_update_event`
+   * needs `calendarId` + `eventId`. The tool could not be called with what the
+   * previous tool had shown. Every read now carries the handle for the write. */
   const bits = [
     `• ${e.summary || '(untitled)'} — ${when} [${cal}]`,
+    `  eventId: ${e.eventId}  calendarId: ${e.calendarId}   ← use these to update or move it`,
   ];
   if (e.location) bits.push(`  location: ${e.location}`);
   if (e.attendees?.length) bits.push(`  guests: ${e.attendees.length}`);
@@ -394,7 +402,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
 
   registry.register({
     definition: def('calendar_update_event',
-      'Change an existing event (title, time, location, description). Patch semantics — omitted fields are left alone.',
+      'Move or change an existing event: title, start/end, location, description. This is how you reschedule — find the event first (calendar_find_event or calendar_agenda), take the eventId and calendarId it prints, and pass them here. Patch semantics: omitted fields are left alone.',
       { write: true, risk: 'medium' }),
     inputSchema: z.object({
       calendarId: z.string().describe("calendar id, a name, or 'primary'"),

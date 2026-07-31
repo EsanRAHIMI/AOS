@@ -29,7 +29,7 @@ import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
-export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v4';
+export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v5';
 
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
@@ -50,6 +50,13 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
     /* D-200 — the owner's report: Jarvis found an event, and one question
      * later denied any event existed. Context was part of it; so was the
      * absence of any rule telling the model that a follow-up is a follow-up. */
+    /* D-201 — "today at 14:00" was written as 2026-07-20. A model has no
+     * clock; if you do not give it one it will invent a plausible date. */
+    'DATES — you have no clock of your own:',
+    '- Take the current date and time ONLY from the RIGHT NOW block. Never infer today\'s date from your training, from an event you just read, or from anything else in the context.',
+    '- Resolve "today", "tomorrow", "this evening", "next week" against RIGHT NOW before you call any tool, and write the resolved absolute date into the tool arguments.',
+    '- Always send the owner\'s timezone with an event time. A time without a zone is a different meeting in another country.',
+    '- When you report a time back, state the absolute date too, so a wrong one is visible immediately instead of a week later.',
     'CONTINUITY — you are in ONE conversation, not a series of unrelated questions:',
     '- THIS CONVERSATION SO FAR is authoritative. A short question ("in which calendar?", "what time?", "and the link?") refers to what you just discussed — answer it from there, do not start over.',
     '- Never contradict something you said earlier in this session. If a tool now says otherwise, say what changed and which one you trust; silently reversing yourself destroys the owner\'s ability to rely on any answer.',
@@ -111,6 +118,40 @@ export interface JarvisTurnResult {
   contextPreview: string;
 }
 
+/**
+ * What time it is (D-201).
+ *
+ * Nothing in the context said. Asked to book "today at 14:00", the model wrote
+ * 2026-07-20 — eleven days wrong — because it had no clock and fell back on
+ * whatever its training suggested. A language model cannot read a clock; it
+ * can only be told. Everything downstream ("today", "tomorrow", "next
+ * Tuesday", "in an hour") is arithmetic on this one line, so it goes FIRST and
+ * is stated unambiguously: an exact instant, the zone it is expressed in, and
+ * the same day in both calendars the owner uses.
+ */
+export function nowContext(now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): string {
+  const zone = env.OWNER_TIMEZONE || env.TZ || 'Asia/Tehran';
+  const fmt = (opts: Intl.DateTimeFormatOptions, locale = 'en-GB') =>
+    new Intl.DateTimeFormat(locale, { timeZone: zone, ...opts }).format(now);
+
+  const isoDay = fmt({ year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').reverse().join('-');
+  const clock = fmt({ hour: '2-digit', minute: '2-digit', hour12: false });
+  const weekday = fmt({ weekday: 'long' });
+  const jalali = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+    timeZone: zone, year: 'numeric', month: 'long', day: 'numeric',
+  }).format(now);
+
+  return [
+    'RIGHT NOW — use these values for every date you write. Never guess a date, and never take one from memory:',
+    `- current instant: ${now.toISOString()} (UTC)`,
+    `- owner's timezone: ${zone}`,
+    `- today, local: ${isoDay} (${weekday}) — ${jalali}`,
+    `- local time now: ${clock}`,
+    `- "today" = ${isoDay}. "tomorrow" = ${new Date(now.getTime() + 86_400_000).toISOString().slice(0, 10)}. "yesterday" = ${new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)}.`,
+    `- When writing an event time, use the owner's local zone: e.g. 14:00 today is ${isoDay}T14:00:00 with timeZone ${zone}.`,
+  ].join('\n');
+}
+
 /** Assemble the full provenance-carrying context text for one turn. */
 export async function assembleTurnContext(
   actor: SessionActor, sessionId: string, userText: string, env: NodeJS.ProcessEnv,
@@ -134,6 +175,8 @@ export async function assembleTurnContext(
    * reliably it is used. Standing facts — who the owner is, what they have
    * recorded — go above it, because they do not change turn to turn. */
   const parts = [
+    // First, and non-negotiable: the model cannot read a clock (D-201).
+    nowContext(new Date(), env),
     identity.text,
     mem.text ? `OWNER MEMORY (provenance-tagged — [CONFIRMED] owner-stated, [INFERRED] concluded, [TEMP] conversational):\n${mem.text}` : 'OWNER MEMORY: none recorded yet.',
     missions.text ? `ACTIVE MISSION HIERARCHY (today's work connects upward through these):\n${missions.text}` : 'ACTIVE MISSIONS: none yet.',

@@ -4538,3 +4538,39 @@ teach a model that a follow-up is a follow-up:
   نیست" was said one turn after successfully reading that calendar
 
 Eleven tests pin all of it, including the exact shape of the reported failure.
+
+## D-201 — no clock, and no handle
+
+Two failures in one conversation, neither of them a reasoning failure.
+
+**"set it for today 14:00" → created on 2026-07-20**, eleven days early.
+
+Nothing in the context said what day it was. A language model cannot read a
+clock; it can only be told, and if it is not told it will supply a plausible
+date from training. That was my omission, and it is the worst kind because the
+answer looks confident and correct.
+
+`nowContext()` now goes FIRST in every turn's context: the exact UTC instant,
+the owner's timezone, today's date in Gregorian and Jalali, the local clock,
+and today/tomorrow/yesterday spelled out so no arithmetic is guessed. Local
+means local — 20:45 UTC is already the next day in Tehran, and the block says
+so. Prompt rules (`jarvis-role-v5`) forbid taking the date from anywhere else,
+require relative dates to be resolved to absolute ones *before* the tool call,
+and require the timezone to travel with every time: a time without a zone is a
+different meeting in another country.
+
+**"move the one you just found" → "not stored with an id that allows editing".**
+
+Also true, also my fault. `describe()` printed a title, a time and a calendar
+NAME. `calendar_update_event` needs `calendarId` and `eventId`. They were in
+the tool's `data`, never in the text the model reads — so the model could see
+the event and genuinely could not call the tool that changes it. Every read now
+prints both ids on their own line, labelled with what they are for, and the
+update tool's description names the read tools that produce them.
+
+**The rule this leaves behind:** a read that cannot be acted on is half a tool.
+If one tool's output is another tool's input, it belongs in the summary, not
+only in the payload.
+
+Thirteen tests, including the Tehran midnight rollover and the exact "eventId:"
+line whose absence caused the refusal.
