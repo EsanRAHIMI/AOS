@@ -53,6 +53,15 @@ export const JarvisSessionTurnSchema = z.object({
   costUsd: z.number().default(0),
   usedMemoryIds: z.array(z.string()).default([]),
   sourceIds: z.array(z.string()).default([]),
+  /**
+   * What the tools actually returned this turn, in one line each (D-200).
+   *
+   * Without this the transcript carried only prose, so a follow-up like "in
+   * which calendar was it saved?" had nothing to answer from: the model saw a
+   * truncated sentence it had written, not the record it had read. Facts, not
+   * a retelling of facts.
+   */
+  toolFacts: z.array(z.string()).default([]),
   pendingApprovalId: z.string().nullable().default(null),
   createdAt: IsoDate,
   finishedAt: z.string().nullable().default(null),
@@ -136,7 +145,7 @@ export async function beginTurn(actor: SessionActor, sessionId: string, userText
   return turn;
 }
 
-export async function completeTurn(turnId: string, patch: Partial<Pick<JarvisSessionTurn, 'replyText' | 'status' | 'stopReason' | 'runId' | 'reasoningMode' | 'provider' | 'model' | 'costUsd' | 'usedMemoryIds' | 'sourceIds' | 'pendingApprovalId'>>): Promise<void> {
+export async function completeTurn(turnId: string, patch: Partial<Pick<JarvisSessionTurn, 'replyText' | 'status' | 'stopReason' | 'runId' | 'reasoningMode' | 'provider' | 'model' | 'costUsd' | 'usedMemoryIds' | 'sourceIds' | 'toolFacts' | 'pendingApprovalId'>>): Promise<void> {
   const terminal = patch.status && patch.status !== 'running' && patch.status !== 'waiting_approval';
   await turns().updateOne({ turnId }, { $set: { ...patch, ...(terminal ? { finishedAt: nowIso() } : {}) } });
   if (patch.costUsd) {
@@ -162,26 +171,72 @@ export async function linkMissionToSession(actor: SessionActor, sessionId: strin
  * compaction — an LLM summarizer can replace this text later without schema
  * change; honesty: this is compaction, not intelligence).
  */
-export async function buildTranscriptContext(actor: SessionActor, sessionId: string, opts: { tokenBudget?: number } = {}): Promise<{ text: string; usedTurns: number }> {
-  const budget = opts.tokenBudget ?? 1200;
+/**
+ * The conversation the model actually gets (rewritten D-200).
+ *
+ * The owner's report was exact: Jarvis found an event, and one question later
+ * denied any event existed. Four things were wrong at once, and each alone was
+ * enough to cause it:
+ *
+ * 1. The in-progress turn was included. `beginTurn` runs BEFORE this, so the
+ *    newest "turn" was the question being asked, with an empty reply — it ate
+ *    budget and told the model nothing.
+ * 2. Replies were cut at 400 characters. A structured answer is far longer, so
+ *    exactly the detail a follow-up asks about — which calendar, what time —
+ *    was the part removed.
+ * 3. Tool results were absent entirely. The model saw its own prose, never the
+ *    record it had read, so "where was it saved?" had no source to answer from.
+ * 4. The budget was 1100 tokens. Transcript is the cheapest context there is
+ *    and the first thing a person expects an assistant to have.
+ *
+ * Ordering is oldest→newest, and the caller places this LAST in the context,
+ * nearest the question.
+ */
+export async function buildTranscriptContext(
+  actor: SessionActor,
+  sessionId: string,
+  opts: { tokenBudget?: number; excludeTurnId?: string } = {},
+): Promise<{ text: string; usedTurns: number }> {
+  const budget = opts.tokenBudget ?? 3500;
   const session = await getJarvisSession(actor, sessionId);
   if (!session) return { text: '', usedTurns: 0 };
+
   const all = await turns().find({ ...scopeFilter(actor), sessionId } as never).sort({ index: -1 }).limit(40).toArray();
   const lines: string[] = [];
   let tokens = session.rollingSummary ? approxTokens(session.rollingSummary) : 0;
   let used = 0;
-  for (const t of all) { // newest first
-    const line = `${t.language === 'fa' ? 'Owner' : 'Owner'}: ${t.userText.slice(0, 400)}\nJarvis: ${t.replyText.slice(0, 400)}`;
+
+  for (const t of all) {                                   // newest first
+    if (opts.excludeTurnId && t.turnId === opts.excludeTurnId) continue;
+    // A turn with no reply is one still running; it contributes nothing.
+    if (!t.replyText) continue;
+
+    const facts = (t.toolFacts ?? []).length
+      ? `\n  [what the tools returned]\n${(t.toolFacts ?? []).map((f) => `  · ${f}`).join('\n')}`
+      : '';
+    const line = `Owner: ${t.userText.slice(0, 600)}\nJarvis: ${t.replyText.slice(0, 1200)}${facts}`;
+
     const cost = approxTokens(line);
-    if (tokens + cost > budget) break;
+    /* Always keep the most recent exchange, whatever it costs. Dropping the
+     * turn immediately before the question is the one failure that looks like
+     * amnesia rather than like forgetting. */
+    if (tokens + cost > budget && used > 0) break;
     tokens += cost;
     lines.unshift(line);
     used += 1;
   }
+
   const parts: string[] = [];
   if (session.rollingSummary) parts.push(`EARLIER IN THIS SESSION (summary): ${session.rollingSummary}`);
   if (session.pinnedFacts.length) parts.push(`PINNED FACTS:\n${session.pinnedFacts.map((f) => `- ${f}`).join('\n')}`);
-  if (lines.length) parts.push(`RECENT CONVERSATION:\n${lines.join('\n')}`);
+  if (lines.length) {
+    parts.push(
+      'THIS CONVERSATION SO FAR (oldest first — this is the SAME conversation you are '
+      + 'continuing; a follow-up question refers to what is here, and you must not contradict '
+      + 'it without saying what changed):\n'
+      + lines.join('\n\n'),
+    );
+  }
   return { text: parts.join('\n\n'), usedTurns: used };
 }
 

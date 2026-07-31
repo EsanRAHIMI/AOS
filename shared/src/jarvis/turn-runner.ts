@@ -29,7 +29,7 @@ import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
-export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v3';
+export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v4';
 
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
@@ -47,6 +47,14 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
      * reply was "در حال ثبت رویداد هستم؛ پس از ثبت اطلاع می‌دهم". No tool call,
      * no event, and an owner who believed it was done. A promise is the one
      * output that is worse than a refusal, because it cannot be detected. */
+    /* D-200 — the owner's report: Jarvis found an event, and one question
+     * later denied any event existed. Context was part of it; so was the
+     * absence of any rule telling the model that a follow-up is a follow-up. */
+    'CONTINUITY — you are in ONE conversation, not a series of unrelated questions:',
+    '- THIS CONVERSATION SO FAR is authoritative. A short question ("in which calendar?", "what time?", "and the link?") refers to what you just discussed — answer it from there, do not start over.',
+    '- Never contradict something you said earlier in this session. If a tool now says otherwise, say what changed and which one you trust; silently reversing yourself destroys the owner\'s ability to rely on any answer.',
+    '- A tool returning nothing means THAT query found nothing. It does NOT mean the thing does not exist, and it never overrides a result you already reported this session — say "my search for X found nothing" and name what you searched.',
+    '- Before saying a capability is unavailable ("calendar not connected"), check the transcript: if you used it successfully this session, it is connected and something else failed. Report the real failure.',
     'ACT, NEVER PROMISE:',
     '- If the owner asks for something you have a tool for, CALL THE TOOL IN THIS TURN. Never say you are "about to", "in the process of", or "will report back" — you have no later turn to do it in.',
     '- Report only what a tool result actually says. Never describe a write as done unless a tool returned success for it.',
@@ -104,21 +112,33 @@ export interface JarvisTurnResult {
 }
 
 /** Assemble the full provenance-carrying context text for one turn. */
-export async function assembleTurnContext(actor: SessionActor, sessionId: string, userText: string, env: NodeJS.ProcessEnv): Promise<{ text: string; usedMemoryIds: string[] }> {
+export async function assembleTurnContext(
+  actor: SessionActor, sessionId: string, userText: string, env: NodeJS.ProcessEnv,
+  opts: { excludeTurnId?: string } = {},
+): Promise<{ text: string; usedMemoryIds: string[] }> {
   const mem = await buildMemoryContext({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null }, userText, { tokenBudget: 900 });
   const missions = await buildMissionContext({ actorId: actor.actorId, scope: actor.scope, tenantId: actor.tenantId ?? null }, { limit: 10 });
-  const transcript = await buildTranscriptContext(actor, sessionId, { tokenBudget: 1100 });
+  const transcript = await buildTranscriptContext(actor, sessionId, {
+    tokenBudget: 3500,
+    // The turn being answered is already the goal; including it as "history"
+    // spent budget on an empty reply (D-200).
+    excludeTurnId: opts.excludeTurnId,
+  });
   const coverage = researchCoverageStatus(env);
   /* D-188 — who the owner actually is. Without this the assistant had memory,
    * missions and a transcript but no identity, so it truthfully reported that
    * nothing personal was on file while the CIN entity held a full profile. */
   const identity = await buildOwnerIdentityContext();
+  /* Transcript LAST, not first (D-200). It is the context most likely to
+   * answer a follow-up, and the nearer it sits to the question the more
+   * reliably it is used. Standing facts — who the owner is, what they have
+   * recorded — go above it, because they do not change turn to turn. */
   const parts = [
-    transcript.text,
     identity.text,
     mem.text ? `OWNER MEMORY (provenance-tagged — [CONFIRMED] owner-stated, [INFERRED] concluded, [TEMP] conversational):\n${mem.text}` : 'OWNER MEMORY: none recorded yet.',
     missions.text ? `ACTIVE MISSION HIERARCHY (today's work connects upward through these):\n${missions.text}` : 'ACTIVE MISSIONS: none yet.',
     `SYSTEM STATUS: research coverage=${coverage.coverage}${coverage.searxng ? '' : ' (SearXNG not configured)'}.`,
+    transcript.text,
   ].filter(Boolean);
   return { text: parts.join('\n\n'), usedMemoryIds: mem.usedMemoryIds };
 }
@@ -145,7 +165,9 @@ export async function runJarvisTurn(
     ? ((env.LLM_TOOLCALL_MODE === 'structured' ? 'structured' : 'native'))
     : 'none';
 
-  const { text: contextText, usedMemoryIds } = await assembleTurnContext(actor, sessionId, userText, env);
+  const { text: contextText, usedMemoryIds } = await assembleTurnContext(
+    actor, sessionId, userText, env, { excludeTurnId: turn.turnId },
+  );
   const language = detectLanguage(userText);
 
   if (!provider) {
@@ -189,10 +211,19 @@ export async function runJarvisTurn(
       ? (language === 'fa' ? `برای ادامه به تأیید شما نیاز دارم: ${outcome.run.pendingToolCall?.toolName ?? ''}` : `I need your approval to continue: ${outcome.run.pendingToolCall?.toolName ?? ''}`)
       : `stopped: ${outcome.stopReason}${outcome.run.error ? ` — ${outcome.run.error}` : ''}`);
 
+  /* Keep what the tools SAID, not just what Jarvis wrote about it (D-200).
+   * A follow-up — "which calendar?", "what time exactly?" — is answered from
+   * the record, and prose is a lossy retelling of a record. */
+  const toolFacts = outcome.run.messages
+    .filter((m) => m.role === 'tool' && m.content)
+    .map((m) => `${m.toolName ?? 'tool'}: ${String(m.content).replace(/\s+/g, ' ').slice(0, 500)}`)
+    .slice(-8);
+
   await completeTurn(turn.turnId, {
     replyText, status, stopReason: outcome.stopReason, runId: outcome.run.runId,
     reasoningMode, provider: outcome.run.provider, model: outcome.run.model,
-    costUsd: outcome.run.costUsd, usedMemoryIds, pendingApprovalId: outcome.pendingApprovalId,
+    costUsd: outcome.run.costUsd, usedMemoryIds, toolFacts,
+    pendingApprovalId: outcome.pendingApprovalId,
   });
   await deps.publish?.({ type: EVENT_TYPES.JARVIS_TURN_COMPLETED, taskId: null, payload: { sessionId, turnId: turn.turnId, status, stopReason: outcome.stopReason, costUsd: outcome.run.costUsd, message: `Turn ${status}` } });
 

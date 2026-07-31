@@ -4490,3 +4490,51 @@ the window. Say this plainly; do not guess that it exists."
 **Two smaller fixes on the way.** The fake DB gained `$regex`/`$options`, and a
 profile test asserting "دیروز" against a hard-coded date had aged into a
 failure — a relative assertion needs a relative fixture.
+
+## D-200 — the amnesia, and the four causes behind it
+
+```
+Owner:  رویدادی به اسم آپدیت AOS پیدا کن
+Jarvis: found it — 2026-07-20 09:00, calendar "AOS"
+Owner:  در کدام تقویم و چه زمانی ثبت شده
+Jarvis: هیچ رویدادی در هیچ تقویمی وجود ندارد
+```
+
+One question apart. This is not one bug; `buildTranscriptContext` had four
+independent defects, and any one of them alone was enough.
+
+**1. The turn being answered was in its own history.** `beginTurn` runs before
+the context is assembled, so the newest "turn" was the question itself, with an
+empty reply. It consumed budget and taught the model nothing. Now excluded by
+id, and any turn with no reply is skipped regardless.
+
+**2. Replies were cut at 400 characters.** A structured answer runs well past
+that, so the part removed was the end — which is exactly where "calendar: AOS,
+09:00" lives. A follow-up asks about detail, and detail is what truncation
+takes first. Now 1200 for replies, 600 for questions.
+
+**3. Tool results were not carried at all.** The transcript held only prose.
+"In which calendar?" must be answered from the record, and prose is a lossy
+retelling of a record. Turns now store `toolFacts` — one line per tool result —
+and the transcript replays them under `[what the tools returned]`.
+
+**4. The budget was 1100 tokens** for the single cheapest and most obviously
+necessary piece of context in the system. Now 3500, and the most recent
+exchange is kept unconditionally: dropping the turn immediately before the
+question is the failure that reads as amnesia rather than as forgetting.
+
+**Placement.** The transcript moved from first to LAST in the context, nearest
+the question. Standing facts — identity, memory, missions — sit above it
+because they do not change turn to turn.
+
+**Prompt (`jarvis-role-v4`), a CONTINUITY section.** Context alone does not
+teach a model that a follow-up is a follow-up:
+
+- a short question refers to what was just discussed; answer from there
+- never contradict yourself in one session without saying what changed
+- a tool returning nothing means THAT QUERY found nothing — not that the thing
+  does not exist, and never overrides a result already reported this session
+- before declaring a capability unavailable, check the transcript; "تقویم متصل
+  نیست" was said one turn after successfully reading that calendar
+
+Eleven tests pin all of it, including the exact shape of the reported failure.
