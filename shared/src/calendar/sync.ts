@@ -800,24 +800,99 @@ export async function readTasks(actorId: string, opts: { includeCompleted?: bool
  * pulling a year. This one is deliberately wide, because it exists to answer
  * "where did it go?", and each of those filters is a place an event can hide.
  */
+/**
+ * Normalise Persian/Arabic text before comparing it (D-203).
+ *
+ * The same word is routinely stored with different code points: Arabic yeh
+ * (ي U+064A) vs Persian yeh (ی U+06CC), Arabic kaf (ك) vs Persian kaf (ک),
+ * Arabic-Indic vs Persian digits, and optional ZWNJ inside compounds. Google
+ * stores whatever the keyboard produced; the owner types whatever theirs
+ * produces. A byte-exact search between the two finds nothing and reports
+ * "does not exist", which is how the assistant came to deny an event the owner
+ * was looking at.
+ */
+export function foldFa(input: string): string {
+  return input
+    .replace(/[\u064A\u0649]/g, '\u06CC')          // ي ى → ی
+    .replace(/\u0643/g, '\u06A9')                  // ك → ک
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[\u200C\u200F\u200E\u064B-\u0652]/g, '')  // ZWNJ, marks, harakat
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 export async function findEvents(
   actorId: string, q: string, limit = 20,
 ): Promise<CalendarEvent[]> {
   const account = (await getGrant(actorId))?.accountEmail ?? '';
-  // Escaped: a title with a bracket in it must not become a broken regex.
-  const safe = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const docs = await eventsCol()
-    .find(
-      { actorId, account, summary: { $regex: safe, $options: 'i' } } as never,
-      { projection: { _id: 0 } as never },
-    )
+  const needle = foldFa(q);
+  if (!needle) return [];
+
+  /* Filtering in Mongo cannot fold Persian orthography, so the scan happens
+   * here. The mirror is a bounded four-month window — a few hundred rows —
+   * which is cheap, and correctness matters far more than the microseconds. */
+  const docs = (await eventsCol()
+    .find({ actorId, account } as never, { projection: { _id: 0 } as never })
     .sort({ start: 1 })
-    .limit(Math.min(limit, 50))
-    .toArray();
+    .limit(2000)
+    .toArray())
+    .filter((d) => {
+      const row = d as unknown as { summary?: string; description?: string; location?: string };
+      const hay = foldFa(`${row.summary ?? ''} ${row.description ?? ''} ${row.location ?? ''}`);
+      return hay.includes(needle);
+    })
+    .slice(0, Math.min(limit, 50));
   return docs.map((d) => {
     const ev = CalendarEventSchema.parse(d);
     return { ...ev, description: plainText(ev.description), location: plainText(ev.location) };
   });
+}
+
+/**
+ * What the mirror actually holds, for answering "why can't you see it?".
+ *
+ * A search that returns nothing is ambiguous: never created, wrong calendar,
+ * or outside the synced window. This turns that into a fact.
+ */
+/** One mirrored event by id — the current times, for a duration-preserving move. */
+export async function readEventById(
+  actorId: string, eventId: string,
+): Promise<CalendarEvent | null> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const doc = await eventsCol().findOne(
+    { actorId, account, eventId } as never,
+    { projection: { _id: 0 } as never },
+  );
+  return doc ? CalendarEventSchema.parse(doc) : null;
+}
+
+export async function mirrorCoverage(actorId: string): Promise<{
+  events: number; earliest: string; latest: string;
+  perCalendar: Array<{ calendarId: string; summary: string; enabled: boolean; events: number }>;
+}> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const docs = await eventsCol()
+    .find({ actorId, account } as never, { projection: { _id: 0 } as never })
+    .sort({ start: 1 })
+    .limit(5000)
+    .toArray();
+  const rows = docs as unknown as Array<{ calendarId: string; start: string }>;
+  const cals = await listCalendars(actorId);
+
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.calendarId, (counts.get(r.calendarId) ?? 0) + 1);
+
+  return {
+    events: rows.length,
+    earliest: rows[0]?.start ?? '',
+    latest: rows[rows.length - 1]?.start ?? '',
+    perCalendar: cals.map((c) => ({
+      calendarId: c.calendarId, summary: c.summary || c.calendarId,
+      enabled: c.enabled, events: counts.get(c.calendarId) ?? 0,
+    })),
+  };
 }
 
 export async function syncStates(actorId: string): Promise<SyncState[]> {

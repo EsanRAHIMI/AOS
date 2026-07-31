@@ -286,13 +286,16 @@ describe('calendar_find_event', () => {
     expect(res.summary).toContain('Weekly AOS Review');
   });
 
-  it('says plainly that nothing matched, and names the three places it could be hiding', async () => {
+  it('answers an empty result with coverage facts, not a shrug (D-203)', async () => {
+    // "I found nothing" and "it does not exist" are different sentences, and
+    // the difference is these numbers.
     await connect();
     await seedEvent();
     const res = await buildCoreToolFamilies().get('calendar_find_event')!.executor({ q: 'چیزی که وجود ندارد' }, ctx);
     expect(res.summary).toContain('No mirrored event matches');
-    expect(res.summary).toContain('not synced');
-    expect(res.summary).toContain('do not guess');
+    expect(res.summary).toContain('Mirror right now:');
+    expect(res.summary).toContain('per calendar:');
+    expect(res.summary).toContain('Do not claim it does not exist');
   });
 
   it('treats a title with regex characters as text, not as a pattern', async () => {

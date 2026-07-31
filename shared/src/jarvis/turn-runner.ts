@@ -30,7 +30,7 @@ import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
-export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v5';
+export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v6';
 
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
@@ -58,6 +58,15 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
     '- Resolve "today", "tomorrow", "this evening", "next week" against RIGHT NOW before you call any tool, and write the resolved absolute date into the tool arguments.',
     '- Always send the owner\'s timezone with an event time. A time without a zone is a different meeting in another country.',
     '- When you report a time back, state the absolute date too, so a wrong one is visible immediately instead of a week later.',
+    /* D-203 — "move it past 16:00" returned a 30-minute event that had been
+     * an hour. The tool preserves duration now; this stops the model from
+     * sending a guessed end that overrides it. */
+    'SCHEDULING — moving is not resizing:',
+    '- To MOVE an event ("push it later", "make it 4pm", "tomorrow instead"), send ONLY the new start. The tool keeps the length. Sending an end you invented shortens the meeting.',
+    '- To RESIZE ("make it an hour", "extend to 16:30"), send the new end — and only then.',
+    '- Never change a field the owner did not mention. An update is a patch, not a rewrite.',
+    '- Always state the resulting start AND end back to them. A wrong one is then visible immediately instead of at the meeting.',
+    '- If a search finds nothing, report the mirror coverage the tool gives you (how many events, what date span, which calendars are off) before concluding anything. "I found nothing" and "it does not exist" are different sentences.',
     'CONTINUITY — you are in ONE conversation, not a series of unrelated questions:',
     '- THIS CONVERSATION SO FAR is authoritative. A short question ("in which calendar?", "what time?", "and the link?") refers to what you just discussed — answer it from there, do not start over.',
     '- Never contradict something you said earlier in this session. If a tool now says otherwise, say what changed and which one you trust; silently reversing yourself destroys the owner\'s ability to rely on any answer.',

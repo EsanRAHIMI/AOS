@@ -4614,3 +4614,48 @@ by reading its name — "Asia/Dubai" tells you nothing — but a clock reading
 14:32 tells you immediately whether it is right.
 
 Default is now Asia/Dubai + AED, since that is where the owner is.
+
+## D-203 — moving is not resizing, and Persian is not one spelling
+
+Two failures in one session, both mine, both structural rather than the model
+"being weak".
+
+**1. A move silently shortened the meeting.**
+
+```
+"extend it to 16:30"   → 15:30–16:30   ✓
+"move it past 16:00"   → 16:00–16:30   ✗   thirty minutes gone
+```
+
+The model sent a new `start` and invented an `end`, because nothing stopped it
+from inventing one. Every calendar application keeps the duration when you drag
+an event — that is what "move" *means* — and that rule belongs in the tool, not
+in a language model's arithmetic.
+
+`calendar_update_event` now reads the stored event, and a `start` with no `end`
+shifts the end by the same amount. An explicit `end` still wins, because
+resizing is a real operation; it just has to be asked for. The result summary
+names the preserved duration, and the prompt (`jarvis-role-v6`) says plainly:
+to move, send only the start; to resize, send the end; never change a field the
+owner did not mention; always report the resulting start AND end.
+
+**2. "This event does not exist" — while the owner was looking at it.**
+
+Persian orthography. The same word is routinely stored with different code
+points: Arabic yeh (ي) vs Persian yeh (ی), Arabic kaf (ك) vs Persian kaf (ک),
+Arabic-Indic vs Persian digits, optional ZWNJ inside compounds. Google stores
+whatever keyboard produced the title; the owner types whatever theirs produces.
+A byte-exact `$regex` between the two matches nothing and reports absence.
+
+`foldFa()` normalises both sides before comparing, and the search now covers
+description and location as well as the title. Mongo cannot fold Persian, so
+the scan happens in process — the mirror is a bounded four-month window, a few
+hundred rows, and correctness is worth the microseconds.
+
+**3. And when a search really does find nothing, say what that means.**
+`mirrorCoverage()` reports how many events are mirrored, over what date span,
+and per calendar with the disabled ones marked. The empty-result message now
+carries those numbers and instructs: if the date is outside that span, or its
+calendar is [OFF], THAT is the reason — do not claim the event does not exist.
+"I found nothing" and "it does not exist" are different sentences, and the
+difference is these numbers.

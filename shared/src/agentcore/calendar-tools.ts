@@ -20,7 +20,8 @@ import { z } from 'zod';
 import { AgentToolRegistry, type ToolResult } from './registry.js';
 import {
   readAgenda, readTasks, listCalendars, classifyWrite,
-  createEvent, updateEvent, createTask, getGrant, ensureAosCalendar, findEvents, CALENDAR_ACTOR_ID,
+  createEvent, updateEvent, createTask, getGrant, ensureAosCalendar, findEvents,
+  mirrorCoverage, readEventById, CALENDAR_ACTOR_ID,
   type CalendarEvent, type CalendarRef,
 } from '../calendar/index.js';
 
@@ -269,9 +270,15 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       if (blocked) return { ok: false, summary: blocked };
       const found = await findEvents(CALENDAR_ACTOR_ID, String(args.q), Number(args.limit ?? 20));
       if (!found.length) {
+        /* An empty result is ambiguous — never created, wrong calendar, or
+         * outside the window — and the owner deserves the difference. */
+        const cov = await mirrorCoverage(CALENDAR_ACTOR_ID);
+        const cals = cov.perCalendar
+          .map((c) => `${c.summary}${c.enabled ? '' : ' [OFF]'}=${c.events}`)
+          .join(', ');
         return {
           ok: true,
-          summary: `No mirrored event matches "${args.q}". It was either never created, created in a calendar that is not synced, or created outside the synced window (one month back, three forward). Say this plainly — do not guess that it exists.`,
+          summary: `No mirrored event matches "${args.q}".\nMirror right now: ${cov.events} events, ${cov.earliest.slice(0, 10) || '—'} → ${cov.latest.slice(0, 10) || '—'}; per calendar: ${cals || 'none'}.\nTell the owner these numbers. If the date they are looking at is outside that span, or its calendar shows [OFF], THAT is the reason — not that the event is missing. Do not claim it does not exist.`,
         };
       }
       const names = await calendarNames(CALENDAR_ACTOR_ID);
@@ -423,6 +430,31 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       if (cls.sensitivity === 'blocked') return cannotWrite(cls.reason);
       if (cls.sensitivity === 'approval' && args.confirm !== true) return needsConfirm(cls.reason);
 
+      /* Moving is not resizing (D-203).
+       *
+       * The owner extended an event to an hour, then said "move it past 16:00"
+       * — and it came back as 16:00–16:30, half an hour shorter. The model had
+       * sent a new `start` and guessed an `end`, because nothing stopped it
+       * from guessing. Every calendar application in existence keeps the
+       * duration when you drag an event; that is what "move" means, and it
+       * belongs in the tool rather than in a model's arithmetic.
+       *
+       * So: `start` without `end` shifts the end by the same amount. An
+       * explicit `end` still wins — resizing is a real operation, it just has
+       * to be asked for. */
+      let end = args.end as string | undefined;
+      let preserved = '';
+      if (args.start && !end) {
+        const existing = await readEventById(CALENDAR_ACTOR_ID, String(args.eventId));
+        if (existing?.start && existing?.end) {
+          const durMs = new Date(existing.end).getTime() - new Date(existing.start).getTime();
+          if (durMs > 0) {
+            end = new Date(new Date(String(args.start)).getTime() + durMs).toISOString();
+            preserved = ` Duration preserved: ${Math.round(durMs / 60_000)} minutes (a move keeps the length; say "make it N minutes" to resize).`;
+          }
+        }
+      }
+
       const updated = await updateEvent({
         actorId: CALENDAR_ACTOR_ID,
         calendarId: String(args.calendarId),
@@ -432,11 +464,15 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
           description: args.description as string | undefined,
           location: args.location as string | undefined,
           start: args.start as string | undefined,
-          end: args.end as string | undefined,
+          end,
           timeZone: args.timeZone as string | undefined,
         },
       });
-      return { ok: true, summary: `Updated event ${args.eventId}.`, data: updated };
+      return {
+        ok: true,
+        summary: `DONE — event ${args.eventId} updated.${preserved} Report the new start AND end to the owner so a wrong one is visible immediately.`,
+        data: updated,
+      };
     },
   });
 
