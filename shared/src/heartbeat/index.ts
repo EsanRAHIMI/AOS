@@ -24,6 +24,7 @@ import { listRecentFirings } from '../watches/index.js';
 import { verifyChain } from '../cin/ledger.js';
 import { listDocuments } from '../cin/documents.js';
 import { listEntities } from '../cin/entities.js';
+import { readAttentionContext, judgeInterrupt } from '../presence/attention.js';
 
 export const ProactiveEventKind = z.enum([
   'mission_overdue', 'mission_stalled', 'mission_blocked', 'mission_review_due',
@@ -114,7 +115,12 @@ export interface HeartbeatResult {
  */
 export async function runHeartbeatOnce(
   actor: HeartbeatActor,
-  opts: { verifyTrustChain?: boolean; stalledAfterDays?: number; publish?: Publish; watchDocuments?: boolean } = {},
+  opts: {
+    verifyTrustChain?: boolean; stalledAfterDays?: number; publish?: Publish;
+    watchDocuments?: boolean;
+    /** Set false to notice without judging — used by tests of the pulse itself. */
+    judgeAttention?: boolean;
+  } = {},
 ): Promise<HeartbeatResult> {
   const started = Date.now();
   const checks: string[] = [];
@@ -185,9 +191,51 @@ export async function runHeartbeatOnce(
   }
 
   const { created, deduped } = await upsertCandidates(actor, candidates, opts.publish);
+
+  /* D-209 — noticing and announcing are now separate jobs.
+   *
+   * Everything above decides WHAT is true. None of it decides whether this is
+   * the moment to say it, and before the attention gate existed the answer was
+   * implicitly "always, immediately" — which is how an assistant with a voice
+   * becomes an assistant you mute. Each newly created event is judged once,
+   * here, at the moment it comes into existence, and the verdict is recorded
+   * against it.
+   *
+   * Fail-soft on purpose: a gate that cannot be consulted must not stop the
+   * pulse from noticing. An unjudged event still exists and still reaches the
+   * owner as a card — the degradation is that it loses its chance to be
+   * spoken, which is the safe direction to fail in. */
+  let spoken = 0;
+  if (created.length && opts.judgeAttention !== false) {
+    try {
+      const ctx = await readAttentionContext({ actorId: actor.actorId, tenantId: actor.tenantId ?? null });
+      for (const e of created) {
+        const verdict = await judgeInterrupt(
+          { actorId: actor.actorId, tenantId: actor.tenantId ?? null },
+          {
+            subjectId: e.eventId,
+            subjectKind: `proactive:${e.kind}`,
+            headline: e.title,
+            // The heartbeat's own priority IS the weight — re-deriving it here
+            // would let the two disagree about the same event.
+            weight: e.priority === 'critical' ? 1 : e.priority === 'attention' ? 0.7 : 0.3,
+            // Only a watch alert is inherently time-boxed; an overdue mission
+            // is important but not less true in an hour.
+            timeCritical: e.kind === 'watch_alert',
+          },
+          ctx,
+        );
+        if (verdict.decision === 'speak_now') spoken += 1;
+      }
+    } catch {
+      /* see above — never let the gate break the pulse */
+    }
+  }
+
   const run: HeartbeatRun = HeartbeatRunSchema.parse({
     heartbeatId: genId('hb'), actorId: actor.actorId, at: nowIso(),
-    durationMs: Date.now() - started, checks, created: created.length, deduped, notes: '',
+    durationMs: Date.now() - started, checks, created: created.length, deduped,
+    notes: created.length ? `spoken:${spoken}/${created.length}` : '',
   });
   await runsCol().insertOne(run as never);
   return { run, created };

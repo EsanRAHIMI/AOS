@@ -98,4 +98,8 @@ export * from './happenings/index.js';
 // D-208 — what the OWNER has not supplied yet, one line each. Distinct from
 // capability_gaps, which is what the KERNEL lacked while doing its own work.
 export * from './happenings/readiness.js';
+// D-209 Presence — the gate in front of every unprompted utterance, and the
+// natural moments a considerate assistant batches non-urgent things into.
+export * from './presence/attention.js';
+export * from './presence/briefing-moments.js';
 export * from './calendar/index.js';

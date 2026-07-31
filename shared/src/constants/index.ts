@@ -333,6 +333,13 @@ export const COLLECTIONS = {
   LOOP_INBOX: 'loop_inbox',
   LOOP_CYCLES: 'loop_cycles',
   OWNER_STATE_SNAPSHOTS: 'owner_state_snapshots',
+  /**
+   * D-209 — every decision about whether Jarvis may speak, WITH its reason.
+   * This is the answer to both "why did you interrupt me" and, more
+   * importantly, "why did you not tell me": a suppression that leaves no
+   * record is indistinguishable from never having noticed.
+   */
+  ATTENTION_DECISIONS: 'attention_decisions',
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];

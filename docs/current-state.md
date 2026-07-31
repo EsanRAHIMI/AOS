@@ -3,7 +3,7 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-208 (happening stage + readiness gaps)._
+_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-209 (presence: attention gate + ambient voice)._
 
 > **NEW NORTH STAR (2026-07-19):** the founder's **CIN v2** proposal
 > (`docs/CIN v2.pdf`) is the adopted post-K2 direction — see
@@ -50,6 +50,24 @@ _Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-208 (happeni
 > **Suites after D-208: shared 471 pass / 6 skipped, gateway 254 pass,
 > dashboard 13 files pass; shared + gateway + dashboard all typecheck clean.**
 > Still NOT product-verified in a browser with a real model — see the banner.
+
+> **D-209 (2026-07-31) — Jarvis learned when NOT to speak.**
+> `shared/src/presence/attention.ts` is a gate in front of every unprompted
+> utterance: `speak_now` / `card_only` / `hold_for_briefing`, judged against
+> the owner's live calendar, waking hours, focus, item weight and a speak
+> cooldown. **`suppress` is never returned** (contract-tested across every
+> combination) — silence is about delivery, never about whether the owner gets
+> to know. Every verdict lands in `attention_decisions` WITH its reason, which
+> is the only answer to "why did you not tell me?". The heartbeat now judges
+> each event it creates instead of announcing everything it finds.
+> `briefing-moments.ts` delivers held items at morning / a real calendar gap
+> (≥25 min) / evening, idempotently. Routes: `GET /v1/jarvis/attention`,
+> `POST /v1/jarvis/attention/judge`, plus a `briefing` frame on the owner SSE.
+> Client: `useAmbientVoice` — wake word, verbatim command extraction, barge-in,
+> off-by-default and never persisted, with the audio-upload disclosure shown
+> beside the switch. Also fixed a latent hook-order crash in `JarvisRudder`.
+> 39 new tests. **Suites after D-209: shared 509 pass / 6 skipped, gateway 254
+> pass, dashboard 188 pass; all three typecheck clean.**
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build

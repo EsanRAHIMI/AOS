@@ -24,6 +24,7 @@ import { getBriefingAction, type JarvisBriefingView } from '@/app/jarvis/actions
 import { JarvisConversation, type ConversationState } from '@/components/JarvisConversation';
 import { bidiProps } from '@/lib/rtl';
 import { useVoice } from '@/lib/useVoice';
+import { useAmbientVoice } from '@/lib/useAmbientVoice';
 import { useEventAlerts } from '@/lib/useEventAlerts';
 import { archiveAlertAction } from '@/app/calendar/announce-action';
 
@@ -37,18 +38,33 @@ const STATE_LABEL: Record<ConversationState, string> = {
   error: 'خطا',
 };
 
+/**
+ * Login is the only place with no assistant: there is no owner yet.
+ *
+ * The split into an outer gate and an inner body is not cosmetic (D-209). The
+ * gate used to be an early `return null` INSIDE the body, above the hooks —
+ * which meant the component rendered a different number of hooks on `/login`
+ * than everywhere else. Because the rudder lives in `app/layout.tsx` and
+ * therefore survives navigation, going from login into the app on a
+ * client-side transition would have thrown "rendered more hooks than during
+ * the previous render" and taken the whole page down. It has not bitten yet
+ * only because the login form does a full document load. Mounting and
+ * unmounting a child instead makes the hook order unconditional, which is the
+ * rule rather than a workaround.
+ */
 export function JarvisRudder({ role }: { role: string }) {
   const pathname = usePathname() ?? '/';
+  if (pathname.startsWith('/login')) return null;
+  return <RudderBody role={role} pathname={pathname} />;
+}
+
+function RudderBody({ role, pathname }: { role: string; pathname: string }) {
   const [open, setOpen] = useState(false);
   const [briefing, setBriefing] = useState<JarvisBriefingView | null>(null);
   const [state, setState] = useState<ConversationState>('idle');
   const panelRef = useRef<HTMLDivElement>(null);
 
-  /** Login is the only place with no assistant: there is no owner yet. */
-  const hidden = pathname.startsWith('/login');
-
   useEffect(() => {
-    if (hidden) return;
     let alive = true;
     const pull = async () => {
       try {
@@ -59,11 +75,10 @@ export function JarvisRudder({ role }: { role: string }) {
     void pull();
     const id = setInterval(pull, BRIEFING_REFRESH_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [hidden]);
+  }, []);
 
   /* ⌘K opens it from anywhere; Esc closes without losing the conversation. */
   useEffect(() => {
-    if (hidden) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -74,9 +89,7 @@ export function JarvisRudder({ role }: { role: string }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hidden]);
-
-  if (hidden) return null;
+  }, []);
 
   const priority = briefing?.primaryPriority || briefing?.recommendedNextActions?.[0] || '';
 
@@ -87,6 +100,25 @@ export function JarvisRudder({ role }: { role: string }) {
   const alerts = useEventAlerts(voice.speak, (a) => {
     // Archive it as a turn so "نیم ساعت عقب بنداز" has something to refer to.
     void archiveAlertAction({ text: a.sentence, eventId: a.eventId, calendarId: a.calendarId, title: a.title });
+  });
+
+  /* Ambient listening (D-209) — the rudder owns it for the same reason it owns
+   * the calendar watch: it must work while the panel is closed. Saying
+   * "جارویس، ..." from across the room and having the panel open itself is the
+   * whole feature; a wake word that only works with the UI already open is a
+   * button with extra steps. */
+  const [injected, setInjected] = useState<{ text: string; nonce: number } | null>(null);
+  const ambient = useAmbientVoice({
+    lang: 'fa-IR',
+    speaking: voice.speaking,
+    // The owner starting to speak cuts Jarvis off mid-sentence. Without this
+    // the assistant finishes its paragraph while being talked over, which is
+    // the single clearest tell that you are using a machine.
+    onBargeIn: voice.stopSpeaking,
+    onCommand: (text) => {
+      setOpen(true);
+      setInjected({ text, nonce: Date.now() });
+    },
   });
 
   const nextLabel = (() => {
@@ -134,6 +166,7 @@ export function JarvisRudder({ role }: { role: string }) {
               <span className="jrud-state">{STATE_LABEL[state]}</span>
               <span className="jrud-role">{role}</span>
               <EventAlertToggle alerts={alerts} />
+              <AmbientToggle ambient={ambient} />
               <button type="button" className="jrud-x" onClick={() => setOpen(false)} aria-label="بستن">×</button>
             </header>
           )}
@@ -143,6 +176,7 @@ export function JarvisRudder({ role }: { role: string }) {
               variant="rudder"
               autoFocus
               onState={setState}
+              injected={injected}
               /* The page is real context: "این را باز کن" means something
                * different on /finance than on /loop. */
               contextNote={`current page: ${pathname}`}
@@ -157,6 +191,13 @@ export function JarvisRudder({ role }: { role: string }) {
                 {nextLabel || priority || 'جارویس — بپرسید، بگویید یا دستور بدهید'}
               </span>
               {alerts.enabled && <span className="jrud-watch" title="مراقب تقویم" aria-hidden />}
+              {ambient.hearing && (
+                <span
+                  className={`jrud-ear${ambient.awake ? ' jrud-ear--awake' : ''}`}
+                  title={ambient.awake ? 'در حال شنیدن دستور' : 'منتظر کلمهٔ «جارویس»'}
+                  aria-hidden
+                />
+              )}
               <kbd className="jrud-kbd" dir="ltr">⌘K</kbd>
             </button>
           )}
@@ -196,6 +237,38 @@ function EventAlertToggle({ alerts }: { alerts: ReturnType<typeof useEventAlerts
           {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>{m} دقیقه قبل</option>)}
         </select>
       )}
+    </span>
+  );
+}
+
+/**
+ * The ambient-listening switch.
+ *
+ * The disclosure is rendered next to the control, not hidden behind an info
+ * icon, and it is not optional: continuous recognition in Chrome uploads
+ * audio, and a toggle that does not say so is not consent. It is also why
+ * this control never remembers its state — see `useAmbientVoice`.
+ */
+function AmbientToggle({ ambient }: { ambient: ReturnType<typeof useAmbientVoice> }) {
+  if (!ambient.supported) return null;
+  return (
+    <span className="jrud-ambientbox">
+      <button
+        type="button"
+        className={`jrud-watchbtn${ambient.ambient ? ' on' : ''}`}
+        onClick={() => ambient.setAmbient(!ambient.ambient)}
+        aria-pressed={ambient.ambient}
+        title={ambient.disclosure}
+      >
+        <span className="jrud-watchdot" aria-hidden />
+        شنیدن دائمی
+      </button>
+      {ambient.ambient && (
+        <span className="jrud-ambientnote" dir="rtl">
+          بگویید «جارویس» و بعد دستورتان. {ambient.disclosure}
+        </span>
+      )}
+      {ambient.error && <span className="jrud-ambienterr" dir="rtl">{ambient.error}</span>}
     </span>
   );
 }

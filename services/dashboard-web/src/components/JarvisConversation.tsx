@@ -52,11 +52,21 @@ export interface JarvisConversationProps {
   autoFocus?: boolean;
   /** Read replies aloud when the turn arrived by voice. Default on. */
   voice?: boolean;
+  /**
+   * A turn submitted from outside the input box — today, the ambient wake-word
+   * listener (D-209).
+   *
+   * Carries a `nonce` rather than just text because the same command said
+   * twice ("جارویس، بعدی چیه؟" … "جارویس، بعدی چیه؟") is two turns, and a
+   * prop compared by string value would silently swallow the second. The
+   * nonce is what makes repetition work.
+   */
+  injected?: { text: string; nonce: number } | null;
 }
 
 export function JarvisConversation({
   variant, sessionId: controlledSessionId, contextNote, placeholder, emptyHint,
-  onState, onTurnComplete, autoFocus, voice = true,
+  onState, onTurnComplete, autoFocus, voice = true, injected = null,
 }: JarvisConversationProps) {
   const [msgs, setMsgs] = useState<ConversationMsg[]>([]);
   const [input, setInput] = useState('');
@@ -212,6 +222,21 @@ export function JarvisConversation({
   const v = useVoice({
     onFinal: (text) => { spokenTurnRef.current = true; void send(text); },
   });
+
+  /* An ambient wake-word command enters through the SAME `send` (D-209).
+   * Keying the effect on the nonce is what lets the owner repeat themselves;
+   * keying it on the text would drop every second identical command. It is
+   * marked as a spoken turn so the reply comes back by voice — someone who
+   * spoke from across the room cannot read the screen. */
+  const injectedNonce = injected?.nonce ?? 0;
+  useEffect(() => {
+    if (!injectedNonce || !injected?.text) return;
+    spokenTurnRef.current = true;
+    void send(injected.text);
+    // `injected` itself is intentionally not a dependency: only the nonce
+    // marks a NEW command, and re-running on object identity would resend.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [injectedNonce]);
   /* Broadcast what Jarvis is doing so the /jarvis canvas can pulse with it
    * WITHOUT owning a second conversation to derive it from. */
   useEffect(() => {

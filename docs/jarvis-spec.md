@@ -236,3 +236,75 @@ unconfirmed preferences.
 Rendered pinned to the top of the settled column on `/jarvis`, above the
 scrolling history: a standing condition that scrolled away is a condition
 nobody ever fixes.
+
+## 11. Presence — the attention gate (D-209)
+
+Jarvis may say something true at a moment that makes saying it wrong. Every
+unprompted utterance passes `shared/src/presence/attention.ts` first.
+
+`decideInterrupt(candidate, ctx)` is pure and returns one of four verdicts
+with a reason:
+
+| verdict | meaning |
+|---|---|
+| `speak_now` | say it aloud |
+| `card_only` | show it on the stage, no voice |
+| `hold_for_briefing` | deliver at the next natural moment |
+| `suppress` | **never returned** — see below |
+
+Inputs: the owner's live calendar state (`in_meeting`), waking hours in their
+own timezone (`quiet_hours`), whether they are typing to Jarvis (`focused`),
+the item's weight (reused from the D-208 happening feed, never re-derived),
+whether delay destroys its value (`timeCritical`), and how recently Jarvis
+last spoke (`SPEAK_COOLDOWN_MS`, 8 min, bypassed by time-critical items).
+
+**Invariants**
+
+- **`suppress` is never produced**, and a contract test asserts it across
+  every state × weight × urgency combination. Silence is a decision about
+  delivery, not about whether the owner gets to know.
+- **`unknown` ≠ `free`.** An unreadable calendar means possibly-busy.
+- **`focused` outranks urgency.** Nothing is worth talking over the owner
+  mid-sentence.
+- Every verdict is written to `attention_decisions` with its reason and state.
+  That ledger is the only answer to *"why did you not tell me?"*
+
+`GET /v1/jarvis/attention` returns the current context, recent decisions and
+held items. `POST /v1/jarvis/attention/judge` lets the browser ask the same
+gate rather than keeping a private rule about when it may talk.
+
+### Briefing moments
+
+`shared/src/presence/briefing-moments.ts`. Held items are delivered at one of
+three moments in the owner's own day: **morning** (first waking hour),
+**gap** (a real opening between calendar events, ≥ `MIN_GAP_MINUTES` = 25),
+**evening** (last waking hour). Morning and evening take precedence over a gap
+inside the same hour.
+
+`deliverBriefingIfDue` is idempotent — the pulse runs every five minutes, so
+anything else would deliver the morning briefing twelve times. The moment is
+recorded before its items are marked delivered: a crash between the two writes
+repeats an item rather than losing it.
+
+Waking hours (07:00–23:00) are intentionally not a preference — the failure
+mode of a wrong value is being woken up. The timezone is the one already
+confirmed in D-202.
+
+## 12. Ambient voice (D-209)
+
+`services/dashboard-web/src/lib/useAmbientVoice.ts` — continuous recognition
+with a wake word, separate from `useVoice` (push-to-talk) because it is a
+different machine with different failure modes.
+
+- **Wake word**: `WAKE_WORDS` accepts several Persian spellings plus Latin
+  forms; matching folds Arabic yeh/kaf, harakat and ZWNJ. The command is the
+  text that FOLLOWS the wake word in the same utterance, returned **verbatim**
+  — `fold()` keeps an index map so the split survives normalisation and the
+  owner's exact words reach the model.
+- **Privacy**: Chrome's SpeechRecognition uploads audio. Ambient mode is off
+  by default, **never persisted**, and its `disclosure` string is rendered
+  beside the switch. Everything heard before the wake word is discarded in the
+  browser — not stored, not rendered, not sent.
+- **Barge-in**: speech detected while Jarvis is speaking cancels the utterance.
+- Commands enter through `JarvisConversation`'s `injected={{ text, nonce }}`
+  prop — the nonce is what lets the owner repeat the same command twice.

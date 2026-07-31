@@ -17,6 +17,8 @@ import {
   ESAN_USER_ID, failure, success, ERROR_CODES,
   runHeartbeatOnce, listProactiveEvents, setProactiveEventStatus, lastHeartbeat,
   listHappenings, HappeningCategory, assessReadiness,
+  readAttentionContext, judgeInterrupt, listAttentionDecisions, dueHeldItems,
+  deliverBriefingIfDue, currentBriefingMoment,
 } from '@factory/shared';
 import type { HeartbeatActor } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -117,6 +119,56 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
     });
   });
 
+  /* ------------------------------- attention ------------------------------ */
+
+  /**
+   * What Jarvis thinks the owner is doing, and what it has decided to say or
+   * not say (D-209).
+   *
+   * The `decisions` list is the point: it is the only place the owner can
+   * find out why they were NOT told something. A gate without this endpoint
+   * is a gate nobody can hold accountable.
+   */
+  app.get('/v1/jarvis/attention', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const q = req.query as { focused?: string; limit?: string };
+    const actor = actorFor(req);
+    const ctx = await readAttentionContext(actor, { focused: q.focused === '1' });
+    const [decisions, held, moment] = await Promise.all([
+      listAttentionDecisions(actor, { limit: q.limit ? Number(q.limit) : 30 }),
+      dueHeldItems(actor),
+      currentBriefingMoment(),
+    ]);
+    return success({ context: ctx, decisions, held, moment });
+  });
+
+  /**
+   * Ask the gate about ONE candidate without recording anything.
+   *
+   * The dashboard uses this before speaking an alert it generated locally
+   * (the pre-event reminder), so the browser and the kernel apply the SAME
+   * judgement instead of the client having a private rule about when it is
+   * acceptable to talk.
+   */
+  app.post<{ Body: { subjectId?: string; subjectKind?: string; headline?: string; weight?: number; timeCritical?: boolean; focused?: boolean } }>(
+    '/v1/jarvis/attention/judge',
+    async (req, reply) => {
+      if (!guard(req)) return deny(reply);
+      const b = req.body ?? {};
+      if (!b.subjectId) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'subjectId is required'));
+      const actor = actorFor(req);
+      const ctx = await readAttentionContext(actor, { focused: Boolean(b.focused) });
+      const record = await judgeInterrupt(actor, {
+        subjectId: b.subjectId,
+        subjectKind: b.subjectKind ?? 'client_alert',
+        headline: b.headline ?? '',
+        weight: typeof b.weight === 'number' ? b.weight : 0.6,
+        timeCritical: Boolean(b.timeCritical),
+      }, ctx);
+      return success({ decision: record });
+    },
+  );
+
   /* --------------------------- the owner stream --------------------------- */
 
   app.get('/v1/stream/owner', async (req, reply) => {
@@ -189,6 +241,13 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
             seenIds = new Set([...nextHappenings, ...unseen].filter((h) => h.at >= happeningCursor).map((h) => h.happeningId));
           }
         }
+
+        /* D-209 — a briefing becomes due at a moment in the owner's day, not
+         * on a timer, so the stream checks for one on each tick. It is
+         * idempotent (`alreadyDelivered`), which is what makes it safe to ask
+         * this often and safe for two open tabs to ask at once. */
+        const briefing = await deliverBriefingIfDue(actor);
+        if (briefing) send('briefing', briefing);
 
         if (Date.now() - lastPing > 15_000) { send('ping', { at: new Date().toISOString() }); lastPing = Date.now(); }
       } catch {

@@ -4943,3 +4943,113 @@ looks dead if its surface only shows aggregate state. Counts describe a
 system; cards describe what it is doing. And a feed that is a projection of
 the governed ledger cannot lie about either, which is why the projection was
 worth more than the write path it replaced.
+
+## D-209 — the assistant that knows when not to speak
+
+The owner asked what would make this more like the assistant in the film and
+actually useful. The honest answer was that the defining property of that
+assistant is not the hologram: it is that he is continuously present, and he
+never says the wrong thing at the wrong moment. Everything else — the voice,
+the initiative, the reach — is downstream of that, and building any of it
+first produces a system you mute within a day.
+
+So this phase built the gate, and only then the voice.
+
+### The gate
+
+Before D-209 the heartbeat did two jobs in one: it decided what was TRUE and
+it decided that the owner should hear about it, immediately, because there was
+no other option. `shared/src/presence/attention.ts` splits them. Noticing
+stays with the heartbeat; delivery is now a judgement made against the moment:
+
+| the owner is | ordinary item | time-critical | urgent AND at the top |
+|---|---|---|---|
+| free | speak | speak | speak |
+| in a meeting | hold until it ends | card, silently | speak |
+| in quiet hours | hold for morning | hold for morning | speak |
+| typing to Jarvis | card | card | card |
+| unknown (no calendar) | card | card | speak |
+
+Three properties of that table are load-bearing:
+
+**`suppress` is never returned.** It exists in the enum and there is a
+contract test asserting nothing produces it. Silence here is a decision about
+DELIVERY — card instead of voice, later instead of now — never about whether
+the owner gets to know. A system that silently drops is indistinguishable from
+one that never noticed.
+
+**"Unknown" does not mean "free".** When the calendar cannot be read we do not
+know what the owner is doing, and assuming the best is how an assistant ends
+up talking during a funeral. Unknown behaves like possibly-busy.
+
+**The owner typing outranks everything, including urgency.** Weight 1 and
+time-critical still yield `card_only` while they are mid-sentence. There is no
+message worth talking over the person you are talking to.
+
+Every verdict is written to `attention_decisions` with its reason and the
+state it was judged in. That collection exists for one question the owner will
+eventually ask and nothing else could answer: *why did you not tell me?*
+
+### Briefing moments
+
+"Later" had to mean something. `briefing-moments.ts` defines it as one of
+three moments that exist in the owner's day whether or not this system runs:
+the first waking hour, a real gap between calendar events, and the last waking
+hour. A gap must be at least 25 minutes — three minutes between two meetings
+is the walk between them, not an opening.
+
+The whole module is written against one arithmetic fact: the pulse runs every
+five minutes, so any "is it time?" check that is not idempotent fires twelve
+times an hour. `alreadyDelivered` keys on a moment key that is stable per
+local day (and per gap), and the moment is recorded BEFORE its items are
+marked delivered — if the process dies between the two writes, an item is said
+twice, which is recoverable, rather than marked delivered for a briefing that
+was never spoken, which loses it silently.
+
+Waking hours are deliberately NOT a new preference. Another setting is another
+thing the owner has to get right before the system behaves, and the failure
+mode of getting this one wrong is being woken up. 07:00–23:00, evaluated in
+the timezone they already confirmed in D-202.
+
+### The voice
+
+`useAmbientVoice` is a separate hook from `useVoice` on purpose: push-to-talk
+works, and ambient listening is a different machine — it restarts itself, it
+must discard almost everything it hears, and it can talk over the owner.
+
+Two things about it are stated rather than hidden. First, Chrome's
+SpeechRecognition is not local: "always listening" means "always uploading"
+while the microphone is open. The hook cannot fix that, so ambient mode is off
+by default, is never persisted across reloads, and carries a `disclosure`
+string that the UI renders next to the switch rather than behind an info icon.
+A toggle that does not say what it costs is not consent. Second, everything
+heard before the wake word is discarded in the browser — never stored, never
+rendered, never sent.
+
+Barge-in: any speech detected while Jarvis is talking cancels the utterance
+immediately. Finishing the paragraph while being talked over is the single
+clearest tell that you are addressing a machine.
+
+### Two bugs found while building, both in code written this session
+
+**The wake-word splitter was rewriting the owner's words.** It folded Persian
+spelling variants to find the wake word — correct — and then returned the
+FOLDED string as the command. "پس‌فردا" (one word, day-after-tomorrow) arrived
+at the model as "پس فردا" (two words). Matching must be forgiving; the command
+must be verbatim. `fold()` now returns an index map so the split point
+survives the fold and the slice comes off the original string.
+
+**The rudder had a latent hook-order crash.** `if (hidden) return null` sat
+above `useVoice`/`useEventAlerts`, so the component rendered a different
+number of hooks on `/login` than elsewhere. Because the rudder lives in
+`layout.tsx` and survives navigation, a client-side transition out of login
+would have thrown "rendered more hooks than during the previous render". It
+has never fired only because the login form does a full document load — which
+is exactly the kind of accident that stops being true after an unrelated
+change. Split into an outer gate and an inner body; the hook order is now
+unconditional.
+
+**The general rule this leaves behind:** capability and permission to use it
+are different features, and shipping the first without the second is how
+assistants get muted. The heartbeat had been finding true things to say for
+thirty commits; what it lacked was the judgement not to say them yet.

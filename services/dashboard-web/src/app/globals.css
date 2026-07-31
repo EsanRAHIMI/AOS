@@ -2194,3 +2194,24 @@ button { font: inherit; }
   margin: 0; font-size: 11px; line-height: 1.7; color: var(--warn);
   unicode-bidi: plaintext;
 }
+
+/* Ambient listening (D-209). The ear indicator is on the COLLAPSED bar on
+ * purpose: an open microphone must be visible without opening anything. */
+.jrud-ear {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted-2); flex: none;
+  box-shadow: 0 0 0 3px rgba(151, 160, 184, .12);
+}
+.jrud-ear--awake {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(69, 224, 168, .22), 0 0 10px rgba(69, 224, 168, .7);
+  animation: hp-breathe 1.2s var(--ease) infinite;
+}
+.jrud-ambientbox { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 100%; }
+/* The disclosure is small but never hidden — it is the terms of the switch. */
+.jrud-ambientnote {
+  font-size: 10px; line-height: 1.65; color: var(--muted-2);
+  max-width: 340px; unicode-bidi: plaintext;
+}
+.jrud-ambienterr { font-size: 10.5px; color: var(--warn); unicode-bidi: plaintext; }
+@media (prefers-reduced-motion: reduce) { .jrud-ear--awake { animation: none; } }
