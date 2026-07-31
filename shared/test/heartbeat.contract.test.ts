@@ -89,14 +89,14 @@ describe('heartbeat pulse', () => {
 
   it('warns before a document expires, and escalates once it has (D-186)', async () => {
     const owner = (await createEntity(
-      { actorId: 'esan', scope: 'user', tenantId: null },
+      { actorId: 'owner', scope: 'user', tenantId: null },
       { entityType: 'person', name: 'Owner', tags: ['owner'] },
     )).entity;
     const soon = new Date(Date.now() + 12 * 86_400_000).toISOString();
     const gone = new Date(Date.now() - 2 * 86_400_000).toISOString();
-    await createDocument({ actorId: 'esan' }, { ownerEntityId: owner.entityId, title: 'پاسپورت', docType: 'identity', expiresAt: soon });
-    await createDocument({ actorId: 'esan' }, { ownerEntityId: owner.entityId, title: 'قرارداد', docType: 'contract', expiresAt: gone });
-    await createDocument({ actorId: 'esan' }, { ownerEntityId: owner.entityId, title: 'گواهی', docType: 'education', expiresAt: new Date(Date.now() + 900 * 86_400_000).toISOString() });
+    await createDocument({ actorId: 'owner' }, { ownerEntityId: owner.entityId, title: 'پاسپورت', docType: 'identity', expiresAt: soon });
+    await createDocument({ actorId: 'owner' }, { ownerEntityId: owner.entityId, title: 'قرارداد', docType: 'contract', expiresAt: gone });
+    await createDocument({ actorId: 'owner' }, { ownerEntityId: owner.entityId, title: 'گواهی', docType: 'education', expiresAt: new Date(Date.now() + 900 * 86_400_000).toISOString() });
 
     const { run, created } = await runHeartbeatOnce(actor);
     expect(run.checks).toContain('documents');

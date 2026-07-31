@@ -2,6 +2,63 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-07-31 — Runtime readiness becomes a deployment gate (D-213)
+
+Local builds proved code compatibility but did not prove that Atlas, hosted
+Redis, Google OAuth, and the configured model provider were usable together.
+That gap made an otherwise green deployment capable of failing only after the
+owner started a real daily workflow.
+
+- Added a secret-free configuration assessment with explicit `ready`,
+  `warning`, and `blocked` states. It validates URI schemes, queue-mode
+  coherence, the 32-byte Google token vault key, production HTTPS redirects,
+  provider presence, and strong distinct runtime secrets.
+- Added `pnpm check:runtime`, a read-only preflight that performs real MongoDB
+  and Redis pings, checks for an encrypted active owner Google grant, and probes
+  the selected model provider. It never writes application data.
+- `pnpm check:runtime:strict` turns warnings into a non-zero exit for deployment
+  gates. In particular, configured Redis with `AGENT_DISPATCH_MODE=http` is
+  reported honestly: infrastructure is available, but task dispatch is not yet
+  using it.
+- Connection/provider errors are redacted before printing. The check reports
+  capability and remediation, never credentials, connection URIs, encrypted
+  refresh tokens, account email, or raw provider organization identifiers.
+
+Rollout remains reversible and configuration-only: run the normal check first;
+verify the existing BullMQ path; then change gateway and orchestrator to
+`queue_with_http_fallback` one at a time. Roll back immediately by restoring
+`AGENT_DISPATCH_MODE=http`; no schema or data migration is involved.
+
+## 2026-07-31 — Actor partitions become repository-enforced (D-212)
+
+The scope boundary gate exposed 14 shared modules that still opened raw Mongo
+collections. Several were not harmless lint debt: the happenings projection
+read turns, approvals and runs without an owner predicate; Living Loop updated
+inbox/cycle rows by id alone; and CIN entity/document read APIs accepted no
+actor at all.
+
+- Added `actorScopedCollection` for a known authenticated actor,
+  `actorPartitionedCollection` for compatible legacy modules whose existing
+  filters/documents carry `actorId`, and `keyedScopedCollection` for persisted
+  schemas such as `ownerId`/`createdBy`. Reads cannot widen the partition,
+  inserts are stamped, owner fields are immutable, and a legacy operation
+  missing its partition fails closed before reaching Mongo.
+- Calendar grants/mirrors/notes, heartbeat, Living Loop, attention decisions,
+  preferences and the happening projection now use these repositories.
+- CIN entity/document APIs require an actor on every read and mutation. CIN v1
+  keeps its persisted canonical owner key (`owner`) until a versioned
+  multi-owner data migration; changing it silently would hide existing data.
+- CIN relations, keys, claims and the append-only ledger remain explicitly
+  kernel-global through `globalCollection`; global access is now a visible
+  architectural declaration rather than an incidental raw handle.
+- The static ratchet now covers the migrated collections so raw access cannot
+  be reintroduced from service code.
+
+Verification: boundary gate clean; monorepo typecheck clean; scoped/CIN/
+happenings/loop contract suites green; full shared suite green except the
+sandbox-gated localhost tool-calling integration; gateway 254/254 and
+dashboard 212/212 green.
+
 ## 2026-07-31 — The owner picks which calendars this system works with (D-193e)
 
 Owner: only one calendar was showing, and only partly; they want to see every

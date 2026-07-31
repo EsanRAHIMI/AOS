@@ -16,14 +16,14 @@
  * - Multi-instance safe: Mongo is the truth; the stream layer polls/broadcasts.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorPartitionedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { assessMissionHealth, type MissionActor } from '../missions/index.js';
 import { listRecentFirings } from '../watches/index.js';
 import { verifyChain } from '../cin/ledger.js';
 import { listDocuments } from '../cin/documents.js';
-import { listEntities } from '../cin/entities.js';
+import { CIN_OWNER_ACTOR_ID, listEntities } from '../cin/entities.js';
 import { readAttentionContext, judgeInterrupt } from '../presence/attention.js';
 
 export const ProactiveEventKind = z.enum([
@@ -67,8 +67,8 @@ export const HeartbeatRunSchema = z.object({
 });
 export type HeartbeatRun = z.infer<typeof HeartbeatRunSchema>;
 
-const eventsCol = () => collection<ProactiveEvent>(COLLECTIONS.PROACTIVE_EVENTS);
-const runsCol = () => collection<HeartbeatRun>(COLLECTIONS.HEARTBEAT_RUNS);
+const eventsCol = () => actorPartitionedCollection<ProactiveEvent>(COLLECTIONS.PROACTIVE_EVENTS);
+const runsCol = () => actorPartitionedCollection<HeartbeatRun>(COLLECTIONS.HEARTBEAT_RUNS);
 
 export interface HeartbeatActor { actorId: string; scope: 'global' | 'user'; tenantId?: string | null }
 
@@ -147,11 +147,12 @@ export async function runHeartbeatOnce(
   //    ({ownerEntityId, expiresAt}) so this stays cheap on every pulse.
   if (opts.watchDocuments !== false) {
     try {
-      const people = await listEntities({ entityType: 'person' });
+      const cinActor = { actorId: CIN_OWNER_ACTOR_ID };
+      const people = await listEntities(cinActor, { entityType: 'person' });
       const owner = people.find((e) => e.tags.includes('owner') || e.tags.includes('founder')) ?? people[0];
       if (owner) {
         checks.push('documents');
-        const docs = await listDocuments({ ownerEntityId: owner.entityId });
+        const docs = await listDocuments(cinActor, { ownerEntityId: owner.entityId });
         for (const d of docs) {
           if (d.status === 'expired') {
             candidates.push({

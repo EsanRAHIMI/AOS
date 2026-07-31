@@ -18,7 +18,7 @@
  * the same tamper-evident history as the rest of their identity.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { keyedScopedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { ScopeFieldsSchema } from '../schemas/scope.js';
@@ -76,7 +76,7 @@ export const CinDocumentSchema = z.object({
 }).merge(ScopeFieldsSchema);
 export type CinDocument = z.infer<typeof CinDocumentSchema>;
 
-const docsCol = () => collection<CinDocument>(COLLECTIONS.CIN_DOCUMENTS);
+const docsCol = (actor: CinDocActor) => keyedScopedCollection<CinDocument>(COLLECTIONS.CIN_DOCUMENTS, 'createdBy', actor.actorId);
 
 export interface CinDocActor { actorId: string; tenantId?: string | null }
 
@@ -135,7 +135,7 @@ export async function createDocument(actor: CinDocActor, input: CreateDocumentIn
     createdBy: actor.actorId,
   });
   doc.status = deriveStatus(doc);
-  await docsCol().insertOne(doc as never);
+  await docsCol(actor).insertOne(doc as never);
   await appendLedger({
     recordType: 'document.registered', refId: doc.docId, actorEntityId: actor.actorId,
     summary: `${doc.docType}: ${doc.title}`,
@@ -145,12 +145,13 @@ export async function createDocument(actor: CinDocActor, input: CreateDocumentIn
 }
 
 export async function listDocuments(
+  actor: CinDocActor,
   filter: { ownerEntityId?: string; docType?: CinDocumentType; status?: CinDocumentStatus; includeArchived?: boolean } = {},
 ): Promise<CinDocument[]> {
   const f: Record<string, unknown> = {};
   if (filter.ownerEntityId) f.ownerEntityId = filter.ownerEntityId;
   if (filter.docType) f.docType = filter.docType;
-  const docs = await docsCol().find(f).sort({ createdAt: -1 }).limit(500).toArray();
+  const docs = await docsCol(actor).find(f).sort({ createdAt: -1 }).limit(500).toArray();
   const now = Date.now();
   return docs
     .map((d) => {
@@ -161,8 +162,8 @@ export async function listDocuments(
     .filter((d) => (filter.status ? d.status === filter.status : true));
 }
 
-export async function getDocument(docId: string): Promise<CinDocument | null> {
-  const doc = await docsCol().findOne({ docId });
+export async function getDocument(actor: CinDocActor, docId: string): Promise<CinDocument | null> {
+  const doc = await docsCol(actor).findOne({ docId });
   if (!doc) return null;
   const parsed = CinDocumentSchema.parse(doc);
   return { ...parsed, status: deriveStatus(parsed) };
@@ -173,11 +174,11 @@ export type UpdateDocumentPatch = Partial<Pick<CinDocument,
 >>;
 
 export async function updateDocument(actor: CinDocActor, docId: string, patch: UpdateDocumentPatch): Promise<CinDocument> {
-  const current = await getDocument(docId);
+  const current = await getDocument(actor, docId);
   if (!current) throw new Error(`document ${docId} not found`);
   const next: CinDocument = { ...current, ...patch, updatedAt: nowIso() };
   next.status = deriveStatus(next);
-  await docsCol().updateOne({ docId }, { $set: { ...patch, status: next.status, updatedAt: next.updatedAt, updatedBy: actor.actorId } });
+  await docsCol(actor).updateOne({ docId }, { $set: { ...patch, status: next.status, updatedAt: next.updatedAt, updatedBy: actor.actorId } });
   await appendLedger({
     recordType: 'document.updated', refId: docId, actorEntityId: actor.actorId,
     summary: `updated: ${Object.keys(patch).join(', ') || 'no fields'}`,
@@ -187,7 +188,7 @@ export async function updateDocument(actor: CinDocActor, docId: string, patch: U
 }
 
 export async function archiveDocument(actor: CinDocActor, docId: string): Promise<void> {
-  const res = await docsCol().updateOne({ docId }, { $set: { status: 'archived', updatedAt: nowIso(), updatedBy: actor.actorId } });
+  const res = await docsCol(actor).updateOne({ docId }, { $set: { status: 'archived', updatedAt: nowIso(), updatedBy: actor.actorId } });
   if (!res.matchedCount) throw new Error(`document ${docId} not found`);
   await appendLedger({ recordType: 'document.archived', refId: docId, actorEntityId: actor.actorId, summary: 'archived', data: {} });
 }
@@ -195,10 +196,10 @@ export async function archiveDocument(actor: CinDocActor, docId: string): Promis
 /** Attach a stored file. The caller has already put the bytes in object
  *  storage — this only records WHERE they are, and anchors that fact. */
 export async function attachDocumentFile(actor: CinDocActor, docId: string, file: Omit<CinDocumentFile, 'uploadedAt'>): Promise<CinDocument> {
-  const current = await getDocument(docId);
+  const current = await getDocument(actor, docId);
   if (!current) throw new Error(`document ${docId} not found`);
   const stored: CinDocumentFile = CinDocumentFileSchema.parse({ ...file, uploadedAt: nowIso() });
-  await docsCol().updateOne({ docId }, { $set: { file: stored, updatedAt: stored.uploadedAt, updatedBy: actor.actorId } });
+  await docsCol(actor).updateOne({ docId }, { $set: { file: stored, updatedAt: stored.uploadedAt, updatedBy: actor.actorId } });
   await appendLedger({
     recordType: 'document.file_attached', refId: docId, actorEntityId: actor.actorId,
     summary: `file attached (${stored.mimeType}, ${stored.size} bytes)`,
@@ -216,8 +217,8 @@ export interface DocumentSummary {
 }
 
 /** What the profile surface and the heartbeat both need to know. */
-export async function summariseDocuments(ownerEntityId: string): Promise<DocumentSummary> {
-  const docs = await listDocuments({ ownerEntityId });
+export async function summariseDocuments(actor: CinDocActor, ownerEntityId: string): Promise<DocumentSummary> {
+  const docs = await listDocuments(actor, { ownerEntityId });
   const byType: Record<string, number> = {};
   for (const d of docs) byType[d.docType] = (byType[d.docType] ?? 0) + 1;
   return {

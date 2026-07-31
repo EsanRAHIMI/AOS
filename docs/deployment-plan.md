@@ -234,6 +234,33 @@ produced them.
 
 ## Production Hardening Path
 
+### Read-only runtime gate (D-213)
+
+Run from the repository root after syncing local env and before every deploy:
+
+```bash
+pnpm run build:deps
+pnpm run check:runtime
+```
+
+The command validates configuration, pings Atlas and Redis, confirms that the
+owner has an active encrypted Google grant, and performs one model-provider
+probe. It does not mutate MongoDB, Redis, Google, or model data. No secret or
+connection URI is printed. `READY` is usable, `WARN` is usable with a declared
+degradation, and `BLOCKED` must stop the deploy.
+
+Use `pnpm run check:runtime:strict` in CI/Dokploy once all warnings are expected
+to be eliminated. Exit codes are `0` ready, `1` blocked, `2` warning in strict
+mode. Use `node --env-file=.env scripts/runtime-readiness.mjs --config-only`
+when a build environment intentionally has no network access.
+
+For the current hosted Redis rollout, keep `AGENT_DISPATCH_MODE=http` during
+the first code deployment. Run the real queue verification described above,
+then set `queue_with_http_fallback` on the orchestrator and gateway separately,
+checking job state and `agent.dispatch.degraded` events after each deployment.
+Rollback is only `AGENT_DISPATCH_MODE=http` plus redeploy; there is no data
+migration.
+
 - OIDC/OAuth2 login and per-user RBAC.
 - Tenant-aware data isolation checks before enabling multiple users.
 - ~~Redis for distributed rate limiting and safe-mode propagation.~~ Done for event fan-out and

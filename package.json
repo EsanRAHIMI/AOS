@@ -16,6 +16,8 @@
     "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
     "check:scope-boundary": "node scripts/check-scope-boundary.mjs",
+    "check:runtime": "node --env-file=.env scripts/runtime-readiness.mjs",
+    "check:runtime:strict": "node --env-file=.env scripts/runtime-readiness.mjs --strict",
     "dev": "echo 'Run a specific service: pnpm --filter <service> run dev'",
     "dev:free-ports": "node scripts/dev-free-ports.mjs",
     "dev:all": "pnpm sync:env && pnpm run build:deps && pnpm run dev:free-ports && node scripts/dev-all.mjs",

@@ -34,14 +34,14 @@ async function seedOwner() {
 
 describe('owner identity context', () => {
   it('returns nothing usable when no entity exists — and does not throw', async () => {
-    const ctx = await buildOwnerIdentityContext();
+    const ctx = await buildOwnerIdentityContext(actor);
     expect(ctx.entityId).toBeNull();
     expect(ctx.text).toBe('');
   });
 
   it('tells the assistant who the owner is and what is on file', async () => {
     const entity = await seedOwner();
-    const ctx = await buildOwnerIdentityContext();
+    const ctx = await buildOwnerIdentityContext(actor);
 
     expect(ctx.entityId).toBe(entity.entityId);
     expect(ctx.text).toContain('OWNER IDENTITY');
@@ -56,7 +56,7 @@ describe('owner identity context', () => {
 
   it('names sensitive fields as recorded WITHOUT putting their values in the prompt', async () => {
     await seedOwner();
-    const ctx = await buildOwnerIdentityContext();
+    const ctx = await buildOwnerIdentityContext(actor);
 
     // The assistant must know these exist…
     expect(ctx.text).toContain('national_id');
@@ -69,7 +69,7 @@ describe('owner identity context', () => {
 
   it('withholds whole sensitive sections while still admitting they exist', async () => {
     await seedOwner();
-    const ctx = await buildOwnerIdentityContext();
+    const ctx = await buildOwnerIdentityContext(actor);
     expect(ctx.text).toContain('financial');
     expect(ctx.text).not.toContain('IR000000000000');
     expect(ctx.text).not.toContain('Bank Melli');
@@ -85,7 +85,7 @@ describe('owner identity context', () => {
       ownerEntityId: entity.entityId, title: 'قرارداد کاری', docType: 'contract',
     });
 
-    const ctx = await buildOwnerIdentityContext();
+    const ctx = await buildOwnerIdentityContext(actor);
     expect(ctx.documentCount).toBe(2);
     expect(ctx.text).toContain('پاسپورت');
     expect(ctx.text).toContain('expires');
@@ -94,7 +94,7 @@ describe('owner identity context', () => {
 
   it('reports an empty profile honestly rather than inventing one', async () => {
     await createEntity(actor, { entityType: 'person', name: 'Bare Owner', tags: ['owner'] });
-    const ctx = await buildOwnerIdentityContext();
+    const ctx = await buildOwnerIdentityContext(actor);
     expect(ctx.text).toContain('none filled yet');
     expect(ctx.text).toContain('documents: none registered');
     expect(ctx.sectionCount).toBe(0);

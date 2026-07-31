@@ -17,7 +17,7 @@
  */
 import { generateKeyPairSync, sign as edSign, verify as edVerify } from 'node:crypto';
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { globalCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { canonicalJson, sha256Hex, appendLedger } from './ledger.js';
@@ -80,8 +80,8 @@ export const CinClaimSchema = z.object({
 });
 export type CinClaim = z.infer<typeof CinClaimSchema>;
 
-const keysCol = () => collection<CinKey>(COLLECTIONS.CIN_KEYS);
-const claimsCol = () => collection<CinClaim>(COLLECTIONS.CIN_CLAIMS);
+const keysCol = () => globalCollection<CinKey>(COLLECTIONS.CIN_KEYS);
+const claimsCol = () => globalCollection<CinClaim>(COLLECTIONS.CIN_CLAIMS);
 
 /** The exact bytes a claim signature covers. Payload participates via its
  *  hash only — that is what makes selective disclosure possible. */

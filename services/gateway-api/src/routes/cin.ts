@@ -20,7 +20,6 @@ import {
   attachDocumentFile, summariseDocuments,
   documentStorage, documentStorageAvailability, documentObjectKey,
   CinCreateDocumentBody, CinUpdateDocumentBody, CinUploadDocumentFileBody,
-  ESAN_USER_ID,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { CinActor } from '@factory/shared';
@@ -55,13 +54,13 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
     const q = req.query as { entityType?: string; status?: string; q?: string };
     const entityType = q.entityType ? CinEntityType.safeParse(q.entityType) : null;
     if (entityType && !entityType.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'invalid entityType'));
-    return success({ entities: await listEntities({ entityType: entityType?.success ? entityType.data : undefined, status: q.status, q: q.q }) });
+    return success({ entities: await listEntities(actorFor(), { entityType: entityType?.success ? entityType.data : undefined, status: q.status, q: q.q }) });
   });
 
   app.get('/v1/cin/entities/:id', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     const { id } = req.params as { id: string };
-    const entity = await getEntity(id, { includePrivate: true });
+    const entity = await getEntity(actorFor(), id, { includePrivate: true });
     if (!entity) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `entity ${id} not found`));
     return success({ entity, publicKey: await getPublicKey(id) });
   });
@@ -85,7 +84,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
   app.get('/v1/cin/entities/:id/graph', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     const { id } = req.params as { id: string };
-    const graph = await getEntityGraph(id, { includePrivate: true });
+    const graph = await getEntityGraph(actorFor(), id, { includePrivate: true });
     if (!graph) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `entity ${id} not found`));
     return success(graph);
   });
@@ -157,7 +156,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
    * when the graph has not been seeded yet. */
   app.get('/v1/me/entity', async (req, reply) => {
     if (!guard(req)) return deny(reply);
-    const people = await listEntities({ entityType: 'person' });
+    const people = await listEntities(actorFor(), { entityType: 'person' });
     const owner = people.find((e) => e.tags.includes('owner') || e.tags.includes('founder')) ?? people[0] ?? null;
     if (!owner) {
       return success({
@@ -166,10 +165,10 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
       });
     }
     const [graph, publicKey, claimsAbout, docs] = await Promise.all([
-      getEntityGraph(owner.entityId, { includePrivate: true }),
+      getEntityGraph(actorFor(), owner.entityId, { includePrivate: true }),
       getPublicKey(owner.entityId),
       listClaims({ subjectEntityId: owner.entityId }),
-      summariseDocuments(owner.entityId),
+      summariseDocuments(actorFor(), owner.entityId),
     ]);
     return success({
       entity: graph?.entity ?? owner,
@@ -187,7 +186,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
   app.get('/v1/cin/documents', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     const q = req.query as { ownerEntityId?: string; docType?: string; status?: string; includeArchived?: string };
-    const documents = await listDocuments({
+    const documents = await listDocuments(actorFor(), {
       ownerEntityId: q.ownerEntityId,
       docType: q.docType as never,
       status: q.status as never,
@@ -202,7 +201,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
     if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, zodIssuesMessage(body.error)));
     const ownerEntityId = String((req.body as { ownerEntityId?: string }).ownerEntityId ?? '');
     if (!ownerEntityId) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'ownerEntityId is required'));
-    return handle(reply, () => createDocument({ actorId: ESAN_USER_ID }, { ...body.data, ownerEntityId }));
+    return handle(reply, () => createDocument(actorFor(), { ...body.data, ownerEntityId }));
   });
 
   app.patch('/v1/cin/documents/:id', async (req, reply) => {
@@ -210,13 +209,13 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
     const { id } = req.params as { id: string };
     const body = CinUpdateDocumentBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, zodIssuesMessage(body.error)));
-    return handle(reply, () => updateDocument({ actorId: ESAN_USER_ID }, id, body.data));
+    return handle(reply, () => updateDocument(actorFor(), id, body.data));
   });
 
   app.post('/v1/cin/documents/:id/archive', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     const { id } = req.params as { id: string };
-    return handle(reply, async () => { await archiveDocument({ actorId: ESAN_USER_ID }, id); return { docId: id, status: 'archived' }; });
+    return handle(reply, async () => { await archiveDocument(actorFor(), id); return { docId: id, status: 'archived' }; });
   });
 
   /**
@@ -235,7 +234,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
     }
     const body = CinUploadDocumentFileBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, zodIssuesMessage(body.error)));
-    const doc = await getDocument(id);
+    const doc = await getDocument(actorFor(), id);
     if (!doc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `document ${id} not found`));
     const storage = documentStorage();
     if (!storage) return reply.code(501).send(failure('not_configured', availability.reason));
@@ -243,7 +242,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
       const buffer = Buffer.from(body.data.contentBase64, 'base64');
       const key = documentObjectKey(doc.ownerEntityId, doc.docId, body.data.filename);
       const put = await storage.put(key, buffer, body.data.mimeType);
-      return attachDocumentFile({ actorId: ESAN_USER_ID }, id, {
+      return attachDocumentFile(actorFor(), id, {
         objectId: key, bucket: put.bucket, key: put.key,
         mimeType: body.data.mimeType, size: put.size, originalName: body.data.filename,
       });
@@ -254,7 +253,7 @@ export function registerCinRoutes(app: FastifyInstance, deps: GatewayDeps): void
   app.get('/v1/cin/documents/:id/url', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     const { id } = req.params as { id: string };
-    const doc = await getDocument(id);
+    const doc = await getDocument(actorFor(), id);
     if (!doc) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `document ${id} not found`));
     if (!doc.file) return reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, 'this document has no stored file'));
     const storage = documentStorage();

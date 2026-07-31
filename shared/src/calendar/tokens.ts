@@ -38,7 +38,7 @@ export const CALENDAR_ACTOR_ID = 'owner';
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorScopedCollection, globalCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { nowIso } from '../utils/index.js';
 
@@ -67,7 +67,7 @@ export const GoogleTokenSchema = z.object({
 });
 export type GoogleToken = z.infer<typeof GoogleTokenSchema>;
 
-const col = () => collection<GoogleToken>(COLLECTIONS.GOOGLE_TOKENS);
+const col = (actorId: string) => actorScopedCollection<GoogleToken>(COLLECTIONS.GOOGLE_TOKENS, actorId);
 
 /* ------------------------------------------------------------------ crypto */
 
@@ -138,7 +138,7 @@ export interface StoreGrantInput {
  */
 export async function storeGrant(input: StoreGrantInput, env: NodeJS.ProcessEnv = process.env): Promise<GoogleToken & { accountChanged: boolean }> {
   const now = nowIso();
-  const existing = await col().findOne({ actorId: input.actorId, provider: 'google' });
+  const existing = await col(input.actorId).findOne({ provider: 'google' });
 
   const refreshEnc = input.refreshToken
     ? encryptSecret(input.refreshToken, env)
@@ -170,8 +170,8 @@ export async function storeGrant(input: StoreGrantInput, env: NodeJS.ProcessEnv 
     existing?.accountEmail && record.accountEmail && existing.accountEmail !== record.accountEmail,
   );
 
-  await col().updateOne(
-    { actorId: input.actorId, provider: 'google' },
+  await col(input.actorId).updateOne(
+    { provider: 'google' },
     { $set: record },
     { upsert: true },
   );
@@ -179,7 +179,7 @@ export async function storeGrant(input: StoreGrantInput, env: NodeJS.ProcessEnv 
 }
 
 export async function getGrant(actorId: string): Promise<GoogleToken | null> {
-  const doc = await col().findOne({ actorId, provider: 'google' }, { projection: { _id: 0 } as never });
+  const doc = await col(actorId).findOne({ provider: 'google' }, { projection: { _id: 0 } as never });
   return doc ? GoogleTokenSchema.parse(doc) : null;
 }
 
@@ -187,8 +187,8 @@ export async function getGrant(actorId: string): Promise<GoogleToken | null> {
 export async function cacheAccessToken(
   actorId: string, accessToken: string, expiresInSec: number, env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
-  await col().updateOne(
-    { actorId, provider: 'google' },
+  await col(actorId).updateOne(
+    { provider: 'google' },
     {
       $set: {
         accessTokenEnc: encryptSecret(accessToken, env),
@@ -203,14 +203,14 @@ export async function cacheAccessToken(
 
 /** Mark a grant dead so the UI can say "reconnect" instead of failing forever. */
 export async function markGrantRevoked(actorId: string, reason: string): Promise<void> {
-  await col().updateOne(
-    { actorId, provider: 'google' },
+  await col(actorId).updateOne(
+    { provider: 'google' },
     { $set: { revokedAt: nowIso(), lastError: reason.slice(0, 300), accessTokenEnc: '', accessTokenExpiresAt: '', updatedAt: nowIso() } },
   );
 }
 
 export async function deleteGrant(actorId: string): Promise<boolean> {
-  const res = await col().deleteOne({ actorId, provider: 'google' });
+  const res = await col(actorId).deleteOne({ provider: 'google' });
   return res.deletedCount > 0;
 }
 
@@ -237,7 +237,7 @@ export interface OAuthState {
   ttlAt: Date;
 }
 
-const statesCol = () => collection<OAuthState>(COLLECTIONS.OAUTH_STATES);
+const statesCol = () => globalCollection<OAuthState>(COLLECTIONS.OAUTH_STATES);
 
 export const OAUTH_STATE_TTL_MS = 15 * 60_000;
 

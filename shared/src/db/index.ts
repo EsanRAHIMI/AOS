@@ -69,3 +69,5 @@ export type { Db, Collection };
 
 // K1.4a — scope-by-construction data access (master-direction §C.5).
 export { scopedCollection, type ScopedContext, type ScopedCollection } from './scoped.js';
+export { actorScopedCollection, actorPartitionedCollection, keyedScopedCollection, type ActorScopedCollection } from './actor-scoped.js';
+export { globalCollection } from './global.js';

@@ -12,10 +12,10 @@ import { createFakeDb } from './helpers/fake-db.js';
 import { buildCoreToolFamilies } from '../src/agentcore/families.js';
 import { createEntity, updateEntitySection, createDocument } from '../src/cin/index.js';
 
-const actor = { actorId: 'esan', scope: 'user' as const, tenantId: null };
+const actor = { actorId: 'owner', scope: 'user' as const, tenantId: null };
 const ctx = {
-  actorId: 'esan', role: 'owner' as const, isOwner: true, scope: 'user' as const,
-  tenantId: null, userId: 'esan', runId: 'run_1', sessionId: 'sess_1',
+  actorId: 'owner', role: 'owner' as const, isOwner: true, scope: 'user' as const,
+  tenantId: null, userId: 'owner', runId: 'run_1', sessionId: 'sess_1',
 };
 
 beforeEach(() => { setTestDb(createFakeDb().db); });
@@ -25,7 +25,7 @@ async function seed() {
   await updateEntitySection(actor, entity.entityId, 'identity', {
     full_name_fa: 'احسان رحیمی', national_id: '0080225225', nationality: 'Iranian',
   }, 'private');
-  await createDocument({ actorId: 'esan' }, {
+  await createDocument({ actorId: 'owner' }, {
     ownerEntityId: entity.entityId, title: 'پاسپورت', docType: 'identity',
     expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
   });

@@ -31,7 +31,7 @@ const actor = {
 };
 
 async function ensureEntity(input) {
-  const existing = (await listEntities({ entityType: input.entityType })).find((e) => e.name === input.name);
+  const existing = (await listEntities(actor, { entityType: input.entityType })).find((e) => e.name === input.name);
   if (existing) { console.log(`SKIP  ${input.entityType} "${input.name}" already exists (${existing.entityId})`); return existing; }
   const { entity } = await createEntity(actor, input);
   console.log(`SEED  ${input.entityType} "${input.name}" → ${entity.entityId}`);

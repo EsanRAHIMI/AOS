@@ -40,6 +40,17 @@ const MIGRATED_COLLECTIONS = [
   'PERSONAL_HEALTH_STATES', 'PERSONAL_LIFE_ITEMS', 'PERSONAL_FINANCE_ITEMS', 'PERSONAL_LEARNING_TRACKS', // K1.4c, D-159
   'OPPORTUNITY_REPORTS', // K1.4d, D-160
   'CONNECTOR_ACCOUNTS', 'CONNECTOR_SYNC_RUNS', // K1.4f, D-163
+  // Phase 1 daily-use isolation hardening (D-212): legacy actorId partitions
+  // now use actorScopedCollection/actorPartitionedCollection by construction.
+  'GOOGLE_TOKENS', 'CALENDAR_SYNC_STATE', 'CALENDAR_EVENTS', 'CALENDAR_TASKS',
+  'CALENDARS', 'CALENDAR_NOTES', 'PROACTIVE_EVENTS', 'HEARTBEAT_RUNS',
+  'LOOP_INBOX', 'LOOP_CYCLES', 'OWNER_STATE_SNAPSHOTS', 'ATTENTION_DECISIONS',
+  // CIN human records are keyed by their persisted createdBy owner. Global
+  // cryptographic/ledger collections remain explicitly global repositories.
+  'CIN_ENTITIES', 'CIN_DOCUMENTS',
+  // Read-side happening sources may only be reached through their scoped
+  // repositories; the projection must never rebuild raw handles in a service.
+  'JARVIS_SESSION_TURNS', 'TOOL_INVOCATIONS', 'AGENT_APPROVAL_CHECKPOINTS', 'AGENT_LOOP_RUNS',
   // NOTE: USER_PROFILES, TENANT_MEMBERSHIPS, CONSENT_GRANTS are deliberately
   // NOT in this ratchet despite routes/personal.ts being fully migrated off
   // them (K1.4f, D-163). A raw local handle for each legitimately remains in
@@ -52,6 +63,9 @@ const MIGRATED_COLLECTIONS = [
 const SHARED_DB_ALLOWED = new Set([
   'shared/src/db/index.ts', // the raw collection() definition itself
   'shared/src/db/scoped.ts', // the sanctioned scopedCollection(ctx) wrapper
+  'shared/src/db/actor-scoped.ts', // legacy actorId-partitioned records, enforced by construction
+  'shared/src/db/global.ts', // explicit kernel-global repository declaration
+  'shared/src/db/indexes.ts', // index administration through an explicitly supplied Db
   // Explicit escape hatch (master-direction §21: "Global collections must be
   // explicitly declared global, not accidentally global"). agent_runs tracks
   // self-development execution (taskId/agentId/status/steps) — no scope

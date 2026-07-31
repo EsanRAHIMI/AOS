@@ -36,10 +36,10 @@ async function seedTurnWithTools(opts: {
     turnId: opts.turnId, sessionId: 'sess_1', index: 0,
     userText: 'فردا ساعت ۱۰ جلسه بگذار', replyText: 'گذاشتم.',
     status: 'completed', runId: opts.runId, reasoningMode: 'native',
-    createdAt: at, finishedAt: at,
+    createdAt: at, finishedAt: at, createdBy: ACTOR.actorId,
   } as never);
   await collection(COLLECTIONS.AGENT_LOOP_RUNS).insertOne({
-    runId: opts.runId, turnId: opts.turnId, sessionId: 'sess_1', createdAt: at,
+    runId: opts.runId, turnId: opts.turnId, sessionId: 'sess_1', createdAt: at, createdBy: ACTOR.actorId,
   } as never);
   for (const t of opts.tools) {
     await collection(COLLECTIONS.TOOL_INVOCATIONS).insertOne({
@@ -131,7 +131,7 @@ describe('honesty — a card exists only where a governed row does', () => {
     await collection(COLLECTIONS.JARVIS_SESSION_TURNS).insertOne({
       turnId: 'turn_5', sessionId: 'sess_1', index: 0,
       userText: 'سلام', replyText: 'سلام.', status: 'completed',
-      runId: null, reasoningMode: 'none', createdAt: T0, finishedAt: T0,
+      runId: null, reasoningMode: 'none', createdAt: T0, finishedAt: T0, createdBy: ACTOR.actorId,
     } as never);
     const reply = (await listHappenings(ACTOR)).find((h) => h.happeningId === 'hp_reply_turn_5');
     expect(reply?.detail).toContain('حالت محدود');
@@ -141,11 +141,11 @@ describe('honesty — a card exists only where a governed row does', () => {
 describe('priority — a pending approval outranks everything', () => {
   it('gives a pending approval the maximum weight and waiting status', async () => {
     await collection(COLLECTIONS.AGENT_LOOP_RUNS).insertOne({
-      runId: 'run_6', turnId: 'turn_6', sessionId: 'sess_1', createdAt: T0,
+      runId: 'run_6', turnId: 'turn_6', sessionId: 'sess_1', createdAt: T0, createdBy: ACTOR.actorId,
     } as never);
     await collection(COLLECTIONS.AGENT_APPROVAL_CHECKPOINTS).insertOne({
       approvalId: 'appr_1', runId: 'run_6', toolName: 'calendar_delete_event',
-      summary: 'حذف رویداد جلسهٔ تیم', status: 'pending', createdAt: T0,
+      summary: 'حذف رویداد جلسهٔ تیم', status: 'pending', createdAt: T0, createdBy: ACTOR.actorId,
     } as never);
 
     const h = (await listHappenings(ACTOR)).find((x) => x.happeningId === 'hp_appr_appr_1');

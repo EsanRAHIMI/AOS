@@ -25,7 +25,7 @@ import { fetchAndExtract, fetchFeed, researchCoverageStatus, searxngConfigFromEn
 import { pinFactToSession } from '../jarvis/session.js';
 import { buildPersonalStateSnapshot } from '../personal2/index.js';
 import {
-  CinEntityType, CinRelationType, CinSectionVisibility,
+  CIN_OWNER_ACTOR_ID, CinEntityType, CinRelationType, CinSectionVisibility,
   createEntity, createRelation, getEntityGraph, listEntities, updateEntitySection,
 } from '../cin/entities.js';
 import { issueClaim, verifyClaim } from '../cin/trust.js';
@@ -510,8 +510,8 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
   registry.register({
     definition: cinDef('cin_entity_search', 'Search living entities in the CIN graph (people, organizations, cities, governments, agents, robots, devices, services).'),
     inputSchema: z.object({ q: z.string().optional(), entityType: CinEntityType.optional() }),
-    executor: async (args): Promise<ToolResult> => {
-      const entities = await listEntities({ entityType: args.entityType as never, q: args.q as string | undefined });
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const entities = await listEntities({ actorId: CIN_OWNER_ACTOR_ID }, { entityType: args.entityType as never, q: args.q as string | undefined });
       if (!entities.length) return { ok: true, summary: 'No entities found.' };
       return { ok: true, summary: entities.map((e) => `[${e.entityType}] ${e.displayName || e.name} (${e.entityId}, ${e.status})`).join('\n'), data: entities.map((e) => ({ entityId: e.entityId, entityType: e.entityType, name: e.name, status: e.status })) };
     },
@@ -520,8 +520,8 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
   registry.register({
     definition: cinDef('cin_entity_get', 'Read one entity with its profile sections, active relations and 1-hop neighbors.'),
     inputSchema: z.object({ entityId: z.string() }),
-    executor: async (args): Promise<ToolResult> => {
-      const graph = await getEntityGraph(String(args.entityId), { includePrivate: true });
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const graph = await getEntityGraph({ actorId: CIN_OWNER_ACTOR_ID }, String(args.entityId), { includePrivate: true });
       if (!graph) return { ok: false, summary: `entity ${args.entityId} not found` };
       const sections = Object.entries(graph.entity.sections).map(([n, s]) => `${n} v${s.version} (${s.visibility})`).join(', ') || 'none';
       const rels = graph.relations.map((r) => `${r.fromEntityId === graph.entity.entityId ? '→' : '←'} ${r.relationType} ${r.fromEntityId === graph.entity.entityId ? r.toEntityId : r.fromEntityId}`).join('; ') || 'none';
@@ -535,7 +535,7 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
   registry.register({
     definition: cinDef('cin_me', "Read the owner's own identity: profile sections on file, and registered documents with their expiry. Use this whenever the question is about the user themselves."),
     inputSchema: z.object({}),
-    executor: async (): Promise<ToolResult> => {
+    executor: async (_args, actor): Promise<ToolResult> => {
       const ctx = await buildOwnerIdentityContext();
       if (!ctx.entityId) return { ok: true, summary: 'No owner entity exists in the CIN graph yet.' };
       return {
@@ -549,14 +549,14 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
   registry.register({
     definition: cinDef('cin_documents_list', 'List registered documents (passport, contracts, certificates…) with type, issuer, expiry date and derived status. Expiry is actionable.'),
     inputSchema: z.object({ ownerEntityId: z.string().optional(), docType: z.string().optional() }),
-    executor: async (args): Promise<ToolResult> => {
+    executor: async (args, actor): Promise<ToolResult> => {
       let ownerEntityId = args.ownerEntityId as string | undefined;
       if (!ownerEntityId) {
         const ctx = await buildOwnerIdentityContext();
         ownerEntityId = ctx.entityId ?? undefined;
       }
       if (!ownerEntityId) return { ok: true, summary: 'No owner entity exists yet, so no documents can be listed.' };
-      const docs = await listDocuments({ ownerEntityId, docType: args.docType as never });
+      const docs = await listDocuments({ actorId: CIN_OWNER_ACTOR_ID }, { ownerEntityId, docType: args.docType as never });
       if (!docs.length) return { ok: true, summary: 'No documents registered.' };
       return {
         ok: true,
@@ -575,7 +575,7 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
       tags: z.array(z.string()).optional(),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
-      const { entity } = await createEntity({ actorId: ctx.actorId, scope: 'user', tenantId: ctx.tenantId ?? null }, { entityType: args.entityType as never, name: String(args.name), displayName: args.displayName as string | undefined, tags: (args.tags as string[]) ?? [] });
+      const { entity } = await createEntity({ actorId: CIN_OWNER_ACTOR_ID, scope: 'user', tenantId: ctx.tenantId ?? null }, { entityType: args.entityType as never, name: String(args.name), displayName: args.displayName as string | undefined, tags: (args.tags as string[]) ?? [] });
       return { ok: true, summary: `created ${entity.entityType} "${entity.name}" (${entity.entityId}) with signing key`, data: { entityId: entity.entityId } };
     },
   });

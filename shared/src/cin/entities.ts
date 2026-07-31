@@ -11,7 +11,7 @@
  * Every mutation appends to the CIN ledger (tamper-evident history).
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { globalCollection, keyedScopedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { ScopeFieldsSchema } from '../schemas/scope.js';
@@ -83,8 +83,13 @@ export type CinRelation = z.infer<typeof CinRelationSchema>;
 
 export interface CinActor { actorId: string; scope: 'global' | 'user' | 'tenant'; tenantId: string | null }
 
-const entitiesCol = () => collection<CinEntity>(COLLECTIONS.CIN_ENTITIES);
-const relationsCol = () => collection<CinRelation>(COLLECTIONS.CIN_RELATIONS);
+/** Persisted CIN v1 ownership key. Keep stable until a versioned multi-owner migration. */
+export const CIN_OWNER_ACTOR_ID = 'owner';
+
+const entitiesCol = (actor: Pick<CinActor, 'actorId'>) => keyedScopedCollection<CinEntity>(COLLECTIONS.CIN_ENTITIES, 'createdBy', actor.actorId);
+// Relations connect entities across the CIN network. Endpoint ownership is
+// checked through the scoped entity repository before every mutation/read.
+const relationsCol = () => globalCollection<CinRelation>(COLLECTIONS.CIN_RELATIONS);
 
 export interface CreateEntityInput {
   entityType: CinEntityType;
@@ -114,7 +119,7 @@ export async function createEntity(actor: CinActor, input: CreateEntityInput): P
     tenantId: actor.tenantId ?? undefined,
     createdBy: actor.actorId,
   });
-  await entitiesCol().insertOne(entity as never);
+  await entitiesCol(actor).insertOne(entity as never);
   await appendLedger({
     recordType: 'entity.created', refId: entity.entityId, actorEntityId: actor.actorId,
     summary: `${entity.entityType} "${entity.name}" created`,
@@ -135,16 +140,16 @@ export function filterEntityVisibility(entity: CinEntity, opts: { includePrivate
   return { ...entity, sections };
 }
 
-export async function getEntity(entityId: string, opts: { includePrivate: boolean } = { includePrivate: false }): Promise<CinEntity | null> {
-  const doc = await entitiesCol().findOne({ entityId });
+export async function getEntity(actor: Pick<CinActor, 'actorId'>, entityId: string, opts: { includePrivate: boolean } = { includePrivate: false }): Promise<CinEntity | null> {
+  const doc = await entitiesCol(actor).findOne({ entityId });
   return doc ? filterEntityVisibility(CinEntitySchema.parse(doc), opts) : null;
 }
 
-export async function listEntities(filter: { entityType?: CinEntityType; status?: string; q?: string } = {}): Promise<CinEntity[]> {
+export async function listEntities(actor: Pick<CinActor, 'actorId'>, filter: { entityType?: CinEntityType; status?: string; q?: string } = {}): Promise<CinEntity[]> {
   const f: Record<string, unknown> = {};
   if (filter.entityType) f.entityType = filter.entityType;
   if (filter.status) f.status = filter.status;
-  const docs = await entitiesCol().find(f).sort({ createdAt: -1 }).limit(500).toArray();
+  const docs = await entitiesCol(actor).find(f).sort({ createdAt: -1 }).limit(500).toArray();
   let list = docs.map((d) => CinEntitySchema.parse(d));
   if (filter.q) {
     const q = filter.q.toLowerCase();
@@ -160,7 +165,7 @@ export async function updateEntitySection(
   data: Record<string, unknown>,
   visibility?: CinSectionVisibility,
 ): Promise<CinEntity> {
-  const doc = await entitiesCol().findOne({ entityId });
+  const doc = await entitiesCol(actor).findOne({ entityId });
   if (!doc) throw new Error(`entity ${entityId} not found`);
   const entity = CinEntitySchema.parse(doc);
   const prev = entity.sections[sectionName];
@@ -174,7 +179,7 @@ export async function updateEntitySection(
     updatedBy: actor.actorId,
     attestedBy: prev?.attestedBy ?? [],
   };
-  await entitiesCol().updateOne({ entityId }, { $set: { [`sections.${sectionName}`]: next, updatedAt: now, updatedBy: actor.actorId } });
+  await entitiesCol(actor).updateOne({ entityId }, { $set: { [`sections.${sectionName}`]: next, updatedAt: now, updatedBy: actor.actorId } });
   await appendLedger({
     recordType: 'entity.section_updated', refId: entityId, actorEntityId: actor.actorId,
     summary: `section "${sectionName}" → v${next.version}`,
@@ -184,7 +189,7 @@ export async function updateEntitySection(
 }
 
 export async function setEntityStatus(actor: CinActor, entityId: string, status: z.infer<typeof CinEntityStatus>): Promise<void> {
-  const res = await entitiesCol().updateOne({ entityId }, { $set: { status, updatedAt: nowIso(), updatedBy: actor.actorId } });
+  const res = await entitiesCol(actor).updateOne({ entityId }, { $set: { status, updatedAt: nowIso(), updatedBy: actor.actorId } });
   if (!res.matchedCount) throw new Error(`entity ${entityId} not found`);
   await appendLedger({ recordType: 'entity.status_changed', refId: entityId, actorEntityId: actor.actorId, summary: `status → ${status}`, data: { status } });
 }
@@ -200,8 +205,8 @@ export interface CreateRelationInput {
 
 export async function createRelation(actor: CinActor, input: CreateRelationInput): Promise<CinRelation> {
   const [from, to] = await Promise.all([
-    entitiesCol().findOne({ entityId: input.fromEntityId }),
-    entitiesCol().findOne({ entityId: input.toEntityId }),
+    entitiesCol(actor).findOne({ entityId: input.fromEntityId }),
+    entitiesCol(actor).findOne({ entityId: input.toEntityId }),
   ]);
   if (!from) throw new Error(`from-entity ${input.fromEntityId} not found`);
   if (!to) throw new Error(`to-entity ${input.toEntityId} not found`);
@@ -245,15 +250,15 @@ export interface EntityGraphView {
 
 /** 1-hop neighborhood: the entity, its active edges (both directions), and
  *  lightweight summaries of the entities on the other end. */
-export async function getEntityGraph(entityId: string, opts: { includePrivate: boolean } = { includePrivate: false }): Promise<EntityGraphView | null> {
-  const entity = await getEntity(entityId, opts);
+export async function getEntityGraph(actor: Pick<CinActor, 'actorId'>, entityId: string, opts: { includePrivate: boolean } = { includePrivate: false }): Promise<EntityGraphView | null> {
+  const entity = await getEntity(actor, entityId, opts);
   if (!entity) return null;
   const rels = await relationsCol().find({ $or: [{ fromEntityId: entityId }, { toEntityId: entityId }], status: 'active' }).limit(500).toArray();
   const relations = rels.map((r) => CinRelationSchema.parse(r));
   const neighborIds = [...new Set(relations.flatMap((r) => [r.fromEntityId, r.toEntityId]).filter((id) => id !== entityId))];
   const neighbors: EntityGraphView['neighbors'] = [];
   for (const id of neighborIds) {
-    const doc = await entitiesCol().findOne({ entityId: id });
+    const doc = await entitiesCol(actor).findOne({ entityId: id });
     if (doc) {
       const e = CinEntitySchema.parse(doc);
       neighbors.push({ entityId: e.entityId, entityType: e.entityType, name: e.name, displayName: e.displayName, status: e.status });

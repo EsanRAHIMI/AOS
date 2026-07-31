@@ -178,6 +178,11 @@ function createIoredisClient(url: string): RedisLike {
     connectTimeout: 2_000,
     commandTimeout: 2_000,
   });
+  // ioredis prints connection errors directly to stderr when no listener is
+  // attached. Operations below already surface failure through the throttled,
+  // caller-provided logger, so consume the raw event to avoid leaking a Redis
+  // hostname or credential-bearing URL into process logs.
+  cmd.on('error', () => undefined);
   let sub: Redis | null = null;
   const handlers = new Map<string, (message: string) => void>();
   let connected = false;
@@ -225,6 +230,7 @@ function createIoredisClient(url: string): RedisLike {
         // duplicate() inherits lazyConnect — must connect before subscribe or
         // ioredis throws "Stream isn't writeable" with enableOfflineQueue:false.
         sub = cmd.duplicate();
+        sub.on('error', () => undefined);
         await sub.connect();
         sub.on('message', (ch: string, msg: string) => {
           handlers.get(ch)?.(msg);

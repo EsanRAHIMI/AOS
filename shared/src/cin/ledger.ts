@@ -20,7 +20,7 @@
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { globalCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 
@@ -76,7 +76,7 @@ export const CinLedgerRecordSchema = z.object({
 export type CinLedgerRecord = z.infer<typeof CinLedgerRecordSchema>;
 
 const GENESIS_HASH = 'GENESIS';
-const ledgerCol = () => collection<CinLedgerRecord>(COLLECTIONS.CIN_LEDGER);
+const ledgerCol = () => globalCollection<CinLedgerRecord>(COLLECTIONS.CIN_LEDGER);
 
 function computeHash(record: Omit<CinLedgerRecord, 'hash'>): string {
   const { prevHash, ...rest } = record;

@@ -68,16 +68,17 @@ function summariseSection(name: string, data: Record<string, unknown>): string {
  * must degrade to "no identity recorded", not break the conversation.
  */
 export async function buildOwnerIdentityContext(
+  actor: { actorId: string } = { actorId: 'owner' },
   opts: { entityId?: string; maxDocuments?: number } = {},
 ): Promise<OwnerIdentityContext> {
   const empty: OwnerIdentityContext = { text: '', entityId: null, sectionCount: 0, documentCount: 0 };
   try {
-    let entity = opts.entityId ? await getEntity(opts.entityId, { includePrivate: true }) : null;
+    let entity = opts.entityId ? await getEntity(actor, opts.entityId, { includePrivate: true }) : null;
     if (!entity) {
-      const people = await listEntities({ entityType: 'person' });
+      const people = await listEntities(actor, { entityType: 'person' });
       const owner = people.find((e) => e.tags?.includes('owner') || e.tags?.includes('founder')) ?? people[0];
       if (!owner) return empty;
-      entity = await getEntity(owner.entityId, { includePrivate: true });
+      entity = await getEntity(actor, owner.entityId, { includePrivate: true });
     }
     if (!entity) return empty;
 
@@ -95,7 +96,7 @@ export async function buildOwnerIdentityContext(
       for (const [name, sec] of sections) lines.push(`  ${summariseSection(name, sec.data ?? {})}`);
     }
 
-    const docs = await listDocuments({ ownerEntityId: entity.entityId });
+    const docs = await listDocuments(actor, { ownerEntityId: entity.entityId });
     const live = docs.filter((d) => d.status !== 'archived').slice(0, opts.maxDocuments ?? 25);
     if (live.length === 0) {
       lines.push('- documents: none registered.');

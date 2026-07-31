@@ -24,6 +24,13 @@ beforeEach(() => { setTestDb(createFakeDb().db); });
 const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
 
 describe('document records', () => {
+  it('does not expose a document to another actor', async () => {
+    const doc = await createDocument(actor, { ownerEntityId: OWNER, title: 'private', docType: 'identity' });
+    const other = { actorId: 'other', tenantId: null };
+    expect(await getDocument(other, doc.docId)).toBeNull();
+    expect(await listDocuments(other, { ownerEntityId: OWNER })).toEqual([]);
+  });
+
   it('registers a record with no file and anchors it in the ledger', async () => {
     const doc = await createDocument(actor, { ownerEntityId: OWNER, title: 'پاسپورت', docType: 'identity', issuer: 'NOCR' });
     expect(doc.docId).toMatch(/^cindoc_/);
@@ -47,7 +54,7 @@ describe('document records', () => {
     await createDocument(actor, { ownerEntityId: OWNER, title: 'ok', docType: 'license', expiresAt: inDays(400) });
     await createDocument(actor, { ownerEntityId: OWNER, title: 'soon', docType: 'identity', expiresAt: inDays(10) });
     await createDocument(actor, { ownerEntityId: OWNER, title: 'gone', docType: 'contract', expiresAt: inDays(-3) });
-    const s = await summariseDocuments(OWNER);
+    const s = await summariseDocuments(actor, OWNER);
     expect(s.total).toBe(3);
     expect(s.withFile).toBe(0);
     expect(s.expiring.map((d) => d.title)).toEqual(['soon']);
@@ -62,10 +69,10 @@ describe('document records', () => {
     expect(updated.status).toBe('expiring');       // recomputed, not copied
 
     await archiveDocument(actor, doc.docId);
-    expect((await getDocument(doc.docId))?.status).toBe('archived');
+    expect((await getDocument(actor, doc.docId))?.status).toBe('archived');
     // archived documents drop out of the default listing
-    expect(await listDocuments({ ownerEntityId: OWNER })).toHaveLength(0);
-    expect(await listDocuments({ ownerEntityId: OWNER, includeArchived: true })).toHaveLength(1);
+    expect(await listDocuments(actor, { ownerEntityId: OWNER })).toHaveLength(0);
+    expect(await listDocuments(actor, { ownerEntityId: OWNER, includeArchived: true })).toHaveLength(1);
 
     const types = (await listLedger()).map((r) => r.recordType);
     expect(types).toContain('document.updated');
@@ -81,7 +88,7 @@ describe('document records', () => {
     });
     expect(withFile.file?.size).toBe(1234);
     expect(withFile.file?.uploadedAt).toBeTruthy();
-    expect((await summariseDocuments(OWNER)).withFile).toBe(1);
+    expect((await summariseDocuments(actor, OWNER)).withFile).toBe(1);
     expect((await listLedger()).at(-1)?.recordType).toBe('document.file_attached');
     expect((await verifyChain()).ok).toBe(true);
   });

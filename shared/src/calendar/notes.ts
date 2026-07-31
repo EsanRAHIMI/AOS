@@ -16,7 +16,7 @@
  * in Google Calendar and will not appear on the owner's phone.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorScopedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId } from '../utils/index.js';
 
@@ -34,7 +34,7 @@ export const EventNoteSchema = z.object({
 });
 export type EventNote = z.infer<typeof EventNoteSchema>;
 
-const notesCol = () => collection<EventNote>(COLLECTIONS.CALENDAR_NOTES);
+const notesCol = (actorId: string) => actorScopedCollection<EventNote>(COLLECTIONS.CALENDAR_NOTES, actorId);
 const nowIso = () => new Date().toISOString();
 
 /** Add a note, or replace one by id when `noteId` is supplied. */
@@ -51,11 +51,11 @@ export async function saveEventNote(args: {
   }
 
   if (args.noteId) {
-    const existing = await notesCol().findOne({ actorId: args.actorId, noteId: args.noteId });
+    const existing = await notesCol(args.actorId).findOne({ noteId: args.noteId });
     if (existing) {
       const updated: EventNote = { ...EventNoteSchema.parse(existing), body, updatedAt: nowIso() };
-      await notesCol().updateOne(
-        { actorId: args.actorId, noteId: args.noteId },
+      await notesCol(args.actorId).updateOne(
+        { noteId: args.noteId },
         { $set: { body, updatedAt: updated.updatedAt } },
       );
       return updated;
@@ -72,7 +72,7 @@ export async function saveEventNote(args: {
     createdAt: nowIso(),
     updatedAt: nowIso(),
   });
-  await notesCol().insertOne(note);
+  await notesCol(args.actorId).insertOne(note);
   return note;
 }
 
@@ -81,8 +81,8 @@ export async function readEventNotes(
   actorId: string, eventIds: string[],
 ): Promise<Record<string, EventNote[]>> {
   if (eventIds.length === 0) return {};
-  const docs = await notesCol()
-    .find({ actorId, eventId: { $in: eventIds } } as never, { projection: { _id: 0 } as never })
+  const docs = await notesCol(actorId)
+    .find({ eventId: { $in: eventIds } } as never, { projection: { _id: 0 } as never })
     .sort({ createdAt: 1 })
     .toArray();
 
@@ -95,12 +95,12 @@ export async function readEventNotes(
 }
 
 export async function deleteEventNote(actorId: string, noteId: string): Promise<boolean> {
-  const res = await notesCol().deleteOne({ actorId, noteId });
+  const res = await notesCol(actorId).deleteOne({ noteId });
   return (res.deletedCount ?? 0) > 0;
 }
 
 /** Called when the mirror is purged, so notes never outlive their account. */
 export async function purgeEventNotes(actorId: string): Promise<number> {
-  const res = await notesCol().deleteMany({ actorId });
+  const res = await notesCol(actorId).deleteMany({});
   return res.deletedCount ?? 0;
 }

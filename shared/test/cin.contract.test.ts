@@ -23,6 +23,13 @@ let fake: ReturnType<typeof createFakeDb>;
 beforeEach(() => { fake = createFakeDb(); setTestDb(fake.db); });
 
 describe('CIN entity graph', () => {
+  it('isolates entities by actor on every read path', async () => {
+    const entity = (await createEntity(actor, { entityType: 'person', name: 'Private' })).entity;
+    const other = { actorId: 'other', scope: 'user' as const, tenantId: null };
+    expect(await getEntity(other, entity.entityId, { includePrivate: true })).toBeNull();
+    expect(await getEntityGraph(other, entity.entityId, { includePrivate: true })).toBeNull();
+  });
+
   it('creates a living entity with a signing key and ledger record', async () => {
     const { entity, publicKeyPem } = await createEntity(actor, {
       entityType: 'person', name: 'Ehsan Rahimi',
@@ -42,7 +49,7 @@ describe('CIN entity graph', () => {
     expect(updated.sections.skills.version).toBe(2);
     expect(updated.sections.skills.visibility).toBe('public'); // sticky visibility
     await updateEntitySection(actor, entity.entityId, 'financial', { net: 1 }, 'private');
-    const full = await getEntity(entity.entityId, { includePrivate: true });
+    const full = await getEntity(actor, entity.entityId, { includePrivate: true });
     const publicView = filterEntityVisibility(full!, { includePrivate: false });
     expect(Object.keys(publicView.sections)).toEqual(['skills']);
   });
@@ -56,7 +63,7 @@ describe('CIN entity graph', () => {
     await endRelation(actor, rel.relationId);
     // after ending, a new edge of the same type is allowed again
     await createRelation(actor, { fromEntityId: a.entityId, toEntityId: b.entityId, relationType: 'member_of' });
-    const graph = await getEntityGraph(a.entityId, { includePrivate: true });
+    const graph = await getEntityGraph(actor, a.entityId, { includePrivate: true });
     expect(graph!.relations).toHaveLength(1); // only active edges
     expect(graph!.neighbors[0]!.name).toBe('B Corp');
   });

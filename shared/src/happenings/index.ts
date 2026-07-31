@@ -43,7 +43,7 @@
  * dwells, then animates into its parent. See `HappeningLayer.tsx`.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorScopedCollection, keyedScopedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { IsoDate } from '../schemas/common.js';
 
@@ -305,20 +305,20 @@ export async function listHappenings(
   const { afterIso } = opts;
 
   const [turns, invocations, approvals, proactive, cycles] = await Promise.all([
-    collection<TurnRow>(COLLECTIONS.JARVIS_SESSION_TURNS)
+    keyedScopedCollection<TurnRow>(COLLECTIONS.JARVIS_SESSION_TURNS, 'createdBy', actor.actorId)
       .find({ ...afterFilter(afterIso) }, { projection: { _id: 0 } })
       .sort({ createdAt: -1 }).limit(limit).toArray().catch(() => [] as TurnRow[]),
-    collection<InvocationRow>(COLLECTIONS.TOOL_INVOCATIONS)
+    actorScopedCollection<InvocationRow>(COLLECTIONS.TOOL_INVOCATIONS, actor.actorId)
       .find({ ...afterFilter(afterIso) }, { projection: { _id: 0 } })
       .sort({ createdAt: -1 }).limit(limit).toArray().catch(() => [] as InvocationRow[]),
-    collection<ApprovalRow>(COLLECTIONS.AGENT_APPROVAL_CHECKPOINTS)
+    keyedScopedCollection<ApprovalRow>(COLLECTIONS.AGENT_APPROVAL_CHECKPOINTS, 'createdBy', actor.actorId)
       .find({ ...afterFilter(afterIso) }, { projection: { _id: 0 } })
       .sort({ createdAt: -1 }).limit(limit).toArray().catch(() => [] as ApprovalRow[]),
-    collection<ProactiveRow>(COLLECTIONS.PROACTIVE_EVENTS)
-      .find(actorFilter(actor, afterFilter(afterIso)), { projection: { _id: 0 } })
+    actorScopedCollection<ProactiveRow>(COLLECTIONS.PROACTIVE_EVENTS, actor.actorId)
+      .find(afterFilter(afterIso), { projection: { _id: 0 } })
       .sort({ createdAt: -1 }).limit(limit).toArray().catch(() => [] as ProactiveRow[]),
-    collection<CycleRow>(COLLECTIONS.LOOP_CYCLES)
-      .find(actorFilter(actor, afterFilter(afterIso)), { projection: { _id: 0 } })
+    actorScopedCollection<CycleRow>(COLLECTIONS.LOOP_CYCLES, actor.actorId)
+      .find(afterFilter(afterIso), { projection: { _id: 0 } })
       .sort({ createdAt: -1 }).limit(Math.min(limit, 40)).toArray().catch(() => [] as CycleRow[]),
   ]);
 
@@ -329,7 +329,7 @@ export async function listHappenings(
     ...approvals.map((a) => a.runId),
   ].filter(Boolean)));
   const runs = runIds.length
-    ? await collection<RunRow>(COLLECTIONS.AGENT_LOOP_RUNS)
+    ? await keyedScopedCollection<RunRow>(COLLECTIONS.AGENT_LOOP_RUNS, 'createdBy', actor.actorId)
       .find({ runId: { $in: runIds } }, { projection: { _id: 0, runId: 1, turnId: 1, sessionId: 1 } })
       .toArray().catch(() => [] as RunRow[])
     : [];

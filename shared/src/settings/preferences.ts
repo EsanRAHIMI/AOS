@@ -19,7 +19,7 @@
  * interpret "today" and "2pm", not what already happened.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { keyedScopedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 
 /** Everything that changes when you cross a border. */
@@ -48,7 +48,7 @@ export type OwnerPreferences = z.infer<typeof OwnerPreferencesSchema>;
 
 export const DEFAULT_PREFERENCES: OwnerPreferences = OwnerPreferencesSchema.parse({});
 
-const col = () => collection<OwnerPreferences & { key: string }>(COLLECTIONS.SYSTEM_SETTINGS);
+const col = () => keyedScopedCollection<OwnerPreferences & { key: string }>(COLLECTIONS.SYSTEM_SETTINGS, 'ownerId', 'owner');
 const KEY = 'owner_preferences';
 
 /**

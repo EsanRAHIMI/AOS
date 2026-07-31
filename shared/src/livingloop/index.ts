@@ -13,7 +13,7 @@
  *   stops the loop.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorPartitionedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { assessMissionHealth, listMissionNodes, type MissionActor } from '../missions/index.js';
@@ -122,9 +122,9 @@ export const LoopCycleSchema = z.object({
 });
 export type LoopCycle = z.infer<typeof LoopCycleSchema>;
 
-const inboxCol = () => collection<LoopInboxEvent>(COLLECTIONS.LOOP_INBOX);
-const cyclesCol = () => collection<LoopCycle>(COLLECTIONS.LOOP_CYCLES);
-const snapshotsCol = () => collection<OwnerStateSnapshot>(COLLECTIONS.OWNER_STATE_SNAPSHOTS);
+const inboxCol = () => actorPartitionedCollection<LoopInboxEvent>(COLLECTIONS.LOOP_INBOX);
+const cyclesCol = () => actorPartitionedCollection<LoopCycle>(COLLECTIONS.LOOP_CYCLES);
+const snapshotsCol = () => actorPartitionedCollection<OwnerStateSnapshot>(COLLECTIONS.OWNER_STATE_SNAPSHOTS);
 
 export interface LoopActor { actorId: string; tenantId?: string | null }
 
@@ -304,7 +304,7 @@ function buildPlan(cycle: LoopCycle, deps: LoopDeps): LoopPlanStep[] {
 
 async function persist(cycle: LoopCycle): Promise<void> {
   cycle.updatedAt = nowIso();
-  await cyclesCol().updateOne({ cycleId: cycle.cycleId }, { $set: cycle }, { upsert: true });
+  await cyclesCol().updateOne({ cycleId: cycle.cycleId, actorId: cycle.actorId }, { $set: cycle }, { upsert: true });
 }
 
 function logStage(cycle: LoopCycle, stage: LoopStage, startedMs: number, ok: boolean, summary: string): void {
@@ -319,11 +319,11 @@ async function withStageBudget<T>(cycle: LoopCycle, fn: () => Promise<T>): Promi
 }
 
 async function finishInbox(inboxId: string, ok: boolean, cycle: LoopCycle, error = ''): Promise<void> {
-  const doc = await inboxCol().findOne({ inboxId });
+  const doc = await inboxCol().findOne({ inboxId, actorId: cycle.actorId });
   if (!doc) return;
   const ev = LoopInboxEventSchema.parse(doc);
   if (ok) {
-    await inboxCol().updateOne({ inboxId }, {
+    await inboxCol().updateOne({ inboxId, actorId: cycle.actorId }, {
       $set: {
         status: 'done', completedAt: nowIso(), processedCycleId: cycle.cycleId,
         latencyMs: Math.max(0, Date.now() - Date.parse(ev.receivedAt)),
@@ -332,7 +332,7 @@ async function finishInbox(inboxId: string, ok: boolean, cycle: LoopCycle, error
   } else {
     const attempts = ev.attempts + 1;
     const dead = attempts >= ev.maxAttempts;
-    await inboxCol().updateOne({ inboxId }, {
+    await inboxCol().updateOne({ inboxId, actorId: cycle.actorId }, {
       $set: { status: dead ? 'dead' : 'pending', attempts, lastError: error, processedCycleId: cycle.cycleId },
     });
   }
@@ -363,8 +363,8 @@ export async function processCycle(actor: LoopActor, cycle: LoopCycle, deps: Loo
           break;
         }
         case 'assess': {
-          const snapDoc = await snapshotsCol().findOne({ snapshotId: cycle.snapshotId ?? '' });
-          const inboxDoc = await inboxCol().findOne({ inboxId: cycle.triggerInboxId });
+          const snapDoc = await snapshotsCol().findOne({ snapshotId: cycle.snapshotId ?? '', actorId: cycle.actorId });
+          const inboxDoc = await inboxCol().findOne({ inboxId: cycle.triggerInboxId, actorId: cycle.actorId });
           const snap = snapDoc ? OwnerStateSnapshotSchema.parse(snapDoc) : await buildOwnerSnapshot(actor);
           const trigger = LoopInboxEventSchema.parse(inboxDoc);
           cycle.significance = detectSignificance(snap, trigger);
@@ -494,7 +494,7 @@ export async function processCycle(actor: LoopActor, cycle: LoopCycle, deps: Loo
 }
 
 export async function startCycleForEvent(actor: LoopActor, event: LoopInboxEvent, deps: LoopDeps = {}): Promise<LoopCycle> {
-  await inboxCol().updateOne({ inboxId: event.inboxId }, { $set: { status: 'processing' } });
+  await inboxCol().updateOne({ inboxId: event.inboxId, actorId: actor.actorId }, { $set: { status: 'processing' } });
   const now = nowIso();
   const cycle: LoopCycle = LoopCycleSchema.parse({
     cycleId: genId('cyc'), actorId: actor.actorId, tenantId: actor.tenantId ?? null,

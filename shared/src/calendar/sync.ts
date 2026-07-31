@@ -24,7 +24,7 @@
  *     page.** Storing a token mid-pagination would skip everything after it.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorPartitionedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { nowIso } from '../utils/index.js';
 import { googleCall, GoogleApiError, CALENDAR_API, TASKS_API } from './google.js';
@@ -140,10 +140,10 @@ export const SyncStateSchema = z.object({
 });
 export type SyncState = z.infer<typeof SyncStateSchema>;
 
-const calendarsCol = () => collection<CalendarRef>(COLLECTIONS.CALENDARS);
-const eventsCol = () => collection<CalendarEvent>(COLLECTIONS.CALENDAR_EVENTS);
-const tasksCol = () => collection<CalendarTask>(COLLECTIONS.CALENDAR_TASKS);
-const stateCol = () => collection<SyncState>(COLLECTIONS.CALENDAR_SYNC_STATE);
+const calendarsCol = () => actorPartitionedCollection<CalendarRef>(COLLECTIONS.CALENDARS);
+const eventsCol = () => actorPartitionedCollection<CalendarEvent>(COLLECTIONS.CALENDAR_EVENTS);
+const tasksCol = () => actorPartitionedCollection<CalendarTask>(COLLECTIONS.CALENDAR_TASKS);
+const stateCol = () => actorPartitionedCollection<SyncState>(COLLECTIONS.CALENDAR_SYNC_STATE);
 
 /* --------------------------------------------------------------- constants */
 

@@ -40,7 +40,7 @@
  * moment did.
  */
 import { z } from 'zod';
-import { collection } from '../db/index.js';
+import { actorPartitionedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { IsoDate } from '../schemas/common.js';
@@ -176,7 +176,7 @@ export interface AttentionContext {
  */
 export const SPEAK_COOLDOWN_MS = 8 * 60_000;
 
-const decisionsCol = () => collection<AttentionDecision>(COLLECTIONS.ATTENTION_DECISIONS);
+const decisionsCol = () => actorPartitionedCollection<AttentionDecision>(COLLECTIONS.ATTENTION_DECISIONS);
 
 /**
  * What is the owner doing right now?

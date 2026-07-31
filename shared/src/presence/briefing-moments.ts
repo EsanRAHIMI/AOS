@@ -37,7 +37,7 @@ import {
   localHour, WAKING_HOURS, dueHeldItems, markDelivered, judgeInterrupt,
   readAttentionContext, type AttentionActor, type AttentionDecision,
 } from './attention.js';
-import { collection } from '../db/index.js';
+import { actorScopedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
 
 export const BriefingMomentKind = z.enum(['morning', 'gap', 'evening']);
@@ -179,8 +179,8 @@ export async function currentGap(
  * announcement thirty seconds later would undo the whole point of batching.
  */
 export async function alreadyDelivered(actor: AttentionActor, momentKey: string): Promise<boolean> {
-  const hit = await collection(COLLECTIONS.ATTENTION_DECISIONS)
-    .findOne({ actorId: actor.actorId, subjectKind: 'briefing_moment', subjectId: momentKey } as never)
+  const hit = await actorScopedCollection(COLLECTIONS.ATTENTION_DECISIONS, actor.actorId)
+    .findOne({ subjectKind: 'briefing_moment', subjectId: momentKey } as never)
     .catch(() => null);
   return Boolean(hit);
 }
