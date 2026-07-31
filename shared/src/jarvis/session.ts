@@ -15,6 +15,7 @@ import { IsoDate } from '../schemas/common.js';
 import { ScopeFieldsSchema } from '../schemas/scope.js';
 import { detectLanguage } from './index.js';
 import { approxTokens } from '../memory2/index.js';
+import { listCalendars, CALENDAR_ACTOR_ID } from '../calendar/index.js';
 
 export const JarvisSessionSchema = z.object({
   sessionId: z.string(),
@@ -192,6 +193,40 @@ export async function linkMissionToSession(actor: SessionActor, sessionId: strin
  * Ordering is oldest→newest, and the caller places this LAST in the context,
  * nearest the question.
  */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Strip a disabled calendar's name out of history before it re-enters
+ * context (D-206).
+ *
+ * D-205 made `calendar_diagnose` stop naming a calendar the owner switched
+ * off. It could not fix a sentence already written: a turn from before that
+ * fix — or from an `includeDisabled` look, or simply Jarvis's own past reply
+ * — can still have the name sitting verbatim in `toolFacts` or `replyText`.
+ * That text is stored forever, CONTINUITY tells the model "do not contradict
+ * what you said earlier in this session", and the result is the exact
+ * failure the owner reported: a calendar they turned off kept being named as
+ * the explanation, turns after the tool itself was fixed to stay silent
+ * about it.
+ *
+ * So this redacts at READ time, on every turn, the same way `plainText()`
+ * heals stale HTML on read (D-199) — the fix applies to history as it is
+ * re-read, not once via migration, and it stays correct if the owner
+ * re-enables the calendar (it simply stops being on the redaction list).
+ */
+function redactDisabledCalendarNames(text: string, disabledNames: string[]): string {
+  let out = text;
+  for (const name of disabledNames) {
+    const trimmed = name.trim();
+    // Names under 3 chars are too likely to clobber unrelated text.
+    if (trimmed.length < 3) continue;
+    out = out.replace(new RegExp(escapeRegExp(trimmed), 'gi'), 'یک تقویم غیرفعال (نامش گفته نمی‌شود)');
+  }
+  return out;
+}
+
 export async function buildTranscriptContext(
   actor: SessionActor,
   sessionId: string,
@@ -200,6 +235,14 @@ export async function buildTranscriptContext(
   const budget = opts.tokenBudget ?? 3500;
   const session = await getJarvisSession(actor, sessionId);
   if (!session) return { text: '', usedTurns: 0 };
+
+  // Never let history re-introduce a calendar the owner currently has off
+  // (D-206). Best-effort: if calendars cannot be read, redact nothing rather
+  // than fail the whole transcript.
+  const disabledNames = await listCalendars(CALENDAR_ACTOR_ID)
+    .then((cals) => cals.filter((c) => !c.enabled).map((c) => c.summary).filter(Boolean))
+    .catch(() => [] as string[]);
+  const redact = (s: string): string => (disabledNames.length ? redactDisabledCalendarNames(s, disabledNames) : s);
 
   const all = await turns().find({ ...scopeFilter(actor), sessionId } as never).sort({ index: -1 }).limit(40).toArray();
   const lines: string[] = [];
@@ -212,9 +255,9 @@ export async function buildTranscriptContext(
     if (!t.replyText) continue;
 
     const facts = (t.toolFacts ?? []).length
-      ? `\n  [what the tools returned]\n${(t.toolFacts ?? []).map((f) => `  · ${f}`).join('\n')}`
+      ? `\n  [what the tools returned]\n${(t.toolFacts ?? []).map((f) => `  · ${redact(f)}`).join('\n')}`
       : '';
-    const line = `Owner: ${t.userText.slice(0, 600)}\nJarvis: ${t.replyText.slice(0, 1200)}${facts}`;
+    const line = `Owner: ${t.userText.slice(0, 600)}\nJarvis: ${redact(t.replyText.slice(0, 1200))}${facts}`;
 
     const cost = approxTokens(line);
     /* Always keep the most recent exchange, whatever it costs. Dropping the
@@ -227,8 +270,8 @@ export async function buildTranscriptContext(
   }
 
   const parts: string[] = [];
-  if (session.rollingSummary) parts.push(`EARLIER IN THIS SESSION (summary): ${session.rollingSummary}`);
-  if (session.pinnedFacts.length) parts.push(`PINNED FACTS:\n${session.pinnedFacts.map((f) => `- ${f}`).join('\n')}`);
+  if (session.rollingSummary) parts.push(`EARLIER IN THIS SESSION (summary): ${redact(session.rollingSummary)}`);
+  if (session.pinnedFacts.length) parts.push(`PINNED FACTS:\n${session.pinnedFacts.map((f) => `- ${redact(f)}`).join('\n')}`);
   if (lines.length) {
     parts.push(
       'THIS CONVERSATION SO FAR (oldest first — this is the SAME conversation you are '

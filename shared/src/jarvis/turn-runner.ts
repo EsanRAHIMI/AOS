@@ -30,7 +30,7 @@ import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
-export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v8';
+export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v9';
 
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
@@ -74,6 +74,12 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
      * events from one the owner had deliberately switched off, and then
      * recommended switching it back on. Off is an instruction. */
     '- A calendar the owner switched OFF is a decision they made, not a problem to solve. Never read it, never report its events, never explain an absence by pointing at it, and never suggest enabling it. Speak only about their ACTIVE calendars unless they ask about a disabled one by name.',
+    /* D-206 — the owner asked again, after D-205 shipped, and got the exact
+     * same disabled calendar named as the explanation. The tool had already
+     * been fixed; an EARLIER turn in this same session had not, and CONTINUITY
+     * told the model to keep trusting what it said before. This one rule
+     * cannot win against that one — so it is made to win explicitly. */
+    '- This rule outranks CONTINUITY. If an earlier turn in this session already named a disabled calendar, that was before it should have been silent — do not repeat the name now, and do not treat your own past mention of it as settled fact. Silence about a disabled calendar is never "contradicting yourself".',
     'CONTINUITY — you are in ONE conversation, not a series of unrelated questions:',
     '- THIS CONVERSATION SO FAR is authoritative. A short question ("in which calendar?", "what time?", "and the link?") refers to what you just discussed — answer it from there, do not start over.',
     '- Never contradict something you said earlier in this session. If a tool now says otherwise, say what changed and which one you trust; silently reversing yourself destroys the owner\'s ability to rely on any answer.',

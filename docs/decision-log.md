@@ -4736,3 +4736,46 @@ Speak only about active calendars unless asked about a disabled one by name.
 **The general rule this leaves behind:** a setting the owner changed is an
 answer, not a question to reopen. Diagnostics exist to find things the owner
 does not already know.
+
+## D-206 — a fixed tool does not fix what it already said
+
+Asked again, after D-205 shipped, whether Jarvis had access to the AOS
+calendar's content for a given date, the answer named "75 days Hard
+Challenge" again — the exact disabled calendar D-205 said must never be named
+— as the probable location of the missing event, and again invited enabling
+it.
+
+**The tool was already correct.** `calendar_diagnose` had been fixed and a
+fresh call that turn would have said nothing about that calendar. The name
+came from history: some earlier turn in the SAME session — before the fix, or
+via `includeDisabled`, or simply Jarvis's own previous reply — had the string
+"75 days Hard Challenge" sitting verbatim in its `toolFacts` or `replyText`.
+That text is stored forever in `jarvis_session_turns`, `buildTranscriptContext`
+replays it into every later turn, and the CONTINUITY rule explicitly instructs
+the model not to contradict what it said earlier in the session. Two correct
+decisions — D-200's "remember the conversation" and D-205's "stay silent about
+a disabled calendar" — combined into exactly the failure D-205 was meant to
+end, because fixing the tool's output does nothing about a sentence already on
+disk.
+
+**Fix, at the same layer as D-199's stale-HTML healing:** redact at READ time,
+not by migrating old rows.
+
+- `buildTranscriptContext` now fetches the owner's currently-disabled calendar
+  names on every call and replaces any occurrence of one — case-insensitively,
+  in `replyText`, `toolFacts`, the rolling summary, and pinned facts — with a
+  neutral placeholder before it ever reaches the model. The redaction is keyed
+  off *current* state, so re-enabling a calendar lets its name appear again
+  without any data migration.
+- Calendar lookup failures degrade to "redact nothing" rather than losing the
+  transcript — a missing safety filter is better than a missing memory.
+- `jarvis-role-v9`: the off-means-off rule now says explicitly that it
+  outranks CONTINUITY, and that the model's own earlier mention of a disabled
+  calendar is not a fact to defend — staying silent about it now is not
+  "contradicting yourself".
+
+**The general rule this leaves behind:** a privacy or policy rule enforced
+only in a tool's live output is not actually enforced — anything the tool said
+before the rule existed is still sitting in every store that remembers
+conversations, and will keep resurfacing until the read path for that history
+is fixed too.
