@@ -32,6 +32,37 @@ type Publish = (e: { type: string; taskId: string | null; payload: Record<string
 
 export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v10';
 
+/**
+ * A stop reason, said to the owner (D-211).
+ *
+ * `stopped: max_steps` is a correct sentence in the wrong language — the
+ * owner's reply should tell them what happened to their request and whether
+ * repeating it will help. The machine-readable reason stays on the turn
+ * record (`stopReason`) for anything that needs to branch on it.
+ */
+export function stopReasonSentence(reason: string, language: 'fa' | 'en' | 'other'): string {
+  const fa = language === 'fa';
+  switch (reason) {
+    case 'max_steps':
+      return fa
+        ? 'کار از حد مراحل مجاز گذشت و نیمه‌تمام ماند. اگر درخواست را به دو بخش کوچک‌تر بشکنید، انجام می‌شود.'
+        : 'This ran past its step budget and stopped unfinished. Split the request in two and it will go through.';
+    case 'timeout':
+      return fa ? 'زمان انجام این کار بیش از حد طول کشید و متوقف شد.' : 'This took too long and was stopped.';
+    case 'budget_cost':
+    case 'budget_tokens':
+      return fa ? 'سقف هزینهٔ این درخواست پر شد و ادامه ندادم.' : 'This hit its cost budget and I stopped.';
+    case 'cancelled':
+      return fa ? 'درخواست لغو شد.' : 'The request was cancelled.';
+    case 'no_model':
+      return fa
+        ? 'هیچ مدلی وصل نیست، پس نمی‌توانم استدلال کنم. فقط از داده‌های ذخیره‌شده می‌توانم پاسخ بسازم.'
+        : 'No model is connected, so I cannot reason — only compose from stored data.';
+    default:
+      return fa ? 'این درخواست کامل نشد. دوباره تلاش کنید.' : 'This request did not complete. Please try again.';
+  }
+}
+
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
 export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote: string): string {
@@ -291,7 +322,11 @@ export async function runJarvisTurn(
   const replyText = outcome.finalText
     || (status === 'waiting_approval'
       ? (language === 'fa' ? `برای ادامه به تأیید شما نیاز دارم: ${outcome.run.pendingToolCall?.toolName ?? ''}` : `I need your approval to continue: ${outcome.run.pendingToolCall?.toolName ?? ''}`)
-      : `stopped: ${outcome.stopReason}${outcome.run.error ? ` — ${outcome.run.error}` : ''}`);
+      /* D-211 — an owner-readable sentence, never the provider's raw body.
+       * `errorHuman` is set by the loop for a model failure; anything else
+       * falls back to a plain description of the stop reason. The precise
+       * error stays on the run record for diagnosis. */
+      : (outcome.run.errorHuman || stopReasonSentence(outcome.stopReason, language)));
 
   /* Keep what the tools SAID, not just what Jarvis wrote about it (D-200).
    * A follow-up — "which calendar?", "what time exactly?" — is answered from

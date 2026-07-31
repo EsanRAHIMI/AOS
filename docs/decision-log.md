@@ -5141,3 +5141,87 @@ in three words beats a question they must answer before anything happens. And
 a handler over a live, revised, browser-owned list must derive its state from
 that list, never accumulate alongside it — accumulation and revision cannot
 both be right.
+
+## D-211 — the conversation is a process, not a view
+
+The owner's report after living with ambient voice for a day: "sometimes it
+answers correctly, sometimes it repeats several times, and sometimes it comes
+back incomprehensible. The automatic listening behaves differently depending
+on whether the chat panel is open, closed, or opens during processing. This
+needs to be fixed properly — architecturally, scalably, with stable and
+transparent behaviour."
+
+That is a correct diagnosis of a structural fault, not a list of glitches.
+Three faults, one of them the cause of the other two.
+
+### The structural one: the engine lived inside a view
+
+`JarvisConversation` owned the session id, the message list, `busy` and
+`send`. That component mounts only while the rudder panel is OPEN. Everything
+the owner described follows from that single fact:
+
+- **Closing the panel mid-turn lost the answer.** The fetch kept running; its
+  `setState` calls landed on an unmounted component. The turn completed
+  server-side and vanished from the interface.
+- **Reopening resent the command.** A voice command arrived as a prop
+  (`injected={{text, nonce}}`) and was submitted from an effect keyed on the
+  nonce. Remounting re-ran that effect with the same nonce still held in the
+  parent — one spoken sentence becoming two, three, four turns. This is the
+  repetition in the transcript, and D-210's fix could not have caught it: the
+  duplicate was created downstream of the voice hook entirely.
+- **Overlapping turns answered the same question differently.** Two runs
+  interleaved into one server-side session, transcript and rolling summary.
+  Asked how many gym events existed tonight, Jarvis said "2 events (with a
+  30-minute overlap)" and then, moments later, "1 event, no overlap". Neither
+  was a hallucination; each run genuinely saw a different half-written history.
+
+None of this is fixable inside the component, because the component's lifetime
+IS the bug. A conversation is a long-running process that a view happens to
+observe. It now lives in `lib/jarvisEngine` at module scope, for the lifetime
+of the tab, with a serial queue. `JarvisConversation` is a subscriber that may
+mount and unmount as often as the interface likes.
+
+Serial, not concurrent, on purpose: turns share one transcript on the server,
+so two in flight have no defined meaning — and they double token spend against
+a per-minute limit that was already the binding constraint. The input box is
+no longer disabled while busy, because the queue makes that unnecessary; a
+frozen box was what made a slow turn feel like a hang.
+
+### The rate limit we treated as a failure
+
+```
+stopped: model_error — openai-compatible 429: { "error": { "message":
+"Rate limit reached for gpt-4.1 in organization org-… Used 27482,
+Requested 8139. Please try again in 11.242s. …
+```
+
+The provider told us exactly how long to wait and we gave up. The owner then
+repeated the request — so the system converted backpressure into a stampede
+on the very limit that was saturated.
+
+`llm/resilience.ts` retries 429/408/5xx with the provider's own hint, read
+from `Retry-After` or from the sentence OpenAI puts in the body (TPM limits
+frequently carry no header, and that sentence is then the only number there
+is). Jitter is always added: several turns hitting one limit would otherwise
+wake together and collide again, which is how a backoff makes a rate limit
+worse. 4xx other than 429/408 is never retried — it will fail identically and
+burn the budget that is scarce. An abort outranks a backoff.
+
+### The error we showed the owner
+
+That raw body reached a Persian conversation about a gym session. It names the
+organisation id, the model, internal token accounting and a support URL — none
+of it actionable by the person who asked, and the org id is not something to
+print in a UI at all.
+
+`run.error` keeps the precise failure for diagnosis; a new `run.errorHuman`
+carries the sentence. Two readers with opposite needs, so two fields — the
+precision that makes `error` useful for debugging is exactly what must never
+reach a conversation. `stopReasonSentence` does the same for `max_steps` and
+friends: a correct token in the wrong language.
+
+**The general rule this leaves behind:** if a process can outlive the surface
+that started it, it must not be owned by that surface — no amount of cleanup
+logic makes a component lifetime a safe container for work the user still
+cares about. And a provider that tells you when to come back is not failing;
+ignoring it is.

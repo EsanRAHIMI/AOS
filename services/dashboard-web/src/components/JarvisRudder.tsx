@@ -27,6 +27,7 @@ import { useVoice } from '@/lib/useVoice';
 import { useAmbientVoice } from '@/lib/useAmbientVoice';
 import { useEventAlerts } from '@/lib/useEventAlerts';
 import { archiveAlertAction } from '@/app/calendar/announce-action';
+import { submit as submitToJarvis } from '@/lib/jarvisEngine';
 
 const BRIEFING_REFRESH_MS = 120_000;
 
@@ -106,8 +107,14 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
    * the calendar watch: it must work while the panel is closed. Saying
    * "جارویس، ..." from across the room and having the panel open itself is the
    * whole feature; a wake word that only works with the UI already open is a
-   * button with extra steps. */
-  const [injected, setInjected] = useState<{ text: string; nonce: number } | null>(null);
+   * button with extra steps.
+   *
+   * D-211: the command goes STRAIGHT to the engine, not through a prop on a
+   * component that may not be mounted. The previous version set an
+   * `injected={{text, nonce}}` prop and let the conversation submit it from an
+   * effect — which re-ran every time the panel reopened, turning one spoken
+   * sentence into several turns. Opening the panel is now purely cosmetic:
+   * the turn runs whether or not anyone is looking at it. */
   const ambient = useAmbientVoice({
     lang: 'fa-IR',
     speaking: voice.speaking,
@@ -116,8 +123,8 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
     // the single clearest tell that you are using a machine.
     onBargeIn: voice.stopSpeaking,
     onCommand: (text) => {
+      submitToJarvis(text, { transport: 'voice', contextNote: `current page: ${pathname}` });
       setOpen(true);
-      setInjected({ text, nonce: Date.now() });
     },
   });
 
@@ -176,7 +183,6 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
               variant="rudder"
               autoFocus
               onState={setState}
-              injected={injected}
               /* The page is real context: "این را باز کن" means something
                * different on /finance than on /loop. */
               contextNote={`current page: ${pathname}`}

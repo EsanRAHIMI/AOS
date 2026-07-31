@@ -3,7 +3,7 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-210 (ambient-voice fixes + vague-time scheduling)._
+_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-211 (turn engine + provider resilience)._
 
 > **NEW NORTH STAR (2026-07-19):** the founder's **CIN v2** proposal
 > (`docs/CIN v2.pdf`) is the adopted post-K2 direction — see
@@ -83,6 +83,23 @@ _Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-210 (ambient
 > report` (prompt version → `jarvis-role-v10`). **Suites after D-210: shared
 > 520 pass / 6 skipped, gateway 254 pass, dashboard 194 pass; all typecheck
 > clean.**
+
+> **D-211 (2026-07-31) — the conversation moved OUT of the view.**
+> `JarvisConversation` owned the session, messages and `send`, while being
+> mounted only when the rudder panel is open. That one fact caused all three
+> reported symptoms: closing mid-turn lost the answer, reopening re-fired the
+> `injected` prop effect and resent the command (one sentence → four turns),
+> and overlapping turns sharing one server transcript answered the same
+> question two different ways. The pipeline is now
+> `lib/jarvisEngine.ts` — module scope, tab lifetime, **serial queue**, dedupe
+> (6s window + in-queue check), cap 5, 90s staleness drop. Views subscribe.
+> Voice calls `submit()` directly; the prop path is gone.
+> Also `shared/src/llm/resilience.ts`: retries 429/408/5xx honouring
+> `Retry-After` and the "try again in 11.242s" body hint, jittered, capped,
+> never retrying other 4xx. `AgentLoopRun.errorHuman` + `stopReasonSentence()`
+> keep the raw provider body (org id, model, token accounting) out of the
+> owner's conversation. **Suites after D-211: shared 544 pass / 6 skipped,
+> gateway 254 pass, dashboard 212 pass; all typecheck clean.**
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build

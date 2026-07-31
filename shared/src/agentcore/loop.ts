@@ -40,6 +40,7 @@ import {
   type ToolResult,
 } from './registry.js';
 import type { ChatToolCall, ChatToolDef, ToolCallingProvider } from '../llm/toolcalling.js';
+import { humanModelError } from '../llm/resilience.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -305,7 +306,16 @@ async function continueLoop(run: AgentLoopRun, opts: AgentLoopOptions): Promise<
       run.tokensOut += res.tokensOut;
       run.costUsd += res.costUsd;
     } catch (e) {
-      return finish('model_error', 'failed', '', e instanceof Error ? e.message : 'model call failed');
+      /* D-211 — the run record keeps the structured provider error (status +
+       * a truncated body) for diagnosis, but that is NOT what the owner sees.
+       * `run.error` used to be pasted straight into the reply, which is how a
+       * rate-limit response — organisation id, token accounting, support URL
+       * and all — ended up in a Persian conversation about a gym session.
+       * The human sentence is attached separately and the reply uses it. */
+      const detail = e instanceof Error ? e.message : 'model call failed';
+      const status = (e as { status?: number } | undefined)?.status;
+      run.errorHuman = humanModelError(e, 'fa');
+      return finish('model_error', 'failed', '', status ? `${detail} (status ${status})` : detail);
     }
 
     // Structured compat fallback: validated single-tool JSON in plain text.

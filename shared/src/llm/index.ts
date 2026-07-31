@@ -363,3 +363,6 @@ export function buildBudgetEvent(args: Omit<LlmBudgetEvent, 'budgetEventId' | 'c
 }
 
 export { promptFor, listPrompts, agentPrompts, type VersionedPrompt, type AgentPrompt } from './prompts.js';
+
+// D-211 — retry/backoff and owner-readable provider errors.
+export * from './resilience.js';

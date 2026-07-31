@@ -153,6 +153,16 @@ export const AgentLoopRunSchema = z.object({
   taskId: z.string().nullable().default(null),
   cancelRequested: z.boolean().default(false),
   error: z.string().default(''),
+  /**
+   * The same failure, said to the owner (D-211).
+   *
+   * Kept separate from `error` rather than replacing it, because the two have
+   * different readers with opposite needs: `error` must stay precise enough
+   * to diagnose a provider fault (status, truncated body), and that precision
+   * is exactly what must never reach a conversation — a 429 body carries the
+   * organisation id, the model name and internal token accounting.
+   */
+  errorHuman: z.string().default(''),
   createdAt: IsoDate,
   updatedAt: IsoDate,
 }).merge(ScopeFieldsSchema);

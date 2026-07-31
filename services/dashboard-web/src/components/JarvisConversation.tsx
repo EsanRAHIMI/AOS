@@ -1,29 +1,36 @@
 'use client';
 /**
- * THE conversation with Jarvis — one implementation, every surface (D-190).
+ * THE conversation with Jarvis — one implementation, every surface (D-190),
+ * and since D-211 a VIEW rather than the engine itself.
  *
- * There were two: `JarvisDock` (bottom-right panel) and `JarvisWorkspace`
- * (the `/jarvis` stage). They shared the session list and the streaming route,
- * so the DATA was one — but the UI, the rendering and the behaviour were
- * written twice, and they drifted. History loading existed in one; the
- * structured reply renderer landed in one first; the approval bar looked
- * different in each. Two copies of a conversation is two products.
+ * History: there were two implementations (`JarvisDock` and
+ * `JarvisWorkspace`) that shared data and duplicated behaviour. D-190 merged
+ * them here. That fixed the duplication but left a subtler fault: this
+ * component still OWNED the conversation — session, message list, `busy`,
+ * `send` — while being mounted only when the rudder panel is open.
  *
- * This component owns the whole interaction: resolving the session, loading
- * real history, streaming a turn with live tool steps, the approval pause, and
- * rendering replies as structure. Surfaces differ only in `variant`, which is
- * a CSS concern — never a behavioural one.
+ * A conversation is a long-running process; a panel is a piece of furniture.
+ * Tying the first to the second meant closing the panel mid-turn lost the
+ * answer, and reopening it re-fired the effect that submitted a voice command
+ * — one spoken sentence becoming three turns.
+ *
+ * So the process moved to `lib/jarvisEngine` at module scope, and what is
+ * left here is rendering plus the input box. This component may now mount and
+ * unmount as often as the interface likes, and nothing observable changes.
+ * Surfaces still differ only in `variant`, which is a CSS concern.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  createSessionAction, decideApprovalAction, getSessionAction, listSessionsAction, sendTurnAction,
-} from '@/app/jarvis/actions';
+import { decideApprovalAction } from '@/app/jarvis/actions';
 import { invalidateBlocks } from '@/components/UniverseProvider';
 import { blocksForApprovalDecision } from '@/lib/realtimeBlocks';
 import { RichText } from '@/components/RichText';
 import { bidiProps } from '@/lib/rtl';
 import { useVoice } from '@/lib/useVoice';
 import { publishJarvisPresence } from '@/lib/jarvisPresence';
+import {
+  subscribe, getSnapshot, submit, loadHistory, setSpeaker,
+  type EngineSnapshot,
+} from '@/lib/jarvisEngine';
 
 export type ConversationState = 'idle' | 'thinking' | 'acting' | 'waiting_approval' | 'error';
 
@@ -34,15 +41,10 @@ export interface ConversationMsg {
   steps?: string[];
 }
 
-/** Enough to recognise the conversation without re-rendering a whole archive. */
-const HISTORY_TURNS = 30;
-
 export interface JarvisConversationProps {
   /** Layout only. Behaviour is identical in every one. */
   variant: 'rudder' | 'overlay' | 'page';
-  /** Controlled session (the /jarvis session switcher); omit to use the latest. */
-  sessionId?: string | null;
-  /** Extra text appended to the prompt — the dock passes the current page. */
+  /** Extra text appended to the prompt — the host passes the current page. */
   contextNote?: string;
   placeholder?: string;
   emptyHint?: string;
@@ -52,37 +54,34 @@ export interface JarvisConversationProps {
   autoFocus?: boolean;
   /** Read replies aloud when the turn arrived by voice. Default on. */
   voice?: boolean;
-  /**
-   * A turn submitted from outside the input box — today, the ambient wake-word
-   * listener (D-209).
-   *
-   * Carries a `nonce` rather than just text because the same command said
-   * twice ("جارویس، بعدی چیه؟" … "جارویس، بعدی چیه؟") is two turns, and a
-   * prop compared by string value would silently swallow the second. The
-   * nonce is what makes repetition work.
-   */
-  injected?: { text: string; nonce: number } | null;
 }
 
 export function JarvisConversation({
-  variant, sessionId: controlledSessionId, contextNote, placeholder, emptyHint,
-  onState, onTurnComplete, autoFocus, voice = true, injected = null,
+  variant, contextNote, placeholder, emptyHint,
+  onState, onTurnComplete, autoFocus, voice = true,
 }: JarvisConversationProps) {
-  const [msgs, setMsgs] = useState<ConversationMsg[]>([]);
+  const [snap, setSnap] = useState<EngineSnapshot>(getSnapshot);
   const [input, setInput] = useState('');
-  const [steps, setSteps] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [state, setStateRaw] = useState<ConversationState>('idle');
-  const [pending, setPending] = useState<{ approvalId: string; runId: string } | null>(null);
 
-  const sessionRef = useRef<string | null>(controlledSessionId ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const setState = useCallback((s: ConversationState) => { setStateRaw(s); onState?.(s); }, [onState]);
+  /* The engine is the single source of truth; this is the only subscription. */
+  useEffect(() => subscribe(setSnap), []);
+  useEffect(() => { void loadHistory(); }, []);
 
+  const { msgs, steps, busy, state, pending } = snap;
 
-  useEffect(() => { sessionRef.current = controlledSessionId ?? sessionRef.current; }, [controlledSessionId]);
+  useEffect(() => { onState?.(state); }, [state, onState]);
+
+  /* A turn ending is what hosts refresh on. Derived from the engine's busy
+   * edge rather than owned here, so it still fires for a turn that started
+   * while this component was unmounted. */
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !busy && snap.sessionId) onTurnComplete?.(snap.sessionId);
+    wasBusy.current = busy;
+  }, [busy, snap.sessionId, onTurnComplete]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -91,152 +90,21 @@ export function JarvisConversation({
 
   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
 
-  /** One shared session across every surface — same history, same memory. */
-  const ensureSession = useCallback(async (): Promise<string | null> => {
-    if (sessionRef.current) return sessionRef.current;
-    try {
-      const sessions = await listSessionsAction();
-      if (sessions[0]?.sessionId) { sessionRef.current = sessions[0].sessionId; return sessionRef.current; }
-      sessionRef.current = await createSessionAction('Live');
-      return sessionRef.current;
-    } catch { return null; }
-  }, []);
-
-  /* ------------------------------- history ------------------------------- */
-  const loadedFor = useRef<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const id = controlledSessionId ?? await ensureSession();
-      if (!id || !alive || loadedFor.current === id) return;
-      loadedFor.current = id;
-      try {
-        const { turns } = await getSessionAction(id);
-        if (!alive) return;
-        const restored: ConversationMsg[] = [];
-        for (const t of turns.slice(-HISTORY_TURNS)) {
-          if (t.userText) restored.push({ who: 'you', text: t.userText });
-          if (t.replyText) restored.push({ who: 'jarvis', text: t.replyText });
-        }
-        setMsgs(restored);
-        const last = turns[turns.length - 1];
-        setPending(last?.pendingApprovalId && last.runId ? { approvalId: last.pendingApprovalId, runId: last.runId } : null);
-      } catch {
-        loadedFor.current = null;   // history is a convenience; allow a retry
-      }
-    })();
-    return () => { alive = false; };
-  }, [controlledSessionId, ensureSession]);
-
-  /* --------------------------------- send -------------------------------- */
-  /** True when THIS turn was dictated — decides whether the reply is spoken. */
-  const spokenTurnRef = useRef(false);
-
-  const send = useCallback(async (raw: string) => {
-    const text = raw.trim();
-    if (!text || busy) return;
-    setInput('');
-    setMsgs((m) => [...m, { who: 'you', text }]);
-    setSteps([]);
-    setBusy(true);
-    setState('thinking');
-
-    const sessionId = controlledSessionId ?? await ensureSession();
-    if (!sessionId) {
-      setBusy(false);
-      setState('error');
-      setMsgs((m) => [...m, { who: 'jarvis', text: 'اتصال به کرنل برقرار نشد. دوباره تلاش کنید.' }]);
-      return;
-    }
-
-    const prompt = contextNote ? `${text}\n\n[context] ${contextNote}` : text;
-    const collected: string[] = [];
-
-    try {
-      // Streaming first — the owner sees the real tool steps as they happen.
-      const res = await fetch(`/api/jarvis-stream?sessionId=${encodeURIComponent(sessionId)}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: prompt, transport: 'text' }),
-      });
-      if (!res.ok || !res.body) throw new Error('stream unavailable');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      type FinalTurn = { replyText?: string; status?: string; pendingApprovalId?: string | null; runId?: string | null };
-      let final: FinalTurn | null = null;
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const chunks = buf.split('\n\n');
-        buf = chunks.pop() ?? '';
-        for (const chunk of chunks) {
-          const ev = /event: (.+)/.exec(chunk)?.[1];
-          const dm = /data: (.+)/.exec(chunk);
-          if (!ev || !dm) continue;
-          let data: Record<string, unknown>;
-          try { data = JSON.parse(dm[1]); } catch { continue; }
-
-          if (ev === 'loop.step') {
-            const summary = String(data.summary ?? data.toolName ?? '');
-            if (summary) { collected.push(summary); setSteps([...collected]); }
-            setState('acting');
-          }
-          if (ev === 'turn.final') final = data as FinalTurn;
-        }
-      }
-
-      if (final?.pendingApprovalId && final.runId) {
-        setPending({ approvalId: final.pendingApprovalId, runId: final.runId });
-        setState('waiting_approval');
-      } else {
-        setState('idle');
-      }
-      const reply = String(final?.replyText ?? '…');
-      setMsgs((m) => [...m, { who: 'jarvis', text: reply, steps: [...collected] }]);
-      // Answer in the medium the owner used: spoken question, spoken answer.
-      if (voice && spokenTurnRef.current) v.speak(reply);
-      spokenTurnRef.current = false;
-    } catch {
-      // Non-streaming fallback: the answer still arrives, just without steps.
-      try {
-        const r = await sendTurnAction(sessionId, prompt, 'text');
-        setMsgs((m) => [...m, { who: 'jarvis', text: r?.replyText ?? 'پاسخی دریافت نشد.' }]);
-        if (r?.pendingApprovalId && r.runId) { setPending({ approvalId: r.pendingApprovalId, runId: r.runId }); setState('waiting_approval'); }
-        else setState('idle');
-      } catch {
-        setState('error');
-        setMsgs((m) => [...m, { who: 'jarvis', text: 'پاسخ دریافت نشد. اتصال کرنل را بررسی کنید.' }]);
-      }
-    } finally {
-      setBusy(false);
-      setSteps([]);
-      onTurnComplete?.(sessionId);
-    }
-  }, [busy, contextNote, controlledSessionId, ensureSession, onTurnComplete, setState, voice]);
-
-  // Dictation feeds the very same send path — voice is a transport, not a mode.
+  // Dictation feeds the very same entry point — voice is a transport, not a mode.
   const v = useVoice({
-    onFinal: (text) => { spokenTurnRef.current = true; void send(text); },
+    onFinal: (text) => { submit(text, { transport: 'voice', contextNote }); },
   });
 
-  /* An ambient wake-word command enters through the SAME `send` (D-209).
-   * Keying the effect on the nonce is what lets the owner repeat themselves;
-   * keying it on the text would drop every second identical command. It is
-   * marked as a spoken turn so the reply comes back by voice — someone who
-   * spoke from across the room cannot read the screen. */
-  const injectedNonce = injected?.nonce ?? 0;
+  /* Lend the engine this view's speaker, and take it back on unmount. The
+   * engine must not hold a voice handle of its own: it outlives every
+   * surface, and a voice still talking after its surface is gone is one the
+   * owner cannot silence. */
   useEffect(() => {
-    if (!injectedNonce || !injected?.text) return;
-    spokenTurnRef.current = true;
-    void send(injected.text);
-    // `injected` itself is intentionally not a dependency: only the nonce
-    // marks a NEW command, and re-running on object identity would resend.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [injectedNonce]);
+    if (!voice) return;
+    setSpeaker(v.speak);
+    return () => setSpeaker(null);
+  }, [voice, v.speak]);
+
   /* Broadcast what Jarvis is doing so the /jarvis canvas can pulse with it
    * WITHOUT owning a second conversation to derive it from. */
   useEffect(() => {
@@ -252,16 +120,16 @@ export function JarvisConversation({
 
   const decide = useCallback(async (action: 'approve' | 'reject') => {
     if (!pending) return;
-    setBusy(true);
-    setState('thinking');
-    const r = await decideApprovalAction(pending.approvalId, pending.runId, action);
-    setPending(null);
-    setBusy(false);
-    setState('idle');
-    if (r?.replyText) setMsgs((m) => [...m, { who: 'jarvis', text: r.replyText }]);
+    await decideApprovalAction(pending.approvalId, pending.runId, action);
     invalidateBlocks(blocksForApprovalDecision());
-    if (sessionRef.current) onTurnComplete?.(sessionRef.current);
-  }, [pending, onTurnComplete, setState]);
+    // The engine reloads the authoritative state; nothing is inferred here.
+    void loadHistory();
+  }, [pending]);
+
+  const onSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    if (submit(input, { contextNote })) setInput('');
+  }, [input, contextNote]);
 
   return (
     <div className={`jconv jconv--${variant}`} dir="rtl">
@@ -272,8 +140,8 @@ export function JarvisConversation({
           </p>
         )}
 
-        {msgs.map((m, i) => (
-          <article key={i} className={`jconv-msg jconv-msg--${m.who}`}>
+        {msgs.map((m) => (
+          <article key={m.id} className={`jconv-msg jconv-msg--${m.who}`}>
             {m.who === 'jarvis' ? (
               <>
                 <div className="jconv-avatar" aria-hidden>J</div>
@@ -321,10 +189,7 @@ export function JarvisConversation({
         </div>
       )}
 
-      <form
-        className="jconv-form"
-        onSubmit={(e) => { e.preventDefault(); void send(input); }}
-      >
+      <form className="jconv-form" onSubmit={onSubmit}>
         {v.supported && (
           <button
             type="button"
@@ -344,7 +209,9 @@ export function JarvisConversation({
           onChange={(e) => setInput(e.target.value)}
           onFocus={v.stopSpeaking}
           placeholder={v.listening ? 'در حال شنیدن…' : (placeholder ?? 'دستور یا پرسش…')}
-          disabled={busy}
+          /* NOT disabled while busy (D-211): the engine queues, so the owner
+           * can keep typing while a turn runs instead of waiting on a frozen
+           * box. Disabling it was what made a slow turn feel like a hang. */
           readOnly={v.listening}
           {...bidiProps(v.listening ? v.interim : input)}
         />
@@ -352,16 +219,17 @@ export function JarvisConversation({
         {v.speaking ? (
           <button type="button" className="jconv-send jconv-send--stop" onClick={v.stopSpeaking} aria-label="توقف صدا">◼</button>
         ) : (
-          <button type="submit" className="jconv-send" disabled={busy || !input.trim()} aria-label="ارسال">↵</button>
+          <button type="submit" className="jconv-send" disabled={!input.trim()} aria-label="ارسال">↵</button>
         )}
       </form>
 
       <p className="jconv-foot" aria-live="polite">
-        {state === 'error' ? 'خطا در ارتباط'
-          : state === 'waiting_approval' ? 'در انتظار تأیید شما'
-            : v.listening ? 'میکروفون باز است — بعد از مکث ارسال می‌شود'
-              : v.speaking ? 'در حال خواندن پاسخ'
-                : 'همان جلسه، حافظه و صدا در همهٔ صفحه‌ها'}
+        {snap.queued > 0 ? `${snap.queued} دستور در صف`
+          : state === 'error' ? (snap.lastError || 'خطا در ارتباط')
+            : state === 'waiting_approval' ? 'در انتظار تأیید شما'
+              : v.listening ? 'میکروفون باز است — بعد از مکث ارسال می‌شود'
+                : v.speaking ? 'در حال خواندن پاسخ'
+                  : 'همان جلسه، حافظه و صدا در همهٔ صفحه‌ها'}
       </p>
     </div>
   );

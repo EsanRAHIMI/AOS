@@ -339,3 +339,48 @@ Asking is reserved for what cannot be derived and is expensive to get wrong:
 who to invite, which of two real conflicting events to move, an amount of
 money. **Never** a time, a duration or a calendar. A full window is still an
 answer — report the clash and propose the nearest alternative.
+
+## 14. The turn engine (D-211)
+
+`services/dashboard-web/src/lib/jarvisEngine.ts` — module-scope state that
+lives for the tab's lifetime. **The conversation is a process; views observe
+it.** `JarvisConversation` subscribes and may mount/unmount freely.
+
+Entry point is `submit(text, { transport, contextNote })` for every source —
+text box, dictation, wake word. It returns `false` when rejected.
+
+**Guarantees**
+
+- **Serial.** One turn at a time, queued in order. Turns share one server-side
+  session and rolling summary, so concurrent runs have no defined meaning —
+  they were the cause of the same question being answered "2 events" and then
+  "1 event".
+- **Deduped.** An identical command inside 6s, or one already in the queue, is
+  rejected. Queue capped at 5; a command that waited >90s is dropped as stale
+  rather than acted on silently.
+- **View-independent.** A turn started with the panel open completes with it
+  closed. Nothing about panel state changes behaviour.
+- **The speaker is lent, not owned.** `setSpeaker()` — the engine outlives
+  every surface, and a voice still talking after its surface is gone cannot be
+  silenced.
+
+Voice never reaches the pipeline through a prop. The old
+`injected={{text, nonce}}` path re-fired its effect on remount, which is how
+one spoken sentence became four turns.
+
+## 15. Provider resilience (D-211)
+
+`shared/src/llm/resilience.ts` wraps both providers.
+
+- Retries **429 / 408 / 5xx** and network drops, up to `MAX_ATTEMPTS` (4).
+- Waits the provider's own hint: `Retry-After` header, else the
+  "Please try again in 11.242s" sentence in the body (TPM limits often carry
+  no header). Always jittered; capped at `MAX_BACKOFF_MS` (20s).
+- **Never retries** other 4xx — the request will be wrong again and retrying
+  burns the scarce budget. An abort outranks a pending backoff.
+
+**Errors the owner sees are sentences.** `run.error` keeps the precise
+provider failure (status + truncated body) for diagnosis; `run.errorHuman`
+carries the owner-facing text. The raw 429 body contains the organisation id,
+model name and token accounting and must never reach a conversation.
+`stopReasonSentence()` does the same for stop reasons.

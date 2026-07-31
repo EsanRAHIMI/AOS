@@ -12,6 +12,8 @@
  * loop (../agentcore/loop.ts).
  */
 import type { LoopMessage } from '../agentcore/schemas.js';
+// D-211 — a 429 is flow control, not a failure. See llm/resilience.ts.
+import { fetchWithRetry } from './resilience.js';
 
 /* ----------------------------- model registry --------------------------- */
 
@@ -153,7 +155,7 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
   constructor(private readonly apiKey: string, private readonly isLocal = false) {}
 
   async chat(req: ChatRequest): Promise<ChatResult> {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
       signal: req.signal ?? null,
@@ -165,8 +167,11 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
         messages: toAnthropicMessages(req.messages),
         tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })),
       }),
-    });
-    if (!res.ok) throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }, { name: 'anthropic', signal: req.signal ?? null });
+    /* No `!res.ok` check: `fetchWithRetry` only returns a successful response.
+     * A 429 is now waited out rather than reported, and a terminal failure
+     * arrives as a RetryableError carrying the status — which is what turns
+     * the owner-facing message from raw provider JSON into a sentence. */
     const body = (await res.json()) as {
       content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
       usage?: { input_tokens?: number; output_tokens?: number };
@@ -213,7 +218,7 @@ export class OpenAICompatibleToolsProvider implements ToolCallingProvider {
   }
 
   async chat(req: ChatRequest): Promise<ChatResult> {
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+    const res = await fetchWithRetry(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
       signal: req.signal ?? null,
@@ -226,8 +231,7 @@ export class OpenAICompatibleToolsProvider implements ToolCallingProvider {
           ? req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } }))
           : undefined,
       }),
-    });
-    if (!res.ok) throw new Error(`openai-compatible ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }, { name: this.name, signal: req.signal ?? null });
     const body = (await res.json()) as {
       choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
