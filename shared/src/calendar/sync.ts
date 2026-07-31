@@ -904,32 +904,42 @@ export async function mirrorCoverage(actorId: string): Promise<{
  * plausible stories and no way to tell them apart, so the owner got a
  * different theory each time.
  *
- * This asks the only authority. It reads Google live for the range — bypassing
- * the mirror, the enabled flags and the sync watermark entirely — and reports
- * the three sets that matter: what Google has, what we mirrored, and what is
- * in one but not the other. A difference has exactly one cause, and this names
- * which.
+ * This asks the only authority: Google, live, for the range — bypassing the
+ * mirror and the sync watermark — and diffs it. A difference has exactly one
+ * cause, and this names which.
+ *
+ * It does NOT bypass the `enabled` flag (corrected, D-205). The first version
+ * did, and the result was an assistant that answered a question about the
+ * owner's real calendars by reporting twenty-one events from one they had
+ * deliberately switched off, and then recommending they switch it back on.
+ * A disabled calendar is a decision, not a gap. Diagnosis stays inside the
+ * calendars the owner actually uses; `includeDisabled` exists for the one case
+ * where the active ones explain nothing, and even then it is a footnote.
  */
 export async function diagnoseRange(
-  actorId: string, fromIso: string, toIso: string, env: NodeJS.ProcessEnv = process.env,
+  actorId: string, fromIso: string, toIso: string,
+  opts: { includeDisabled?: boolean } = {},
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{
   account: string;
   calendars: Array<{
     calendarId: string; summary: string; enabled: boolean;
     google: number; mirrored: number; missing: string[]; error: string;
   }>;
+  /** How many calendars were left alone because the owner switched them off. */
+  skippedDisabled: number;
 }> {
   const account = (await getGrant(actorId))?.accountEmail ?? '';
-  const cals = await listCalendars(actorId);
+  const all = await listCalendars(actorId);
+  /* Off means off. Reading a disabled calendar spends the owner's Google quota
+   * to produce information they asked not to have. */
+  const cals = opts.includeDisabled ? all : all.filter((c) => c.enabled);
   const out: Awaited<ReturnType<typeof diagnoseRange>>['calendars'] = [];
 
   for (const cal of cals) {
     let googleIds: Array<{ id: string; summary: string; start: string }> = [];
     let error = '';
     try {
-      /* Deliberately NOT filtered by `enabled`: the whole point is to see
-       * events in calendars we are not syncing, which is one of the four
-       * explanations and indistinguishable from the others until now. */
       const res = await googleCall<{ items?: Array<Record<string, unknown>> }>(
         actorId, CALENDAR_API, `/calendars/${encodeURIComponent(cal.calendarId)}/events`,
         { query: { maxResults: 250, singleEvents: true, timeMin: fromIso, timeMax: toIso, orderBy: 'startTime' }, env },
@@ -963,7 +973,7 @@ export async function diagnoseRange(
       error,
     });
   }
-  return { account, calendars: out };
+  return { account, calendars: out, skippedDisabled: all.filter((c) => !c.enabled).length };
 }
 
 /**

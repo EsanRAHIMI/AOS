@@ -309,14 +309,18 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
   /* "I can see it and you cannot" needs an answer made of facts, not of
    * theories (D-204). This asks Google live and diffs it against the mirror. */
 
-  app.get<{ Querystring: { from?: string; to?: string } }>('/v1/calendar/diagnose', async (req, reply) => {
+  app.get<{ Querystring: { from?: string; to?: string; includeDisabled?: string } }>('/v1/calendar/diagnose', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     const from = new Date(`${String(req.query.from ?? '').slice(0, 10)}T00:00:00.000Z`);
     const to = new Date(`${String(req.query.to ?? '').slice(0, 10)}T00:00:00.000Z`);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
       return failure(ERROR_CODES.VALIDATION, 'from and to must be YYYY-MM-DD');
     }
-    return handle(reply, async () => diagnoseRange(OWNER, from.toISOString(), to.toISOString()));
+    /* Enabled calendars only by default (D-205) — a calendar the owner
+     * switched off must not be read, quoted, or recommended back on. */
+    return handle(reply, async () => diagnoseRange(OWNER, from.toISOString(), to.toISOString(), {
+      includeDisabled: String(req.query.includeDisabled ?? '') === 'true',
+    }));
   });
 
   app.post<{ Body: { from?: string; to?: string } }>('/v1/calendar/backfill', async (req, reply) => {

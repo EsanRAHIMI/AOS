@@ -55,20 +55,6 @@ describe('calendar_diagnose', () => {
     expect(def.sideEffect).toBe('none');
   });
 
-  it('names a calendar whose syncing is off as THE cause, not as a possibility', async () => {
-    // This is the case the owner hit and could never have guessed: the events
-    // are in Google, in a calendar AOS was told not to sync.
-    await connect([{ id: 'work', summary: 'کار', enabled: false }]);
-    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
-      .executor({ from: '2026-07-20', to: '2026-07-21' }, ctx);
-
-    expect(res.ok).toBe(true);
-    expect(res.summary).toContain('[SYNC OFF]');
-    // Google is unreachable in tests, so google=0 and the verdict falls through
-    // to the honest one rather than inventing a cause.
-    expect(res.summary).toContain('CAUSE:');
-  });
-
   it('reports the connected account, since the wrong one explains everything at once', async () => {
     await connect([{ id: 'a', summary: 'A', enabled: true }]);
     const res = await buildCoreToolFamilies().get('calendar_diagnose')!
@@ -103,5 +89,94 @@ describe('the diagnosis rule in the prompt', () => {
   it('requires the repair in the same turn, not as homework for the owner', () => {
     expect(prompt).toContain('calendar_backfill');
     expect(prompt).toContain('Never leave the owner to prove their own calendar exists');
+  });
+});
+
+/**
+ * D-205 — off means off.
+ *
+ * Asked about their real calendars, the assistant reported twenty-one events
+ * from "75 days Hard Challenge" — a calendar the owner had deliberately
+ * switched off — and then recommended switching it back on. The diagnosis tool
+ * had been written to ignore the `enabled` flag on purpose, so it turned the
+ * owner's own setting into the headline finding.
+ *
+ * A disabled calendar is an instruction, not a gap.
+ */
+describe('a switched-off calendar is left alone', () => {
+  it('does not read a disabled calendar, and does not list it', async () => {
+    await connect([
+      { id: 'main', summary: 'Ehsan', enabled: true },
+      { id: 'challenge', summary: '75 days Hard Challenge', enabled: false },
+    ]);
+    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
+      .executor({ from: '2026-07-20', to: '2026-07-21' }, ctx);
+
+    expect(res.summary).toContain('Ehsan');
+    expect(res.summary).not.toContain('75 days Hard Challenge');
+  });
+
+  it('acknowledges it in one line, as a count, without naming or quoting it', async () => {
+    await connect([
+      { id: 'main', summary: 'Ehsan', enabled: true },
+      { id: 'challenge', summary: '75 days Hard Challenge', enabled: false },
+      { id: 'holidays', summary: 'تعطیلات ایران', enabled: false },
+    ]);
+    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
+      .executor({ from: '2026-07-20', to: '2026-07-21' }, ctx);
+
+    expect(res.summary).toContain('2 calendar(s) are switched off');
+    expect(res.summary).toContain("that is the owner's setting");
+    expect(res.summary).toContain('do NOT suggest enabling them');
+  });
+
+  it('never proposes enabling one as the explanation for an absence', async () => {
+    await connect([
+      { id: 'main', summary: 'Ehsan', enabled: true },
+      { id: 'challenge', summary: '75 days Hard Challenge', enabled: false },
+    ]);
+    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
+      .executor({ from: '2026-07-20', to: '2026-07-21' }, ctx);
+
+    // The old verdict was "enable it in the calendar picker on /calendar".
+    expect(res.summary).not.toContain('calendar picker');
+    expect(res.summary).toContain('ACTIVE calendars');
+  });
+
+  it('scopes the reported result to active calendars explicitly', async () => {
+    await connect([{ id: 'main', summary: 'Ehsan', enabled: true }]);
+    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
+      .executor({ from: '2026-07-20', to: '2026-07-21' }, ctx);
+    expect(res.summary).toContain('Active calendars only:');
+  });
+
+  it('still allows a deliberate look, when the owner asks by name', async () => {
+    await connect([
+      { id: 'main', summary: 'Ehsan', enabled: true },
+      { id: 'challenge', summary: '75 days Hard Challenge', enabled: false },
+    ]);
+    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
+      .executor({ from: '2026-07-20', to: '2026-07-21', includeDisabled: true }, ctx);
+    expect(res.summary).toContain('75 days Hard Challenge');
+  });
+
+  it('says nothing about disabled calendars when there are none', async () => {
+    await connect([{ id: 'main', summary: 'Ehsan', enabled: true }]);
+    const res = await buildCoreToolFamilies().get('calendar_diagnose')!
+      .executor({ from: '2026-07-20', to: '2026-07-21' }, ctx);
+    expect(res.summary).not.toContain('switched off');
+  });
+});
+
+describe('the off-means-off rule in the prompt', () => {
+  const prompt = jarvisSystemPrompt('fa', '');
+
+  it('states that a disabled calendar is a decision, not a problem', () => {
+    expect(prompt).toContain('is a decision they made, not a problem to solve');
+  });
+
+  it('forbids explaining an absence by pointing at one', () => {
+    expect(prompt).toContain('never explain an absence by pointing at it');
+    expect(prompt).toContain('never suggest enabling it');
   });
 });

@@ -305,6 +305,8 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
     inputSchema: z.object({
       from: z.string().describe('ISO date, e.g. 2026-07-20'),
       to: z.string().describe('ISO date, exclusive, e.g. 2026-07-21'),
+      includeDisabled: z.boolean().optional()
+        .describe('Only if the ACTIVE calendars explain nothing. Default false: a calendar the owner switched off is a decision, not a gap.'),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
       const blocked = await blockedReason(ctx);
@@ -312,29 +314,34 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
 
       const from = new Date(`${String(args.from).slice(0, 10)}T00:00:00.000Z`).toISOString();
       const to = new Date(`${String(args.to).slice(0, 10)}T00:00:00.000Z`).toISOString();
-      const d = await diagnoseRange(CALENDAR_ACTOR_ID, from, to);
+      const d = await diagnoseRange(CALENDAR_ACTOR_ID, from, to, {
+        includeDisabled: args.includeDisabled === true,
+      });
 
       const lines = d.calendars.map((c) => {
-        const bits = [`• ${c.summary} (${c.calendarId})${c.enabled ? '' : ' [SYNC OFF]'}: google=${c.google} mirrored=${c.mirrored}`];
+        const bits = [`• ${c.summary}: google=${c.google} mirrored=${c.mirrored}`];
         if (c.error) bits.push(`  error: ${c.error}`);
         for (const m of c.missing) bits.push(`  NOT MIRRORED: ${m}`);
         return bits.join('\n');
       });
 
       const anyMissing = d.calendars.some((c) => c.missing.length > 0);
-      const offWithEvents = d.calendars.filter((c) => !c.enabled && c.google > 0).map((c) => c.summary);
+      const verdict = anyMissing
+        ? 'CAUSE: these events are in Google but were never mirrored — the incremental sync only re-fetches events whose timestamp moved, so a gap never heals itself. Call calendar_backfill for this range, then search again.'
+        : d.calendars.every((c) => c.google === 0)
+          ? 'CAUSE: Google has nothing in this range in the owner\'s ACTIVE calendars. Check the date with them.'
+          : 'Your active calendars and Google agree for this range — nothing is missing.';
 
-      const verdict = offWithEvents.length
-        ? `CAUSE: ${offWithEvents.join(', ')} has events in this range but syncing is OFF for it. Tell the owner to enable it in the calendar picker on /calendar.`
-        : anyMissing
-          ? 'CAUSE: the events exist in Google but were never mirrored — the incremental sync only re-fetches events whose timestamp moved, so a gap never heals itself. Call calendar_backfill for this range.'
-          : d.calendars.every((c) => c.google === 0)
-            ? 'CAUSE: Google itself has nothing in this range for any calendar. The events are not there; check the date.'
-            : 'Mirror and Google agree for this range.';
+      /* One line, at the end, and only as a count (D-205). The owner turned
+       * these off; listing their contents answers a question nobody asked and
+       * buries the answer to the one they did. */
+      const footnote = d.skippedDisabled > 0 && !args.includeDisabled
+        ? `\n(${d.skippedDisabled} calendar(s) are switched off and were not checked — that is the owner's setting. Do NOT list them, do NOT report their events, and do NOT suggest enabling them unless the owner asks.)`
+        : '';
 
       return {
         ok: true,
-        summary: `Account: ${d.account || '(none)'}\n${lines.join('\n')}\n${verdict}`,
+        summary: `Account: ${d.account || '(none)'}\nActive calendars only:\n${lines.join('\n')}\n${verdict}${footnote}`,
         data: d,
       };
     },

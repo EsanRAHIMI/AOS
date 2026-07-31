@@ -4701,3 +4701,38 @@ calendar exists.
 
 Also available without Jarvis: `GET /v1/calendar/diagnose?from=&to=` and
 `POST /v1/calendar/backfill`.
+
+## D-205 — off means off
+
+Asked to explain a gap in his real calendars, the assistant reported twenty-one
+events from "75 days Hard Challenge" — a calendar the owner had deliberately
+switched off — and closed by recommending he switch it back on.
+
+**That was my design, not the model's error.** D-204's `diagnoseRange`
+deliberately bypassed the `enabled` flag, on the reasoning that "events in a
+calendar we are not syncing" was one of the four explanations worth ruling out.
+It is not. The owner already ruled it out, by switching the calendar off. What
+I built turned their own setting into the headline finding, spent their Google
+quota fetching data they asked not to have, and buried the answer to the
+question they actually asked.
+
+**A disabled calendar is an instruction, not a gap.** So:
+
+- `diagnoseRange` reads ONLY enabled calendars. `includeDisabled` is opt-in,
+  for the single case where the active ones explain nothing and the owner has
+  asked about a specific calendar by name.
+- Disabled ones are acknowledged in one line, as a COUNT — never named, never
+  quoted, never counted as events. The line itself instructs: that is the
+  owner's setting; do not list them, do not suggest enabling them.
+- The verdict is scoped out loud: "your active calendars and Google agree", not
+  "everything is fine except this thing you turned off".
+- The old verdict string "tell the owner to enable it in the calendar picker"
+  is gone, and a test asserts it stays gone.
+
+**Prompt (`jarvis-role-v8`):** never read a disabled calendar, never report its
+events, never explain an absence by pointing at it, never suggest enabling it.
+Speak only about active calendars unless asked about a disabled one by name.
+
+**The general rule this leaves behind:** a setting the owner changed is an
+answer, not a question to reopen. Diagnostics exist to find things the owner
+does not already know.
