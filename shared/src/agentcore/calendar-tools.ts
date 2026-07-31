@@ -85,23 +85,57 @@ export async function upcomingEvents(
 
 const OWNER_SCOPE = 'user' as const;
 
+/**
+ * Where the approval gate lives, and why it is not `requiresApproval` (D-195c).
+ *
+ * `requiresApproval: true` does two things: the loop pauses if the tool is
+ * called, and the tool's description gains "(requires owner approval before it
+ * runs)". The second one is what broke. Asked to add an event, the model read
+ * that sentence, decided permission was needed, and answered "در حال ثبت
+ * رویداد هستم؛ پس از ثبت اطلاع می‌دهم" — a promise, no call, no event, no
+ * approval prompt either. The gate did not fire because nothing reached it.
+ *
+ * The deeper problem is that a static flag cannot express this policy at all.
+ * Whether a calendar write needs approval depends on the TARGET chosen at call
+ * time: the owner already decided that writes to the AOS calendar are free and
+ * everything else is not. That is `classifyWrite`, and it can only run once
+ * the arguments exist.
+ *
+ * So the tool is auto-allowed to *attempt*, and the executor is the real gate:
+ * it runs `classifyWrite` and refuses anything sensitive unless the owner said
+ * yes in this conversation (`confirm: true`). `sideEffect` stays
+ * `external_write`, so safe mode still blocks every one of these, and
+ * `ownerOnly` still keeps other actors out.
+ */
 function def(name: string, purpose: string, opts: {
-  write?: boolean; approval?: boolean; risk?: 'low' | 'medium';
+  write?: boolean; risk?: 'low' | 'medium';
 } = {}) {
   return {
     name, version: '1.0.0', purpose, family: 'calendar', ownerModule: 'shared/src/calendar',
     inputFields: {}, outputFields: {}, requiredActorScope: OWNER_SCOPE, permission: '',
     riskLevel: opts.risk ?? 'low',
-    policyCategory: opts.approval
-      ? ('internal_sensitive' as const)
-      : opts.write ? ('internal_reversible' as const) : ('read_only' as const),
-    requiresApproval: Boolean(opts.approval),
+    policyCategory: opts.write ? ('internal_reversible' as const) : ('read_only' as const),
+    requiresApproval: false,
     ownerOnly: Boolean(opts.write),
     timeoutMs: 15_000, maxRetries: opts.write ? 0 : 1, idempotent: !opts.write,
     sideEffect: opts.write ? ('external_write' as const) : ('none' as const),
     evidenceRequired: false, rollbackAvailable: false,
     outputTrust: 'trusted_internal' as const,
     available: true, unavailableReason: '',
+  };
+}
+
+/**
+ * The refusal a sensitive write gets when the owner has not said yes yet.
+ *
+ * Phrased as an instruction to the model, not an error: it must ask the owner
+ * the question in `reason` and call again with `confirm: true`. Anything
+ * vaguer and the model reverts to promising.
+ */
+function needsConfirm(reason: string): ToolResult {
+  return {
+    ok: false,
+    summary: `APPROVAL REQUIRED — ${reason}. Ask the owner this exact question in your reply, and if they agree, call this tool again with confirm: true. Do NOT claim the event was created.`,
   };
 }
 
@@ -224,7 +258,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
   registry.register({
     definition: def('calendar_create_event',
       'Create a real event in Google Calendar. Writes freely to the AOS calendar; anything else, or any event with guests, requires the owner\'s approval.',
-      { write: true, approval: true, risk: 'medium' }),
+      { write: true, risk: 'medium' }),
     inputSchema: z.object({
       summary: z.string().min(1),
       start: z.string().describe('ISO datetime, or YYYY-MM-DD for all-day'),
@@ -235,6 +269,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       calendarId: z.string().optional().describe('omit to use the AOS calendar'),
       attendees: z.array(z.string().email()).optional().describe('sends real invitation emails'),
       withMeet: z.boolean().optional(),
+      confirm: z.boolean().optional().describe('set true ONLY after the owner explicitly approved a write that needs approval'),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
       const blocked = await blockedReason(ctx);
@@ -247,6 +282,11 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
         calendar: target,
         hasAttendees: Boolean((args.attendees as string[] | undefined)?.length),
       });
+      /* The real gate. Free means the owner already decided — writing to the
+       * AOS calendar on request needs no ceremony. Anything else stops here
+       * until they say so in this conversation. */
+      if (cls.sensitivity !== 'free' && args.confirm !== true) return needsConfirm(cls.reason);
+
       const created = await createEvent({
         actorId: CALENDAR_ACTOR_ID,
         calendarId: args.calendarId as string | undefined,
@@ -270,7 +310,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
   registry.register({
     definition: def('calendar_update_event',
       'Change an existing event (title, time, location, description). Patch semantics — omitted fields are left alone.',
-      { write: true, approval: true, risk: 'medium' }),
+      { write: true, risk: 'medium' }),
     inputSchema: z.object({
       calendarId: z.string(),
       eventId: z.string(),
@@ -280,10 +320,16 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       start: z.string().optional(),
       end: z.string().optional(),
       timeZone: z.string().optional(),
+      confirm: z.boolean().optional().describe('set true ONLY after the owner explicitly approved a write that needs approval'),
     }),
     executor: async (args, ctx): Promise<ToolResult> => {
       const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
+      const target = (await listCalendars(CALENDAR_ACTOR_ID))
+        .find((c) => c.calendarId === args.calendarId) ?? null;
+      const cls = classifyWrite({ op: 'update', calendar: target });
+      if (cls.sensitivity !== 'free' && args.confirm !== true) return needsConfirm(cls.reason);
+
       const updated = await updateEvent({
         actorId: CALENDAR_ACTOR_ID,
         calendarId: String(args.calendarId),
@@ -304,7 +350,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
   registry.register({
     definition: def('calendar_create_task',
       'Add a task to Google Tasks with an optional due date and notes.',
-      { write: true, approval: true, risk: 'low' }),
+      { write: true, risk: 'low' }),
     inputSchema: z.object({
       title: z.string().min(1),
       due: z.string().optional().describe('ISO date or datetime'),

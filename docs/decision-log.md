@@ -4144,3 +4144,38 @@ The fixed key buys correctness on one axis; it must not cost it on the other.
 Both are pinned by tests that keep the mismatch in the fixture: the context
 carries a real user id (`esan`) while the grant sits under `'owner'`, so a
 regression fails rather than passing on a convenient fixture.
+
+## D-195c — the promise that looked like success
+
+**Symptom.** "قبل از ناهار از ساعت ۱۲ تا ۱۳ یک رویداد آپدیت پروژه اضافه کن" →
+"در حال ثبت رویداد در تقویم هستم؛ پس از ثبت، نتیجه را اطلاع می‌دهم." No event.
+No approval prompt. No error. The reads in the same conversation worked, so the
+owner had every reason to believe it.
+
+**Cause 1 — a flag that discouraged the call it was meant to guard.**
+`requiresApproval: true` appends "(requires owner approval before it runs)" to
+the tool description the model sees. The model read it, concluded it lacked
+permission, and never called the tool — so the loop's approval checkpoint never
+fired either. The gate did not reject the write; nothing ever reached it.
+
+**Cause 2 — a static flag cannot express this policy.** Whether a calendar
+write needs approval depends on the target chosen at call time: free in the AOS
+calendar, approval everywhere else, always approval with guests. That is
+`classifyWrite`, and it needs the arguments to exist. Encoding it as a boolean
+on the definition was wrong in both directions — it gated the free case and
+told the model nothing useful about the sensitive one.
+
+**Fix.** The definitions are auto-allowed to *attempt* (`requiresApproval:
+false`, `policyCategory: internal_reversible`); the executor is the real gate
+and runs `classifyWrite`. Free → write. Otherwise → a refusal that names the
+reason and instructs: ask the owner this exact question, then call again with
+`confirm: true`, and **do not claim the event was created**. `ownerOnly` and
+`sideEffect: external_write` are unchanged, so other actors are still blocked
+and safe mode still disables every write.
+
+**Fix 2 — the prompt.** A new ACT-NEVER-PROMISE section (prompt version
+`jarvis-role-v2`): call the tool in this turn, never say "about to" or "will
+report back", report only what a tool result says, and never describe a write
+as done without a success result. A promise is worse than a refusal because
+nothing in the system can detect it — only the owner can, later, when the
+meeting does not exist.

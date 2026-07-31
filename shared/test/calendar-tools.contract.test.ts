@@ -133,18 +133,78 @@ describe('calendar tool family', () => {
     expect(res.summary).toContain('OVERDUE');
   });
 
-  it('declares every write as needing approval, so the loop always asks first', () => {
-    const r = buildCoreToolFamilies();
-    for (const name of ['calendar_create_event', 'calendar_update_event', 'calendar_create_task']) {
-      expect(r.get(name)!.definition.requiresApproval, `${name} must be gated`).toBe(true);
-    }
-  });
-
   it('keeps reads ungated — an assistant that asks permission to look is useless', () => {
     const r = buildCoreToolFamilies();
     for (const name of ['calendar_agenda', 'calendar_next', 'calendar_tasks']) {
       expect(r.get(name)!.definition.requiresApproval).toBe(false);
       expect(r.get(name)!.definition.sideEffect).toBe('none');
     }
+  });
+});
+
+/**
+ * D-195c — the write that never happened.
+ *
+ * Asked to add an event, Jarvis replied "در حال ثبت رویداد هستم" and did
+ * nothing. `requiresApproval: true` appends "(requires owner approval before
+ * it runs)" to the tool description; the model read it, decided it lacked
+ * permission, and never called the tool — so the loop's approval gate never
+ * fired either. A promise with no call is the worst possible output: it looks
+ * like success.
+ */
+describe('calendar writes are callable, and gated where it actually matters', () => {
+  it('does not tell the model it needs permission before it has even chosen a calendar', () => {
+    const r = buildCoreToolFamilies();
+    for (const name of ['calendar_create_event', 'calendar_update_event', 'calendar_create_task']) {
+      expect(r.get(name)!.definition.requiresApproval, `${name} must be callable`).toBe(false);
+    }
+  });
+
+  it('keeps writes owner-only and safe-mode-blockable — loosening the gate is not removing it', () => {
+    const r = buildCoreToolFamilies();
+    for (const name of ['calendar_create_event', 'calendar_update_event']) {
+      expect(r.get(name)!.definition.ownerOnly).toBe(true);
+      expect(r.get(name)!.definition.sideEffect).toBe('external_write');
+    }
+  });
+
+  it('refuses a write to a personal calendar until the owner says yes', async () => {
+    await connect();
+    await seedEvent();                       // seeds 'primary', accessRole owner
+    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
+      summary: 'آپدیت پروژه', start: '2026-07-31T12:00:00+03:30', end: '2026-07-31T13:00:00+03:30',
+      calendarId: 'primary',
+    }, ctx);
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('APPROVAL REQUIRED');
+    // The refusal must tell the model what to do next, or it invents something.
+    expect(res.summary).toContain('confirm: true');
+    expect(res.summary).toContain('Do NOT claim');
+  });
+
+  it('names the actual reason, so the owner is asked a real question', async () => {
+    await connect();
+    await seedEvent();
+    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
+      summary: 'x', start: '2026-07-31T12:00:00Z', end: '2026-07-31T13:00:00Z', calendarId: 'primary',
+    }, ctx);
+    expect(res.summary).toContain('تقویم شخصی');
+  });
+
+  it('treats guests as needing approval even in the AOS calendar — those are real emails', async () => {
+    await connect();
+    await seedEvent({ eventId: 'aos1', calendarId: 'aoscal' });
+    await getDb().collection('calendars').insertOne({
+      actorId: GRANT_ACTOR, account: ACCOUNT, calendarId: 'aoscal', summary: 'AOS · Autonomous OS',
+      description: '', timeZone: 'Asia/Tehran', accessRole: 'owner', primary: false,
+      selected: true, enabled: true, isAosCalendar: true, backgroundColor: '',
+      updatedAt: new Date().toISOString(),
+    } as never);
+    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
+      summary: 'x', start: '2026-07-31T12:00:00Z', end: '2026-07-31T13:00:00Z',
+      attendees: ['someone@example.com'],
+    }, ctx);
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('مهمان');
   });
 });
