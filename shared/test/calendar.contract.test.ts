@@ -121,30 +121,41 @@ describe('google error semantics', () => {
   });
 });
 
-describe('write policy — the owner keeps their calendar', () => {
-  const aos = { calendarId: 'c1', isAosCalendar: true, summary: AOS_CALENDAR_SUMMARY } as never;
-  const personal = { calendarId: 'c2', isAosCalendar: false, summary: 'Ehsan' } as never;
+describe('write policy — consequences, not calendars (rewritten D-195d)', () => {
+  const aos = { calendarId: 'c1', isAosCalendar: true, accessRole: 'owner', summary: AOS_CALENDAR_SUMMARY } as never;
+  const personal = { calendarId: 'c2', isAosCalendar: false, accessRole: 'owner', summary: 'Ehsan' } as never;
+  const shared = { calendarId: 'c3', isAosCalendar: false, accessRole: 'reader', summary: 'همکار' } as never;
 
-  it('lets the agent write freely only in the AOS calendar', () => {
+  /* The first version gated on WHICH calendar, which meant the owner asking
+   * "ثبت کن در تقویم من" was answered with "اجازه می‌دهید؟" — permission for
+   * the thing just requested. The risk axis is consequence, not location. */
+  it('writes a plain event without asking, in any calendar the owner can write to', () => {
     expect(classifyWrite({ op: 'create', calendar: aos }).sensitivity).toBe('free');
-    expect(classifyWrite({ op: 'update', calendar: aos }).sensitivity).toBe('free');
+    expect(classifyWrite({ op: 'create', calendar: personal }).sensitivity).toBe('free');
+    expect(classifyWrite({ op: 'update', calendar: personal }).sensitivity).toBe('free');
   });
 
-  it('requires approval to touch the owner\'s own calendar', () => {
-    const v = classifyWrite({ op: 'create', calendar: personal });
-    expect(v.sensitivity).toBe('approval');
-    expect(v.reason).toContain('تقویم شخصی');
-  });
-
-  it('requires approval to delete or to invite guests, even in the AOS calendar', () => {
+  it('still stops for the two things that outlive the conversation', () => {
     // A delete is irreversible from here; an invitation sends real mail to real
     // people in the owner's name. Neither becomes safe by being "ours".
     expect(classifyWrite({ op: 'delete', calendar: aos }).sensitivity).toBe('approval');
     expect(classifyWrite({ op: 'create', calendar: aos, hasAttendees: true }).sensitivity).toBe('approval');
+    expect(classifyWrite({ op: 'create', calendar: personal, hasAttendees: true }).sensitivity).toBe('approval');
   });
 
-  it('treats an unknown calendar as the owner\'s, never as ours', () => {
-    expect(classifyWrite({ op: 'create', calendar: null }).sensitivity).toBe('approval');
+  it('blocks a calendar it cannot write to instead of asking for a pointless approval', () => {
+    const v = classifyWrite({ op: 'create', calendar: shared });
+    expect(v.sensitivity).toBe('blocked');
+    expect(v.reason).toContain('اجازهٔ نوشتن ندارید');
+  });
+
+  it('calls an unresolved target a lookup failure, not a permission question', () => {
+    // This exact case is what trapped the owner in a confirm loop: the AOS
+    // calendar did not exist yet, the target was null, and "approve?" could
+    // never be answered in a way that helped.
+    const v = classifyWrite({ op: 'create', calendar: null });
+    expect(v.sensitivity).toBe('blocked');
+    expect(v.reason).toContain('پیدا نشد');
   });
 });
 

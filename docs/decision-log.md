@@ -4179,3 +4179,61 @@ report back", report only what a tool result says, and never describe a write
 as done without a success result. A promise is worse than a refusal because
 nothing in the system can detect it — only the owner can, later, when the
 meeting does not exist.
+
+## D-195d — governance that governed nothing and blocked everything
+
+The owner's verdict, and it was right: "خیلی زمان می‌بره تا کاربر با جارویز به
+نتیجه برسه… یک چت‌بات ابتدایی که نمی‌تونه هیچ کاری انجام بده و مدام سردرگمم
+می‌کنه". Four turns, three confirmations, no event.
+
+**What the transcript actually shows.**
+
+1. "یک رویداد در تقویم من ثبت کن" → "اجازه می‌دهید در تقویم شما ثبت کنم؟"
+   Permission requested for the exact action just instructed.
+2. The reason was "تقویم مقصد شناسایی نشد" — not a policy at all. No AOS
+   calendar had ever been created, so the target resolved to `null`, and
+   `classifyWrite` treats an unknown calendar as sensitive. The owner was asked
+   to approve a lookup failure.
+3. "تایید می‌کنم" → the model re-called WITHOUT `confirm: true`, got the same
+   refusal, and asked again. Unbounded loop. A confirmation the system cannot
+   act on is worse than no confirmation at all.
+
+**Root cause: the risk axis was wrong.** The policy gated on WHICH CALENDAR.
+But location is not consequence. A plain event in a calendar the owner can
+write to is private, reversible, and exactly what they asked for. What actually
+escapes the conversation is: guests (real email, unsendable), deletion (no
+undo), and a calendar they cannot write to (someone else's, or it will just
+fail).
+
+**Rewritten `classifyWrite`:**
+
+| case | before | now |
+|---|---|---|
+| plain event, AOS calendar | free | free |
+| plain event, owner's own calendar | **approval** | **free** |
+| guests, any calendar | approval | approval |
+| delete | approval | approval |
+| read-only calendar | approval | **blocked** |
+| unresolved target | approval | **blocked** |
+
+`blocked` is a new third state and the important one: a read-only calendar and
+a failed lookup cannot be fixed by saying yes, so offering approval there is
+what created the loop. The tools now return "CANNOT WRITE — …; do not ask for
+approval, approval will not fix it", and the gateway returns a validation
+error rather than `requiresApproval`.
+
+**Target resolution (`resolveTarget`).** Omitted → the AOS calendar, *created
+on demand*, which is what makes "just add it" work on a fresh install. And
+`'primary'`/`'me'`/`'my'`/`'default'`/a name → the owner's own calendar. The
+old code only matched an exact id, so every natural phrasing fell through to
+`null`.
+
+**Prompt (`jarvis-role-v3`).** When the owner agrees — "تایید می‌کنم", "بله",
+"برو", "انجام بده" — re-call the same tool with the same arguments plus
+`confirm: true`, immediately. Do not ask twice. Do not reply that you are
+"ready". Carry the pending arguments across turns; never make the owner
+restate what they already said.
+
+**The lesson worth keeping.** Governance is for consequences that outlive the
+conversation. Every gate on something reversible, private, and explicitly
+requested is not safety — it is a system arguing with its owner.

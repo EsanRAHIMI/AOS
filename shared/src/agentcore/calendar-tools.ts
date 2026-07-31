@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { AgentToolRegistry, type ToolResult } from './registry.js';
 import {
   readAgenda, readTasks, listCalendars, classifyWrite,
-  createEvent, updateEvent, createTask, getGrant, CALENDAR_ACTOR_ID,
+  createEvent, updateEvent, createTask, getGrant, ensureAosCalendar, CALENDAR_ACTOR_ID,
   type CalendarEvent, type CalendarRef,
 } from '../calendar/index.js';
 
@@ -135,8 +135,40 @@ function def(name: string, purpose: string, opts: {
 function needsConfirm(reason: string): ToolResult {
   return {
     ok: false,
-    summary: `APPROVAL REQUIRED — ${reason}. Ask the owner this exact question in your reply, and if they agree, call this tool again with confirm: true. Do NOT claim the event was created.`,
+    summary: `APPROVAL REQUIRED — ${reason}. Ask the owner this exact question in your reply, and if they agree, call this tool again with the SAME arguments plus confirm: true. Do NOT claim the event was created.`,
   };
+}
+
+/**
+ * Resolve where an event should go (D-195d).
+ *
+ * Never returns null for the ordinary case, which is what made the old flow
+ * unusable: with no AOS calendar created yet, the target resolved to nothing,
+ * that became "تقویم مقصد شناسایی نشد", and the owner was asked to approve a
+ * calendar the system had simply failed to look up.
+ *
+ * - `'primary'`, `'me'`, `'my'` or a name → the owner's own calendar. They
+ *   asked for their calendar; give them their calendar.
+ * - omitted → the AOS calendar, CREATED on demand. Lazily creating it here is
+ *   what makes "just add it" work on a fresh install.
+ */
+async function resolveTarget(calendarId?: string): Promise<CalendarRef | null> {
+  const all = await listCalendars(CALENDAR_ACTOR_ID);
+  if (!calendarId) {
+    return all.find((c) => c.isAosCalendar) ?? await ensureAosCalendar(CALENDAR_ACTOR_ID);
+  }
+  const key = calendarId.trim().toLowerCase();
+  if (key === 'primary' || key === 'me' || key === 'my' || key === 'default') {
+    return all.find((c) => c.primary) ?? all.find((c) => c.accessRole === 'owner') ?? null;
+  }
+  return all.find((c) => c.calendarId === calendarId)
+    ?? all.find((c) => (c.summary || '').toLowerCase() === key)
+    ?? null;
+}
+
+/** A hard stop, distinct from "ask the owner" — repeating the question is useless. */
+function cannotWrite(reason: string): ToolResult {
+  return { ok: false, summary: `CANNOT WRITE — ${reason}. Tell the owner this plainly; do not ask for approval, approval will not fix it.` };
 }
 
 /**
@@ -266,7 +298,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       description: z.string().optional(),
       location: z.string().optional(),
       timeZone: z.string().optional().describe('IANA zone, e.g. Asia/Tehran'),
-      calendarId: z.string().optional().describe('omit to use the AOS calendar'),
+      calendarId: z.string().optional().describe("'primary' for the owner's own calendar, a calendar id or name, or omit for the AOS calendar"),
       attendees: z.array(z.string().email()).optional().describe('sends real invitation emails'),
       withMeet: z.boolean().optional(),
       confirm: z.boolean().optional().describe('set true ONLY after the owner explicitly approved a write that needs approval'),
@@ -274,22 +306,21 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
     executor: async (args, ctx): Promise<ToolResult> => {
       const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
-      const target: CalendarRef | null = args.calendarId
-        ? (await listCalendars(CALENDAR_ACTOR_ID)).find((c) => c.calendarId === args.calendarId) ?? null
-        : (await listCalendars(CALENDAR_ACTOR_ID)).find((c) => c.isAosCalendar) ?? null;
+      const target = await resolveTarget(args.calendarId as string | undefined);
       const cls = classifyWrite({
         op: 'create',
         calendar: target,
         hasAttendees: Boolean((args.attendees as string[] | undefined)?.length),
       });
-      /* The real gate. Free means the owner already decided — writing to the
-       * AOS calendar on request needs no ceremony. Anything else stops here
-       * until they say so in this conversation. */
-      if (cls.sensitivity !== 'free' && args.confirm !== true) return needsConfirm(cls.reason);
+      if (cls.sensitivity === 'blocked') return cannotWrite(cls.reason);
+      /* Only real consequences stop here: guests mean irreversible emails.
+       * A plain event in the owner's own calendar is what they just asked
+       * for — asking permission for it is friction, not governance. */
+      if (cls.sensitivity === 'approval' && args.confirm !== true) return needsConfirm(cls.reason);
 
       const created = await createEvent({
         actorId: CALENDAR_ACTOR_ID,
-        calendarId: args.calendarId as string | undefined,
+        calendarId: target?.calendarId,
         summary: String(args.summary),
         description: args.description as string | undefined,
         location: args.location as string | undefined,
@@ -301,7 +332,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       });
       return {
         ok: true,
-        summary: `Created "${args.summary}" (${cls.sensitivity === 'free' ? 'AOS calendar' : cls.reason}). id=${String(created.id ?? '')}`,
+        summary: `Created "${args.summary}" in «${target?.summary || target?.calendarId}» — ${String(args.start)} → ${String(args.end)}. id=${String(created.id ?? '')}. Tell the owner it is DONE and name the calendar.`,
         data: created,
       };
     },
@@ -312,7 +343,7 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
       'Change an existing event (title, time, location, description). Patch semantics — omitted fields are left alone.',
       { write: true, risk: 'medium' }),
     inputSchema: z.object({
-      calendarId: z.string(),
+      calendarId: z.string().describe("calendar id, a name, or 'primary'"),
       eventId: z.string(),
       summary: z.string().optional(),
       description: z.string().optional(),
@@ -325,10 +356,10 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
     executor: async (args, ctx): Promise<ToolResult> => {
       const blocked = await blockedReason(ctx);
       if (blocked) return { ok: false, summary: blocked };
-      const target = (await listCalendars(CALENDAR_ACTOR_ID))
-        .find((c) => c.calendarId === args.calendarId) ?? null;
+      const target = await resolveTarget(args.calendarId as string | undefined);
       const cls = classifyWrite({ op: 'update', calendar: target });
-      if (cls.sensitivity !== 'free' && args.confirm !== true) return needsConfirm(cls.reason);
+      if (cls.sensitivity === 'blocked') return cannotWrite(cls.reason);
+      if (cls.sensitivity === 'approval' && args.confirm !== true) return needsConfirm(cls.reason);
 
       const updated = await updateEvent({
         actorId: CALENDAR_ACTOR_ID,

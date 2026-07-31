@@ -29,7 +29,7 @@ import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
-export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v2';
+export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v3';
 
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
@@ -51,6 +51,13 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
     '- If the owner asks for something you have a tool for, CALL THE TOOL IN THIS TURN. Never say you are "about to", "in the process of", or "will report back" — you have no later turn to do it in.',
     '- Report only what a tool result actually says. Never describe a write as done unless a tool returned success for it.',
     '- If a tool returns APPROVAL REQUIRED, ask the owner that exact question and stop. Do not narrate the action as if it happened.',
+    /* D-195d — the loop this ends: refusal → question → "تایید می‌کنم" →
+     * the model re-called WITHOUT confirm, got the same refusal, and asked
+     * again. Four turns, no event. A confirmation the system cannot act on is
+     * worse than no confirmation at all. */
+    '- When the owner then agrees ("تایید می‌کنم", "بله", "yes", "برو", "انجام بده"), IMMEDIATELY re-call that same tool with the SAME arguments plus confirm: true. Do not ask a second time. Do not answer that you are "ready" — that agreement was the answer to a question you already asked.',
+    '- Carry the pending request across turns: the arguments you proposed are still yours to reuse. Never make the owner restate what they already told you.',
+    '- If a tool returns CANNOT WRITE, state the obstacle in one line. Do not ask for approval — approval cannot fix it.',
     '- If you cannot act (missing tool, missing data, not configured), say so plainly in one line and ask for exactly what you need.',
     '- Sensitive actions pause for owner approval; explain what you asked for and why while waiting.',
     '- Be concise, specific, actionable. End substantial answers with the single most useful next action.',

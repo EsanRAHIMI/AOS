@@ -13,6 +13,23 @@ import { buildCoreToolFamilies } from '../src/agentcore/families.js';
 import { storeGrant, CALENDAR_ACTOR_ID } from '../src/calendar/tokens.js';
 import { getDb } from '../src/db/index.js';
 
+/**
+ * Run a write and report how far it got.
+ *
+ * Past the policy, the executor calls Google — which is unconfigured here and
+ * throws. That throw is the PASS signal for these tests: it means nothing
+ * refused the write. Asserting on it directly is what distinguishes "the gate
+ * opened" from "the gate never existed".
+ */
+async function attemptWrite(args: Record<string, unknown>): Promise<string> {
+  try {
+    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor(args, ctx);
+    return res.summary;
+  } catch (err) {
+    return `REACHED_GOOGLE: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 const KEY = '0'.repeat(64);
 const ENV = { GOOGLE_TOKEN_ENC_KEY: KEY } as unknown as NodeJS.ProcessEnv;
 /* The loop hands tools a REAL user id — not the fixed key the calendar grant
@@ -168,27 +185,52 @@ describe('calendar writes are callable, and gated where it actually matters', ()
     }
   });
 
-  it('refuses a write to a personal calendar until the owner says yes', async () => {
+  /**
+   * D-195d — the friction that made this unusable.
+   *
+   * The owner said "یک رویداد از ۱۲:۳۰ تا ۱۳ در تقویم من ثبت کن" and was asked
+   * "اجازه می‌دهید در تقویم شما ثبت کنم؟" — permission for the exact thing
+   * just requested. Then, with no AOS calendar created yet, the target
+   * resolved to null and the reason became "تقویم مقصد شناسایی نشد", so
+   * confirming did nothing, forever.
+   */
+  it('just writes to the owner\'s own calendar — asking permission for it is friction, not governance', async () => {
     await connect();
     await seedEvent();                       // seeds 'primary', accessRole owner
-    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
+    const out = await attemptWrite({
       summary: 'آپدیت پروژه', start: '2026-07-31T12:00:00+03:30', end: '2026-07-31T13:00:00+03:30',
       calendarId: 'primary',
-    }, ctx);
-    expect(res.ok).toBe(false);
-    expect(res.summary).toContain('APPROVAL REQUIRED');
-    // The refusal must tell the model what to do next, or it invents something.
-    expect(res.summary).toContain('confirm: true');
-    expect(res.summary).toContain('Do NOT claim');
+    });
+    expect(out).not.toContain('APPROVAL REQUIRED');
+    expect(out).toContain('REACHED_GOOGLE');
   });
 
-  it('names the actual reason, so the owner is asked a real question', async () => {
+  it('resolves "primary" to the owner\'s calendar rather than failing to identify a target', async () => {
     await connect();
     await seedEvent();
-    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
+    const out = await attemptWrite({
       summary: 'x', start: '2026-07-31T12:00:00Z', end: '2026-07-31T13:00:00Z', calendarId: 'primary',
+    });
+    expect(out).not.toContain('شناسایی نشد');
+    expect(out).not.toContain('پیدا نشد');
+  });
+
+  it('says plainly that a read-only calendar cannot be written to, instead of asking for an approval that cannot help', async () => {
+    await connect();
+    await seedEvent();
+    await getDb().collection('calendars').insertOne({
+      actorId: GRANT_ACTOR, account: ACCOUNT, calendarId: 'shared@x.com', summary: 'تقویم همکار',
+      description: '', timeZone: 'Asia/Tehran', accessRole: 'reader', primary: false,
+      selected: true, enabled: true, isAosCalendar: false, backgroundColor: '',
+      updatedAt: new Date().toISOString(),
+    } as never);
+    const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
+      summary: 'x', start: '2026-07-31T12:00:00Z', end: '2026-07-31T13:00:00Z', calendarId: 'shared@x.com',
     }, ctx);
-    expect(res.summary).toContain('تقویم شخصی');
+    expect(res.ok).toBe(false);
+    expect(res.summary).toContain('CANNOT WRITE');
+    expect(res.summary).toContain('اجازهٔ نوشتن ندارید');
+    expect(res.summary).not.toContain('APPROVAL REQUIRED');
   });
 
   it('treats guests as needing approval even in the AOS calendar — those are real emails', async () => {
@@ -202,9 +244,22 @@ describe('calendar writes are callable, and gated where it actually matters', ()
     } as never);
     const res = await buildCoreToolFamilies().get('calendar_create_event')!.executor({
       summary: 'x', start: '2026-07-31T12:00:00Z', end: '2026-07-31T13:00:00Z',
-      attendees: ['someone@example.com'],
+      attendees: ['someone@example.com'], calendarId: 'primary',
     }, ctx);
     expect(res.ok).toBe(false);
     expect(res.summary).toContain('مهمان');
+    // And the refusal must be actionable in ONE more turn, not a loop.
+    expect(res.summary).toContain('SAME arguments plus confirm: true');
+  });
+
+  it('goes ahead once the owner has confirmed — a confirmation the system ignores is worse than none', async () => {
+    await connect();
+    await seedEvent();
+    const out = await attemptWrite({
+      summary: 'x', start: '2026-07-31T12:00:00Z', end: '2026-07-31T13:00:00Z',
+      attendees: ['someone@example.com'], calendarId: 'primary', confirm: true,
+    });
+    expect(out).not.toContain('APPROVAL REQUIRED');
+    expect(out).toContain('REACHED_GOOGLE');
   });
 });

@@ -334,6 +334,12 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
       const verdict = classifyWrite({
         op: 'create', calendar: target, hasAttendees: Boolean(body.attendees?.length),
       });
+      /* Blocked is not the same as unapproved (D-195d): a read-only calendar
+       * or an unresolved target cannot be fixed by saying yes, so offering an
+       * approval there sends the caller round a loop that never terminates. */
+      if (verdict.sensitivity === 'blocked') {
+        return failure(ERROR_CODES.VALIDATION, verdict.reason);
+      }
       if (verdict.sensitivity === 'approval' && !(req.headers['x-factory-approved'] === 'true')) {
         return { requiresApproval: true, reason: verdict.reason, calendarId: target?.calendarId ?? null };
       }

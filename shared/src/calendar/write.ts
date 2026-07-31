@@ -15,7 +15,7 @@
 import { googleCall, CALENDAR_API, TASKS_API } from './google.js';
 import { ensureAosCalendar, listCalendars, mirrorWrittenEvent, forgetMirroredEvent, type CalendarRef } from './sync.js';
 
-export type WriteSensitivity = 'free' | 'approval';
+export type WriteSensitivity = 'free' | 'approval' | 'blocked';
 
 export interface WriteClassification {
   sensitivity: WriteSensitivity;
@@ -23,10 +23,28 @@ export interface WriteClassification {
 }
 
 /**
- * Decide whether an operation may proceed unattended.
+ * Decide whether an operation may proceed unattended (rewritten, D-195d).
  *
- * Deliberately conservative in the unknown case: a calendar we cannot identify
- * is treated as the owner's, never as ours.
+ * The first version asked permission for any write outside the AOS calendar.
+ * In practice that meant: the owner says "یک رویداد از ۱۲:۳۰ تا ۱۳ در تقویم من
+ * ثبت کن", and the system answers "اجازه می‌دهید در تقویم شما ثبت کنم؟" —
+ * asking permission for the exact thing just requested, in the same breath.
+ * With no AOS calendar created yet it was worse: the target resolved to null,
+ * the reason became "تقویم مقصد شناسایی نشد", and the owner could confirm
+ * forever without anything happening.
+ *
+ * The mistake was treating "which calendar" as the risk axis. It is not.
+ * A plain event in a calendar the owner can write to is reversible, private,
+ * and exactly what they asked for. What is actually irreversible or escapes
+ * the system is:
+ *
+ *   - guests        → real invitation emails, sent as the owner, cannot unsend
+ *   - deletion      → no undo
+ *   - a calendar the owner cannot write to → the write will fail or belongs
+ *                     to someone else
+ *
+ * Those three need a yes. Nothing else does. Governance is for consequences
+ * that outlive the conversation, not for every keystroke.
  */
 export function classifyWrite(input: {
   op: 'create' | 'update' | 'delete';
@@ -40,13 +58,18 @@ export function classifyWrite(input: {
     return { sensitivity: 'approval', reason: 'دعوت مهمان یعنی ارسال ایمیل واقعی از طرف شما' };
   }
   if (!input.calendar) {
-    return { sensitivity: 'approval', reason: 'تقویم مقصد شناسایی نشد' };
+    // Not a permission question — the caller failed to resolve a target and
+    // should say so plainly instead of asking the owner to approve a mystery.
+    return { sensitivity: 'blocked', reason: 'تقویم مقصد پیدا نشد' };
   }
-  if (!input.calendar.isAosCalendar) {
-    return { sensitivity: 'approval', reason: 'نوشتن در تقویم شخصی شما نیازمند تأیید است' };
+  if (!WRITABLE_ROLES.has(input.calendar.accessRole)) {
+    return { sensitivity: 'blocked', reason: `در «${input.calendar.summary || input.calendar.calendarId}» اجازهٔ نوشتن ندارید` };
   }
   return { sensitivity: 'free', reason: '' };
 }
+
+/** Roles Google actually lets us write events into. */
+const WRITABLE_ROLES = new Set(['owner', 'writer']);
 
 export interface CreateEventInput {
   actorId: string;
