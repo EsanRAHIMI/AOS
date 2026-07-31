@@ -15,7 +15,7 @@ import {
   CALENDAR_ACTOR_ID, syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
   ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
   saveEventNote, readEventNotes, deleteEventNote,
-  getPreferences, setPreferences, PreferencesPatchSchema,
+  getPreferences, setPreferences, PreferencesPatchSchema, diagnoseRange, backfillRange,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -303,6 +303,30 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
   app.delete<{ Params: { id: string } }>('/v1/calendar/notes/:id', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     return handle(reply, async () => ({ deleted: await deleteEventNote(OWNER, req.params.id) }));
+  });
+
+  /* ---------------------------------------------------------- diagnose */
+  /* "I can see it and you cannot" needs an answer made of facts, not of
+   * theories (D-204). This asks Google live and diffs it against the mirror. */
+
+  app.get<{ Querystring: { from?: string; to?: string } }>('/v1/calendar/diagnose', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const from = new Date(`${String(req.query.from ?? '').slice(0, 10)}T00:00:00.000Z`);
+    const to = new Date(`${String(req.query.to ?? '').slice(0, 10)}T00:00:00.000Z`);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return failure(ERROR_CODES.VALIDATION, 'from and to must be YYYY-MM-DD');
+    }
+    return handle(reply, async () => diagnoseRange(OWNER, from.toISOString(), to.toISOString()));
+  });
+
+  app.post<{ Body: { from?: string; to?: string } }>('/v1/calendar/backfill', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const from = new Date(`${String(req.body?.from ?? '').slice(0, 10)}T00:00:00.000Z`);
+    const to = new Date(`${String(req.body?.to ?? '').slice(0, 10)}T00:00:00.000Z`);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return failure(ERROR_CODES.VALIDATION, 'from and to must be YYYY-MM-DD');
+    }
+    return handle(reply, async () => ({ results: await backfillRange(OWNER, from.toISOString(), to.toISOString()) }));
   });
 
   /* --------------------------------------------------------------- sync */

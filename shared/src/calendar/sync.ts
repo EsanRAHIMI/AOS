@@ -895,6 +895,96 @@ export async function mirrorCoverage(actorId: string): Promise<{
   };
 }
 
+/**
+ * Ask Google directly what it holds for a date range, and diff it against the
+ * mirror (D-204).
+ *
+ * Every previous answer to "why can't you see it?" was a guess, mine included:
+ * wrong calendar, disabled calendar, outside the window, never created. Four
+ * plausible stories and no way to tell them apart, so the owner got a
+ * different theory each time.
+ *
+ * This asks the only authority. It reads Google live for the range — bypassing
+ * the mirror, the enabled flags and the sync watermark entirely — and reports
+ * the three sets that matter: what Google has, what we mirrored, and what is
+ * in one but not the other. A difference has exactly one cause, and this names
+ * which.
+ */
+export async function diagnoseRange(
+  actorId: string, fromIso: string, toIso: string, env: NodeJS.ProcessEnv = process.env,
+): Promise<{
+  account: string;
+  calendars: Array<{
+    calendarId: string; summary: string; enabled: boolean;
+    google: number; mirrored: number; missing: string[]; error: string;
+  }>;
+}> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const cals = await listCalendars(actorId);
+  const out: Awaited<ReturnType<typeof diagnoseRange>>['calendars'] = [];
+
+  for (const cal of cals) {
+    let googleIds: Array<{ id: string; summary: string; start: string }> = [];
+    let error = '';
+    try {
+      /* Deliberately NOT filtered by `enabled`: the whole point is to see
+       * events in calendars we are not syncing, which is one of the four
+       * explanations and indistinguishable from the others until now. */
+      const res = await googleCall<{ items?: Array<Record<string, unknown>> }>(
+        actorId, CALENDAR_API, `/calendars/${encodeURIComponent(cal.calendarId)}/events`,
+        { query: { maxResults: 250, singleEvents: true, timeMin: fromIso, timeMax: toIso, orderBy: 'startTime' }, env },
+      );
+      googleIds = (res.items ?? [])
+        .filter((r) => String(r.status ?? '') !== 'cancelled')
+        .map((r) => ({
+          id: String(r.id ?? ''),
+          summary: String(r.summary ?? '(untitled)'),
+          start: String((r.start as { dateTime?: string; date?: string } | undefined)?.dateTime
+            ?? (r.start as { date?: string } | undefined)?.date ?? ''),
+        }));
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+
+    const mirrored = await eventsCol()
+      .find({ actorId, account, calendarId: cal.calendarId, start: { $gte: fromIso, $lte: toIso } } as never,
+        { projection: { _id: 0 } as never })
+      .limit(500)
+      .toArray();
+    const haveIds = new Set((mirrored as unknown as Array<{ eventId: string }>).map((m) => m.eventId));
+
+    out.push({
+      calendarId: cal.calendarId,
+      summary: cal.summary || cal.calendarId,
+      enabled: cal.enabled,
+      google: googleIds.length,
+      mirrored: mirrored.length,
+      missing: googleIds.filter((g) => !haveIds.has(g.id)).map((g) => `${g.summary} @ ${g.start}`).slice(0, 10),
+      error,
+    });
+  }
+  return { account, calendars: out };
+}
+
+/**
+ * Pull one date range from Google into the mirror, ignoring the watermark.
+ *
+ * The repair for whatever `diagnoseRange` finds. `syncEvents` is incremental
+ * by design and will not re-fetch an event whose `updated` stamp has not
+ * moved, which is correct and also means it can never heal a gap.
+ */
+export async function backfillRange(
+  actorId: string, fromIso: string, toIso: string, env: NodeJS.ProcessEnv = process.env,
+): Promise<{ calendarId: string; upserted: number; error: string }[]> {
+  const cals = await listCalendars(actorId);
+  const results: { calendarId: string; upserted: number; error: string }[] = [];
+  for (const cal of cals.filter((c) => c.enabled)) {
+    const r = await syncEventWindow(actorId, cal.calendarId, fromIso, toIso, '', env);
+    results.push({ calendarId: cal.calendarId, upserted: r.upserted, error: r.error });
+  }
+  return results;
+}
+
 export async function syncStates(actorId: string): Promise<SyncState[]> {
   const docs = await stateCol().find({ actorId }, { projection: { _id: 0 } as never }).toArray();
   return docs.map((d) => SyncStateSchema.parse(d));

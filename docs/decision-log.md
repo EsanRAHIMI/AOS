@@ -4659,3 +4659,45 @@ carries those numbers and instructs: if the date is outside that span, or its
 calendar is [OFF], THAT is the reason — do not claim the event does not exist.
 "I found nothing" and "it does not exist" are different sentences, and the
 difference is these numbers.
+
+## D-204 — "I can see it and you cannot", answered with evidence
+
+The owner said this three times about the same 20 July events and got three
+different theories from me: wrong calendar, outside the sync window, Persian
+spelling. Each was plausible. None was checked. That is not diagnosis, it is
+guessing with a confident tone, and it wasted the owner's afternoon.
+
+**Why guessing was inevitable.** Four explanations fit the same observation and
+nothing in the system could tell them apart:
+
+1. the calendar exists but syncing is switched OFF for it
+2. the events are outside the mirrored window (one month back, three forward)
+3. they were mirrored under a different Google account
+4. they were never created
+
+Every tool read the mirror. Asking the mirror why the mirror is incomplete
+cannot work.
+
+**`diagnoseRange` asks Google.** It reads the API live for the requested range,
+per calendar, deliberately ignoring the `enabled` flag, the sync watermark and
+the mirror — then diffs. It reports, for each calendar: how many events Google
+has, how many are mirrored, which specific ones are missing, whether syncing is
+off, and any API error. Then it states one cause:
+
+- a calendar with events and `[SYNC OFF]` → that is the reason; enable it
+- events in Google, absent from the mirror → a gap; `calendar_backfill` repairs it
+- Google itself has nothing → the events are not there; check the date
+- otherwise → they agree
+
+**`backfillRange` is the repair.** `syncEvents` is incremental by design —
+`updatedMin` will not re-fetch an event whose timestamp has not moved — which
+is correct and also means a gap can never heal itself. Backfill re-reads a
+range with no watermark.
+
+**Prompt (`jarvis-role-v7`):** if the owner says they can see an event you
+cannot find, do not theorise — diagnose, and if it reports a gap, backfill and
+search again, in the same turn. Never leave the owner to prove their own
+calendar exists.
+
+Also available without Jarvis: `GET /v1/calendar/diagnose?from=&to=` and
+`POST /v1/calendar/backfill`.

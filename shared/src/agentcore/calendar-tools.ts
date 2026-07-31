@@ -21,7 +21,7 @@ import { AgentToolRegistry, type ToolResult } from './registry.js';
 import {
   readAgenda, readTasks, listCalendars, classifyWrite,
   createEvent, updateEvent, createTask, getGrant, ensureAosCalendar, findEvents,
-  mirrorCoverage, readEventById, CALENDAR_ACTOR_ID,
+  mirrorCoverage, readEventById, diagnoseRange, backfillRange, CALENDAR_ACTOR_ID,
   type CalendarEvent, type CalendarRef,
 } from '../calendar/index.js';
 
@@ -286,6 +286,80 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
         ok: true,
         summary: `${found.length} match(es):\n${found.map((e) => describe(e, names)).join('\n')}`,
         data: found,
+      };
+    },
+  });
+
+  /**
+   * Why an event is not visible — answered with evidence (D-204).
+   *
+   * Every previous answer to this question was a guess: wrong calendar,
+   * disabled calendar, outside the window, never created. Four plausible
+   * stories and no way to tell them apart, so the owner got a different
+   * theory each time. This asks Google directly for the range and diffs it
+   * against the mirror, which leaves exactly one explanation standing.
+   */
+  registry.register({
+    definition: def('calendar_diagnose',
+      'Ask Google DIRECTLY what exists in a date range and compare it to the local mirror, per calendar. Use whenever the owner says they can see an event that you cannot. Reports what Google has, what is mirrored, and exactly which events are missing.'),
+    inputSchema: z.object({
+      from: z.string().describe('ISO date, e.g. 2026-07-20'),
+      to: z.string().describe('ISO date, exclusive, e.g. 2026-07-21'),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const blocked = await blockedReason(ctx);
+      if (blocked) return { ok: false, summary: blocked };
+
+      const from = new Date(`${String(args.from).slice(0, 10)}T00:00:00.000Z`).toISOString();
+      const to = new Date(`${String(args.to).slice(0, 10)}T00:00:00.000Z`).toISOString();
+      const d = await diagnoseRange(CALENDAR_ACTOR_ID, from, to);
+
+      const lines = d.calendars.map((c) => {
+        const bits = [`• ${c.summary} (${c.calendarId})${c.enabled ? '' : ' [SYNC OFF]'}: google=${c.google} mirrored=${c.mirrored}`];
+        if (c.error) bits.push(`  error: ${c.error}`);
+        for (const m of c.missing) bits.push(`  NOT MIRRORED: ${m}`);
+        return bits.join('\n');
+      });
+
+      const anyMissing = d.calendars.some((c) => c.missing.length > 0);
+      const offWithEvents = d.calendars.filter((c) => !c.enabled && c.google > 0).map((c) => c.summary);
+
+      const verdict = offWithEvents.length
+        ? `CAUSE: ${offWithEvents.join(', ')} has events in this range but syncing is OFF for it. Tell the owner to enable it in the calendar picker on /calendar.`
+        : anyMissing
+          ? 'CAUSE: the events exist in Google but were never mirrored — the incremental sync only re-fetches events whose timestamp moved, so a gap never heals itself. Call calendar_backfill for this range.'
+          : d.calendars.every((c) => c.google === 0)
+            ? 'CAUSE: Google itself has nothing in this range for any calendar. The events are not there; check the date.'
+            : 'Mirror and Google agree for this range.';
+
+      return {
+        ok: true,
+        summary: `Account: ${d.account || '(none)'}\n${lines.join('\n')}\n${verdict}`,
+        data: d,
+      };
+    },
+  });
+
+  registry.register({
+    definition: def('calendar_backfill',
+      'Re-read a date range from Google into the local mirror, ignoring the incremental watermark. The repair for a gap that calendar_diagnose found.',
+      { write: false }),
+    inputSchema: z.object({
+      from: z.string().describe('ISO date'),
+      to: z.string().describe('ISO date, exclusive'),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const blocked = await blockedReason(ctx);
+      if (blocked) return { ok: false, summary: blocked };
+      const from = new Date(`${String(args.from).slice(0, 10)}T00:00:00.000Z`).toISOString();
+      const to = new Date(`${String(args.to).slice(0, 10)}T00:00:00.000Z`).toISOString();
+      const res = await backfillRange(CALENDAR_ACTOR_ID, from, to);
+      const total = res.reduce((n, r) => n + r.upserted, 0);
+      const errs = res.filter((r) => r.error).map((r) => `${r.calendarId}: ${r.error}`);
+      return {
+        ok: errs.length === 0,
+        summary: `Backfilled ${from.slice(0, 10)} → ${to.slice(0, 10)}: ${total} event(s) pulled in.${errs.length ? ` Errors: ${errs.join('; ')}` : ''} Now search again.`,
+        data: res,
       };
     },
   });
