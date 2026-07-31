@@ -13,3 +13,4 @@ export * from './tokens.js';
 export * from './google.js';
 export * from './sync.js';
 export * from './write.js';
+export * from './notes.js';

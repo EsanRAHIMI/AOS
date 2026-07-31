@@ -289,3 +289,95 @@ export function minutesFromMidnight(iso: string, timeZone?: string): number {
   const [h, m] = label.split(':').map(Number);
   return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : 0;
 }
+
+
+/* ----------------------------------------------------- day timeline (D-198) */
+
+export interface DayLane {
+  event: CalEvent;
+  /** Percent of the visible span, so the track scales with the container. */
+  leftPct: number;
+  widthPct: number;
+  /** Row index — overlapping events stack instead of hiding each other. */
+  lane: number;
+}
+
+export interface DayTimeline {
+  /** Visible hour range, snapped outward to whole hours. */
+  fromHour: number;
+  toHour: number;
+  hours: number[];
+  lanes: DayLane[];
+  allDay: CalEvent[];
+  laneCount: number;
+  /** Position of "now" as a percent, or -1 when today is not the day shown. */
+  nowPct: number;
+}
+
+/**
+ * Lay out one day as a horizontal track.
+ *
+ * Two decisions carry it. First, the span is derived from the day's actual
+ * events rather than fixed at 00–24: a day with three afternoon meetings should
+ * not spend two thirds of the screen on an empty night. Second, overlapping
+ * events get their own lane — a vertical column can hide a clash behind a wider
+ * block, and on a timeline the whole point is seeing the clash.
+ */
+export function buildDayTimeline(
+  dayKey: string, events: CalEvent[], now: Date = new Date(),
+): DayTimeline {
+  const ofDay = indexByDay(events).get(dayKey) ?? [];
+  const allDay = ofDay.filter((e) => e.allDay);
+  const timed = ofDay
+    .filter((e) => !e.allDay)
+    .slice()
+    .sort((a, b) => minutesFromMidnight(a.start, a.timeZone) - minutesFromMidnight(b.start, b.timeZone));
+
+  // Default working span; widened by anything outside it, never narrowed.
+  let fromHour = 8;
+  let toHour = 20;
+  for (const e of timed) {
+    const s = minutesFromMidnight(e.start, e.timeZone);
+    const en = s + Math.max(15, durationMinutes(e));
+    fromHour = Math.min(fromHour, Math.floor(s / 60));
+    toHour = Math.max(toHour, Math.ceil(en / 60));
+  }
+  fromHour = Math.max(0, fromHour);
+  toHour = Math.min(24, Math.max(toHour, fromHour + 1));
+
+  const spanMin = (toHour - fromHour) * 60;
+  const pct = (minutes: number) => ((minutes - fromHour * 60) / spanMin) * 100;
+
+  /* Lane assignment: place each event in the first lane whose last event has
+   * already ended. Greedy is correct here because the list is start-sorted. */
+  const laneEnds: number[] = [];
+  const lanes: DayLane[] = timed.map((e) => {
+    const start = minutesFromMidnight(e.start, e.timeZone);
+    const end = start + Math.max(15, durationMinutes(e));
+    let lane = laneEnds.findIndex((endsAt) => endsAt <= start);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(end); }
+    else laneEnds[lane] = end;
+    return {
+      event: e,
+      leftPct: Math.max(0, pct(start)),
+      widthPct: Math.max(1.5, pct(end) - pct(start)),
+      lane,
+    };
+  });
+
+  const isToday = dayKey === todayKey(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const nowPct = isToday && nowMinutes >= fromHour * 60 && nowMinutes <= toHour * 60
+    ? pct(nowMinutes)
+    : -1;
+
+  return {
+    fromHour,
+    toHour,
+    hours: Array.from({ length: toHour - fromHour + 1 }, (_, i) => fromHour + i),
+    lanes,
+    allDay,
+    laneCount: Math.max(1, laneEnds.length),
+    nowPct,
+  };
+}

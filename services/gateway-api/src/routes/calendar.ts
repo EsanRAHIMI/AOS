@@ -14,6 +14,7 @@ import {
   rememberOAuthState, consumeOAuthState,
   CALENDAR_ACTOR_ID, syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
   ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
+  saveEventNote, readEventNotes, deleteEventNote,
   failure, success, ERROR_CODES,
 } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -244,6 +245,41 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
       const purged = await purgeMirror(OWNER);
       return { removed, purged };
     });
+  });
+
+  /* -------------------------------------------------------------- notes */
+  /* Notes live in AOS, never in the Google event (D-198): editing the owner's
+   * description would show the note to every guest and fight the sync mirror.
+   * The trade is stated in the UI — these do not appear on their phone. */
+
+  app.get<{ Querystring: { eventIds?: string } }>('/v1/calendar/notes', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    return handle(reply, async () => ({
+      notes: await readEventNotes(OWNER, String(req.query.eventIds ?? '').split(',').filter(Boolean)),
+    }));
+  });
+
+  app.post<{ Body: { calendarId?: string; eventId?: string; body?: string; noteId?: string } }>(
+    '/v1/calendar/notes',
+    async (req, reply) => {
+      if (!guard(req)) return deny(reply);
+      const eventId = String(req.body?.eventId ?? '');
+      if (!eventId) return failure(ERROR_CODES.VALIDATION, 'eventId is required');
+      return handle(reply, async () => ({
+        note: await saveEventNote({
+          actorId: OWNER,
+          calendarId: String(req.body?.calendarId ?? ''),
+          eventId,
+          body: String(req.body?.body ?? ''),
+          noteId: req.body?.noteId,
+        }),
+      }));
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>('/v1/calendar/notes/:id', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    return handle(reply, async () => ({ deleted: await deleteEventNote(OWNER, req.params.id) }));
   });
 
   /* --------------------------------------------------------------- sync */

@@ -1750,3 +1750,132 @@ button { font: inherit; }
 /* Secondary date — present but never competing with the primary one. */
 .calx-alt { font-size: .72rem; color: var(--muted); }
 .calx-sys { display: inline-flex; gap: 4px; margin-inline-start: 8px; }
+
+/* ------------------------------------------- horizontal day timeline (D-198) */
+
+.daytl { display: flex; flex-direction: column; gap: 14px; }
+
+.daytl-allday {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.daytl-allday-l { font-size: .7rem; color: var(--muted); }
+.daytl-chip {
+  font: inherit; font-size: .76rem; cursor: pointer;
+  padding: 3px 10px; border-radius: 999px; color: var(--fg);
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+}
+.daytl-chip.on { background: rgba(255,255,255,.12); }
+
+/* The track. LTR inside an RTL page: time runs left to right everywhere. */
+.daytl-track { position: relative; padding-top: 22px; }
+
+.daytl-hours { position: relative; height: 18px; }
+.daytl-hour {
+  position: absolute; transform: translateX(-50%);
+  font-size: .68rem; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+
+.daytl-lanes {
+  position: relative; border-radius: 14px;
+  background: rgba(255,255,255,.025);
+  border: 1px solid rgba(255,255,255,.07);
+  overflow: hidden;
+}
+.daytl-gridline {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: rgba(255,255,255,.06);
+}
+
+/* "Now" — the one mark a timeline exists to show. */
+.daytl-now { position: absolute; top: 0; bottom: 0; width: 2px; background: #f87171; z-index: 3; }
+.daytl-now i {
+  position: absolute; top: -4px; left: -3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #f87171; box-shadow: 0 0 8px rgba(248,113,113,.8);
+}
+
+.daytl-block {
+  position: absolute; height: 44px; z-index: 2;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding: 4px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid; text-align: start; overflow: hidden;
+  font: inherit; color: var(--fg);
+  backdrop-filter: saturate(150%) blur(6px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+  transition: transform .14s, box-shadow .14s;
+}
+.daytl-block:hover { transform: translateY(-1px); }
+.daytl-block.on {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.24), 0 0 0 2px rgba(255,255,255,.28);
+}
+.daytl-block-t { font-size: .64rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.daytl-block-s {
+  font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+}
+.daytl-block-n {
+  position: absolute; inset-inline-end: 6px; top: 5px;
+  min-width: 15px; height: 15px; border-radius: 999px;
+  font-size: .6rem; line-height: 15px; text-align: center;
+  background: rgba(255,255,255,.22);
+}
+
+/* -------------------------------------------------------------- detail */
+
+.daytl-detail {
+  padding: 14px 16px; border-radius: 16px;
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.09);
+}
+.daytl-detail header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.daytl-detail h3 { margin: 0; font-size: 1rem; unicode-bidi: plaintext; }
+.daytl-detail-when { font-size: .76rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.daytl-detail-dur { font-size: .7rem; color: var(--muted); }
+
+.daytl-facts { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 10px 0 0; }
+.daytl-facts > div { display: flex; gap: 6px; align-items: baseline; }
+.daytl-facts dt { font-size: .68rem; color: var(--muted); margin: 0; }
+.daytl-facts dd { font-size: .78rem; margin: 0; unicode-bidi: plaintext; }
+
+.daytl-desc {
+  margin: 10px 0 0; font-size: .78rem; color: var(--muted);
+  white-space: pre-wrap; text-align: start; unicode-bidi: plaintext;
+}
+.daytl-links { display: flex; gap: 12px; margin-top: 10px; font-size: .76rem; }
+
+/* --------------------------------------------------------------- notes */
+
+.daytl-notes { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.08); }
+.daytl-notes h4 { margin: 0 0 8px; font-size: .8rem; }
+.daytl-note-empty { font-size: .74rem; color: var(--muted); margin: 0 0 8px; }
+.daytl-notes ul { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.daytl-notes li {
+  padding: 8px 10px; border-radius: 12px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+}
+.daytl-notes li p {
+  margin: 0; font-size: .8rem; white-space: pre-wrap;
+  text-align: start; unicode-bidi: plaintext;
+}
+.daytl-note-m {
+  display: flex; align-items: center; gap: 8px; margin-top: 5px;
+  font-size: .66rem; color: var(--muted);
+}
+.daytl-note-m button {
+  margin-inline-start: auto; background: none; border: 0; cursor: pointer;
+  color: var(--muted); font-size: .95rem; line-height: 1;
+}
+.daytl-note-m button:hover { color: #f87171; }
+
+.daytl-note-new { display: flex; gap: 8px; align-items: flex-end; }
+.daytl-note-new textarea {
+  flex: 1 1 auto; resize: vertical; min-height: 42px;
+  font: inherit; font-size: .8rem; color: var(--fg);
+  padding: 8px 10px; border-radius: 12px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.12);
+  text-align: start; unicode-bidi: plaintext;
+}
+.daytl-note-new textarea:focus { outline: none; border-color: rgba(255,255,255,.28); }
+.daytl-note-note { margin: 8px 0 0; font-size: .66rem; color: var(--muted); }

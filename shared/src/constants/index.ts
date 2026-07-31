@@ -324,6 +324,8 @@ export const COLLECTIONS = {
   CALENDAR_TASKS: 'calendar_tasks',
   /** The owner's calendar list, so we know what exists and what to sync. */
   CALENDARS: 'calendars',
+  /** Owner notes attached to events — ours, never written back to Google. */
+  CALENDAR_NOTES: 'calendar_notes',
   // CIN-2 Living Personal OS (D-180) — proactive heartbeat + owner stream.
   PROACTIVE_EVENTS: 'proactive_events',
   HEARTBEAT_RUNS: 'heartbeat_runs',

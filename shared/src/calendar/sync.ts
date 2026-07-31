@@ -29,6 +29,7 @@ import { COLLECTIONS } from '../constants/index.js';
 import { nowIso } from '../utils/index.js';
 import { googleCall, GoogleApiError, CALENDAR_API, TASKS_API } from './google.js';
 import { getGrant } from './tokens.js';
+import { purgeEventNotes } from './notes.js';
 
 /* ------------------------------------------------------------------ models */
 
@@ -275,7 +276,9 @@ export async function purgeMirror(actorId: string): Promise<{ events: number; ta
     tasksCol().deleteMany({ actorId }),
     calendarsCol().deleteMany({ actorId }),
   ]);
-  await stateCol().deleteMany({ actorId });   // sync tokens belonged to the old account
+  await stateCol().deleteMany({ actorId });   // sync state belonged to the old account
+  // Notes are ours, but they point at events that are about to stop existing.
+  await purgeEventNotes(actorId);
   return {
     events: events.deletedCount ?? 0,
     tasks: tasks.deletedCount ?? 0,

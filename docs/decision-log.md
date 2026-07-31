@@ -4324,3 +4324,40 @@ one history, not a parallel one — carrying the event and calendar ids so a
 follow-up can act without re-deriving which event was meant. The card gets a
 "دربارهٔ این رویداد صحبت کنیم" button. Archiving is best-effort: failing to
 record it must never stop the reminder being shown and spoken.
+
+## D-198 — the day as a horizontal timeline, with notes
+
+**The layout.** A day rendered as a narrow vertical column wastes the axis the
+screen is actually wide in and pushes every detail into a tooltip. Horizontally
+it reads the way people describe a day — left to right, with gaps you can see —
+and each block has room for time, duration and title without opening anything.
+
+Two decisions carry `buildDayTimeline`, and both fail silently if wrong:
+
+- **The span is derived from the day's events**, not fixed at 00–24. Default
+  08–20, widened by anything outside it, never narrowed. A day of three
+  afternoon meetings should not spend two thirds of the screen on empty night;
+  a 06:30 flight must not be clipped off the track.
+- **Overlapping events get their own lane.** A vertical column can hide a clash
+  behind a wider block, and seeing the clash is the entire point of a timeline.
+  Greedy first-fit is correct because the list is start-sorted; a lane is reused
+  the moment its previous event ends.
+
+The track is `dir="ltr"` inside an RTL page: time runs left to right regardless
+of script, and an RTL clock would put 20:00 before 08:00.
+
+**Notes.** The tempting implementation is to append to the Google event's
+description. It is wrong on four counts: it edits the owner's event, every
+guest sees it, it fights the sync mirror on the next pass, and it is impossible
+on a shared calendar the owner cannot write to. So notes are AOS's own layer —
+a `calendar_notes` collection keyed by (actor, calendar, event). A sync that
+rewrites the mirrored event never touches them; deleting one leaves Google
+exactly as it was.
+
+An empty note is treated as a delete rather than stored, because a blank row is
+one the owner cannot see well enough to remove. `author` is recorded so a note
+Jarvis wrote is not mistaken for the owner's. Notes purge with the mirror —
+they must not outlive the account they describe.
+
+**The honest cost, stated in the UI:** these live only in AOS. They are not in
+Google Calendar and will not appear on the owner's phone or for guests.

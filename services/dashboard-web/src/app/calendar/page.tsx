@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { CalendarControls, ConnectButton, CalendarPicker, type CalendarRow } from './controls';
 import { MonthGrid, WeekGrid, Agenda, DayPanel, CalendarNav } from './views';
+import { DayTimeline, type EventNoteView } from './day-timeline';
 import { dateParts, shiftMonth, addDays, todayKey, buildWeek, DEFAULT_CAL_SYSTEM, type CalEvent, type CalView, type CalSystem } from './format';
 import { bidiProps } from '@/lib/rtl';
 
@@ -99,6 +100,12 @@ export default async function CalendarPage({ searchParams }: {
     : [null, null];
 
   const events = (agendaRes?.events ?? []) as unknown as CalEvent[];
+
+  /* Notes only matter where they are shown, and only for events on screen —
+   * one query for the day, not one per event. */
+  const notes: Record<string, EventNoteView[]> = view === 'day' && connected
+    ? ((await gateway.calendarNotes(events.map((e) => e.eventId)).catch(() => null))?.notes ?? {}) as unknown as Record<string, EventNoteView[]>
+    : {};
   const tasks = (tasksRes?.tasks ?? []) as unknown as Task[];
 
   const j = dateParts(anchor, system);
@@ -194,9 +201,10 @@ export default async function CalendarPage({ searchParams }: {
               {view === 'week' && <WeekGrid anchor={anchor} events={events} selected={selected} view={view} system={system} />}
               {/* A day is a week of one column — same hour rail, same blocks,
                 * so there is no second layout to keep in sync. */}
+              {/* A day gets its own layout, not a one-column week: the screen
+                * is wide, and a day read left-to-right shows its gaps. */}
               {view === 'day' && (
-                <WeekGrid anchor={selected} events={events} selected={selected} view={view} system={system}
-                  days={buildWeek(selected, system).filter((d) => d.key === selected)} />
+                <DayTimeline dayKey={selected} events={events} calendars={calendarNames} notes={notes} />
               )}
               {view === 'agenda' && <Agenda anchor={anchor} events={events} selected={selected} view={view} system={system} />}
             </section>

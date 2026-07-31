@@ -391,6 +391,12 @@ export const gateway = {
     call<{ calendarId: string; enabled: boolean; removed: number }>('/v1/calendar/calendars/toggle',
       { method: 'POST', body: JSON.stringify({ calendarId, enabled }) }),
   calendarSync: () => call<{ results: Array<Record<string, unknown>> }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
+  calendarNotes: (eventIds: string[]) => call<{ notes: Record<string, Array<Record<string, unknown>>> }>(
+    `/v1/calendar/notes?eventIds=${encodeURIComponent(eventIds.join(','))}`),
+  calendarSaveNote: (body: { calendarId: string; eventId: string; body: string; noteId?: string }) =>
+    call<{ note: Record<string, unknown> | null }>('/v1/calendar/notes', { method: 'POST', body: JSON.stringify(body) }),
+  calendarDeleteNote: (noteId: string) =>
+    call<{ deleted: boolean }>(`/v1/calendar/notes/${noteId}`, { method: 'DELETE' }),
   calendarAgenda: (from?: string, to?: string) => call<{ events: Array<Record<string, unknown>> }>(
     `/v1/calendar/agenda${from ? `?from=${encodeURIComponent(from)}${to ? `&to=${encodeURIComponent(to)}` : ''}` : ''}`),
   calendarTasks: () => call<{ tasks: Array<Record<string, unknown>> }>('/v1/calendar/tasks'),
