@@ -58,6 +58,25 @@ const KEY = 'owner_preferences';
  * meaningfully handle "preferences unavailable", and a date rendered in the
  * wrong zone is better than a page that fails to render.
  */
+/**
+ * Has the owner ever SAVED preferences, as opposed to running on the shipped
+ * defaults? (D-208)
+ *
+ * `getPreferences` deliberately cannot answer this — it returns defaults for
+ * both cases, which is right for every formatting call site and useless for
+ * readiness. The distinction matters exactly once: an owner in Tehran running
+ * on the default `Asia/Dubai` gets every time wrong by an hour, silently, and
+ * the only signal that anything is off is that they never confirmed it.
+ */
+export async function hasStoredPreferences(): Promise<boolean> {
+  try {
+    return Boolean(await col().findOne({ key: KEY } as never, { projection: { _id: 1 } as never }));
+  } catch {
+    // Unreachable settings store is not evidence of an unconfigured owner.
+    return true;
+  }
+}
+
 export async function getPreferences(): Promise<OwnerPreferences> {
   try {
     const doc = await col().findOne({ key: KEY } as never, { projection: { _id: 0 } as never });

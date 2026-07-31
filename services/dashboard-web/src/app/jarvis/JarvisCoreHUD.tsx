@@ -20,6 +20,7 @@ import { createGargantua3D, type Gargantua3D } from './gargantua3d';
 import { resolveJarvisEnsemble } from './jarvisStage';
 import { createNeuralMeshPainter } from './neuralMesh3d';
 import JarvisBoard from './board/JarvisBoard';
+import HappeningLayer from './HappeningLayer';
 import { UtteranceGate } from '@/lib/utteranceGate';
 import { bidiProps } from '@/lib/rtl';
 import { subscribeJarvisPresence } from '@/lib/jarvisPresence';
@@ -433,6 +434,11 @@ export default function JarvisCoreHUD() {
       <canvas ref={canvasRef} className="jarvis-live-canvas" />
       <canvas ref={glCanvasRef} className="jarvis-gl-canvas" aria-label="سیاه‌چاله سه‌بعدی" />
       <canvas ref={frontCanvasRef} className="jarvis-mesh-front-canvas" aria-hidden />
+      {/* D-208 — the live happening feed. Sits ABOVE the canvases (so cards are
+          readable over the singularity) and BELOW the telemetry, and is
+          pointer-transparent except on its own cards, so the black hole keeps
+          its drag and the board keeps its pan. */}
+      <HappeningLayer />
       <div className="jarvis-telem" aria-label="system telemetry">
         <TelemCell slot="mode" label="MODE" cell={telem?.mode} />
         <TelemCell slot="loop" label="LOOP" cell={telem?.loop} />

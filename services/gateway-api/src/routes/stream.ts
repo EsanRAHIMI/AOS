@@ -16,6 +16,7 @@
 import {
   ESAN_USER_ID, failure, success, ERROR_CODES,
   runHeartbeatOnce, listProactiveEvents, setProactiveEventStatus, lastHeartbeat,
+  listHappenings, HappeningCategory, assessReadiness,
 } from '@factory/shared';
 import type { HeartbeatActor } from '@factory/shared';
 import type { FastifyInstance } from '@factory/service-kit';
@@ -71,6 +72,51 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
     return ok ? success({ eventId: id, status }) : reply.code(404).send(failure(ERROR_CODES.NOT_FOUND, `event ${id} not found`));
   });
 
+  /* ---------------------------- happening feed ---------------------------- */
+
+  /**
+   * The owner-facing feed of everything that actually happened (D-208).
+   *
+   * A projection, not a log: see shared/src/happenings for why this reads the
+   * governed ledger instead of adding a write path of its own. `afterIso`
+   * makes it incremental so the stage can poll cheaply if SSE is unavailable.
+   */
+  app.get('/v1/jarvis/happenings', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const q = req.query as { afterIso?: string; limit?: string; categories?: string };
+    const categories = q.categories
+      ? q.categories.split(',').map((c) => c.trim()).filter(Boolean)
+      : undefined;
+    // A bad category name is a client bug, not a reason to serve a silently
+    // narrower feed — fail loudly rather than showing the owner less.
+    const parsed = categories?.map((c) => HappeningCategory.safeParse(c));
+    const bad = categories?.find((_, i) => !parsed?.[i]?.success);
+    if (bad) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, `unknown category '${bad}'`));
+    const items = await listHappenings(actorFor(req), {
+      afterIso: q.afterIso,
+      limit: q.limit ? Number(q.limit) : undefined,
+      categories: categories as never,
+    });
+    return success({ happenings: items, generatedAt: new Date().toISOString() });
+  });
+
+  /**
+   * What the system still needs from the owner (D-208).
+   *
+   * Read-only and derived entirely from stored state, so it is safe to poll
+   * and impossible to get wrong by being stale — a gap that has been fixed
+   * simply stops being reported on the next call.
+   */
+  app.get('/v1/jarvis/readiness', async (req, reply) => {
+    if (!guard(req)) return deny(reply);
+    const gaps = await assessReadiness(actorFor(req), process.env);
+    return success({
+      gaps,
+      blocking: gaps.filter((g) => g.severity === 'blocking').length,
+      generatedAt: new Date().toISOString(),
+    });
+  });
+
   /* --------------------------- the owner stream --------------------------- */
 
   app.get('/v1/stream/owner', async (req, reply) => {
@@ -88,9 +134,10 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
     };
 
     // Presence snapshot: last pulse + currently open proactive events.
-    const [last, open] = await Promise.all([
+    const [last, open, recent] = await Promise.all([
       lastHeartbeat(actor),
       listProactiveEvents(actor, { limit: 20 }),
+      listHappenings(actor, { limit: 60 }),
     ]);
     send('presence', {
       at: new Date().toISOString(),
@@ -98,6 +145,16 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
       openEvents: open.length,
     });
     for (const e of [...open].reverse()) send('proactive', e);
+
+    /* D-208 — the backlog arrives as ONE frame, not 60 `happening` events.
+     * Streaming them individually would make the stage animate the last hour
+     * of history at the owner on every reconnect; a snapshot renders settled
+     * and only genuinely new cards get the surface-and-dock animation. */
+    send('happenings.snapshot', { items: recent });
+    let happeningCursor = recent[0]?.at ?? new Date().toISOString();
+    // Ids already sent, so a row whose `at` ties the cursor is never repeated.
+    // Bounded to the snapshot window — anything older cannot come back.
+    let seenIds = new Set(recent.map((h) => h.happeningId));
 
     // Live fan-out: poll Mongo for events newer than the cursor. 2.5s cadence,
     // ping every 15s so proxies keep the socket open. Client (EventSource)
@@ -113,6 +170,26 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
       try {
         const fresh = await listProactiveEvents(actor, { afterIso: cursor, limit: 20 });
         for (const e of [...fresh].reverse()) { send('proactive', e); cursor = e.createdAt > cursor ? e.createdAt : cursor; }
+
+        /* Happenings tick on the same 2.5s beat. The cursor is inclusive-safe:
+         * we ask for rows at-or-after it and drop ids we already sent, because
+         * a turn and its first tool call routinely share a millisecond and an
+         * exclusive `$gt` would silently swallow the second one. */
+        const nextHappenings = await listHappenings(actor, { afterIso: happeningCursor, limit: 40 });
+        const unseen = nextHappenings.filter((h) => !seenIds.has(h.happeningId));
+        for (const h of [...unseen].reverse()) {
+          send('happening', h);
+          if (h.at > happeningCursor) happeningCursor = h.at;
+        }
+        if (unseen.length) {
+          for (const h of unseen) seenIds.add(h.happeningId);
+          // Keep the dedupe set from growing without bound on a long-lived
+          // connection: only ids at the current cursor can still collide.
+          if (seenIds.size > 400) {
+            seenIds = new Set([...nextHappenings, ...unseen].filter((h) => h.at >= happeningCursor).map((h) => h.happeningId));
+          }
+        }
+
         if (Date.now() - lastPing > 15_000) { send('ping', { at: new Date().toISOString() }); lastPing = Date.now(); }
       } catch {
         break; // DB hiccup — end the stream; the client reconnects.

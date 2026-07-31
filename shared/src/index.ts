@@ -92,4 +92,10 @@ export * from './settings/index.js';
 export * from './heartbeat/index.js';
 // CIN-2b Autonomous Living Loop (D-181) — durable observe→reason→act cycles
 export * from './livingloop/index.js';
+// D-208 — the owner-facing happening feed: a READ-SIDE projection of the
+// governed ledger, never a second write path. See shared/src/happenings.
+export * from './happenings/index.js';
+// D-208 — what the OWNER has not supplied yet, one line each. Distinct from
+// capability_gaps, which is what the KERNEL lacked while doing its own work.
+export * from './happenings/readiness.js';
 export * from './calendar/index.js';

@@ -163,3 +163,76 @@ Sessions: `POST/GET /sessions`, `GET /sessions/:id`. Turns:
 via `LLM_MODEL_*`; no hardcoded model IDs. Health check:
 `node scripts/model-health-check.mjs`. Missing cloud keys never disable
 personal state, memory, missions, or local tools.
+
+## 9. The happening stage (D-208)
+
+`/jarvis` is no longer only a presence visual. Above the board and the
+singularity sits the **happening layer**: one card per thing that actually
+happened, animated into a tree.
+
+### The feed is a projection
+
+`shared/src/happenings/index.ts` derives the feed from rows the kernel already
+writes under governance — it has **no write path of its own**:
+
+| source collection | becomes |
+|---|---|
+| `jarvis_session_turns` | `owner_said` (root) + `jarvis_replied` (child of it) |
+| `tool_invocations` | `tool_ran` / `tool_blocked`, child of the turn via `runId → turnId` |
+| `agent_approval_checkpoints` | `approval`, child of the turn |
+| `proactive_events` | `noticed` (root) |
+| `loop_cycles` | `loop_cycle` (root) |
+
+A card exists **iff** its governed row exists. A tool call with no run is an
+autonomous action and stays a root, because that is the card most worth
+noticing.
+
+Categories are the owner's words, not module names — `calendar`, `tasks`,
+`memory`, `personal`, `knowledge`, `trust`, `system`, `dialogue` — mapped from
+tool-name prefixes, so a new tool needs no table entry and an unmapped one
+shows as `system` rather than being dropped.
+
+### The three places a card can be
+
+1. **Focus** — it just happened; full size, centre stage.
+2. **Flight** — dwell expired; it animates to its destination, measured with
+   `getBoundingClientRect` at departure so it lands correctly after any reflow.
+3. **Settled** — nested under its parent card, or in its category pile.
+
+Dwell is `3.2s + 5.2s × weight`. **A card with `status:'waiting'` (a pending
+approval, weight 1) never departs on its own** — the system is stopped on a
+human and the animation must not carry that away. With
+`prefers-reduced-motion`, cards appear directly in their settled place.
+
+### Transport
+
+`GET /v1/jarvis/happenings?afterIso=&limit=&categories=` for polling, and two
+frames on the existing owner SSE (`/v1/stream/owner`):
+
+- `happenings.snapshot` — the backlog as ONE frame; renders settled, so a
+  reconnect never replays the last hour as news.
+- `happening` — one new card, animated.
+
+The incremental cursor is **inclusive** (`$gte`): a turn and its first tool
+call routinely share a millisecond, and an exclusive cursor silently dropped
+one of them. Clients dedupe on `happeningId`, which is derived from the source
+row and therefore stable across reconnects. At equal timestamps roots sort
+ahead of children, so a child is never briefly rendered as a root.
+
+## 10. Readiness gaps (D-208)
+
+`GET /v1/jarvis/readiness` — what the **owner** has not supplied yet, one line
+each. Distinct from `capability_gaps`, which is what the **kernel** lacked
+while doing its own work; that one is fixed by writing code, this one by
+connecting an account or answering a question.
+
+Every gap carries a `consequence` (what the system cannot do while it exists)
+and exactly one `action` with an `href`. Checks are grounded in real absent
+state and **silent when satisfied** — the healthy output is `[]`. Current
+checks: model provider, calendar (not connected / not synced / all disabled —
+three distinct states with three distinct fixes), no missions, empty memory,
+unconfirmed preferences.
+
+Rendered pinned to the top of the settled column on `/jarvis`, above the
+scrolling history: a standing condition that scrolled away is a condition
+nobody ever fixes.

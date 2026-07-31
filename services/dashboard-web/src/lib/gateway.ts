@@ -418,6 +418,17 @@ export const gateway = {
   loopTick: () => call<{ resumed: number; ingested: number; processed: number }>('/v1/loop/tick', { method: 'POST', body: '{}' }),
   loopDecision: (cycleId: string, action: 'approve' | 'reject') =>
     call<{ cycleId: string; status: string }>(`/v1/loop/cycles/${cycleId}/decision`, { method: 'POST', body: JSON.stringify({ action }) }),
+  // --- D-208 happening feed + owner readiness ---
+  /** What the system still needs FROM THE OWNER, one line each. */
+  jarvisReadiness: () => call<{
+    gaps: Array<{
+      gapId: string; severity: 'blocking' | 'limiting' | 'info';
+      category: string; title: string; consequence: string; action: string; href: string | null;
+    }>;
+    blocking: number;
+    generatedAt: string;
+  }>('/v1/jarvis/readiness'),
+
   loopReplay: (inboxId: string) => call<{ inboxId: string }>(`/v1/loop/inbox/${inboxId}/replay`, { method: 'POST', body: '{}' }),
   loopRequeue: (inboxId: string) => call<{ inboxId: string }>(`/v1/loop/inbox/${inboxId}/requeue`, { method: 'POST', body: '{}' }),
 };

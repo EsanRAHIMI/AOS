@@ -136,6 +136,30 @@ export interface JarvisTelemetryView {
 }
 
 /** Real kernel reads for the four HUD corner panels — never invented numbers. */
+/* ===================== D-208 — owner readiness gaps ====================== */
+
+export interface ReadinessGapView {
+  gapId: string;
+  severity: 'blocking' | 'limiting' | 'info';
+  category: string;
+  title: string;
+  consequence: string;
+  action: string;
+  href: string | null;
+}
+
+/**
+ * What the system still needs from the owner.
+ *
+ * Returns `[]` — never a placeholder gap — when the kernel is unreachable.
+ * Inventing "connect your calendar" because the gateway timed out would send
+ * the owner to fix something that is not broken.
+ */
+export async function readinessAction(): Promise<ReadinessGapView[]> {
+  const r = await gateway.jarvisReadiness();
+  return (r?.gaps ?? []) as ReadinessGapView[];
+}
+
 export async function jarvisTelemetryAction(sessionId?: string | null): Promise<JarvisTelemetryView> {
   const [intel, inbox, cycles, sessions, approvals] = await Promise.all([
     gateway.jarvisIntelligenceStatus(),

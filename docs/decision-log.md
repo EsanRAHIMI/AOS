@@ -4834,3 +4834,112 @@ against a different writer (this system's own just-confirmed write) unless
 the two are told apart explicitly. "Newer" is not always about the clock — a
 write's echo of itself is authoritative regardless of what timestamp it
 carries.
+
+## D-208 — a stage that showed a system, not what it was doing
+
+The owner's report was blunt: Jarvis "has limited access to my information and
+my calendar, is very badly coded, and is not practical, active or alive." The
+first two halves of that sentence turned out to be about different things, and
+only one of them was true of the code.
+
+**Access was not the problem.** The calendar tool family is eight tools deep
+(agenda, next, find, list, create, update, delete, diagnose), Memory v2 is
+live, missions are live, personal state is live. What the owner could not do
+was SEE any of it happening. `/jarvis` was a WebGL singularity, a neural cage
+and an infinite board whose cards are SUBSYSTEMS — "memory", "missions",
+"loop" — each showing a count. Nothing on that page ever said *a thing just
+happened*. So a system doing real work looked identical to a system doing
+nothing, which is exactly what "not alive" describes.
+
+**The directive.** "Every happening gets a card. If that new card belongs
+under earlier cards, then after a few seconds it must go under its parent.
+All of it summarised, user-friendly, categorisable, animated, on this same
+stage."
+
+### The projection, and why it is not a new collection
+
+The obvious build is a `happenings` collection every subsystem writes to as it
+works. That design fails in one specific way: it drifts. A feed written by a
+second code path will eventually show a card for something the governed ledger
+never recorded, or miss something it did — and the owner would be watching a
+story about the system rather than the system.
+
+So `shared/src/happenings` is a READ-SIDE PROJECTION over rows the kernel
+already writes under governance: `jarvis_session_turns`, `tool_invocations`,
+`agent_approval_checkpoints`, `proactive_events`, `loop_cycles`. Nothing in
+the module writes. A card exists iff its governed row exists.
+
+The parent-child structure the owner asked for was already in the data and had
+simply never been read: an invocation knows its `runId`, a run knows its
+`turnId`. One batched `runId → turnId` lookup per page turns a flat ledger
+into the tree. A tool call with no run is an autonomous action and stays a
+ROOT — burying that under someone else's card would hide the single most
+important kind of card on the stage.
+
+### Three bugs found by writing the contract tests, not by running it
+
+1. **The cursor could skip a card.** A turn and its first tool call are
+   routinely written in the same millisecond. With an exclusive `$gt` cursor,
+   whichever sorted first advanced the cursor past the other and the second
+   card was never delivered — silently, with no error anywhere. The cursor is
+   now inclusive (`$gte`) and callers dedupe on the stable `happeningId`,
+   which is why that id is derived from the source row rather than generated.
+2. **A child could render as a root and then jump.** At equal timestamps the
+   sort tiebreak was the id, so `hp_tool_…` sorted above `hp_said_…` and the
+   client saw the child before its parent existed. Roots now sort ahead of
+   children at the same instant.
+3. **Reconnects replayed history as news.** Streaming the backlog as 60
+   individual `happening` events would animate the last hour at the owner
+   every time the socket dropped. The backlog is now ONE
+   `happenings.snapshot` frame, which renders settled; only genuinely new
+   cards get the surface→dwell→dock animation.
+
+### Dwell is proportional to consequence
+
+A memory read and a pending approval are not equally worth the owner's eye, so
+they do not get equal time in focus: dwell is `3.2s + 5.2s × weight`. A
+pending approval carries weight 1 and `status: 'waiting'`, and the stage reads
+that as **never departs on its own**. The one card where the system is stopped
+waiting on a human is the one card an animation must never carry away.
+
+The flight itself is measured (`getBoundingClientRect` at departure), not
+scripted. A hardcoded path desynchronises the moment the rail reflows or a
+pile grows, and a card landing *next to* its destination reads as a bug rather
+than a flourish.
+
+### Readiness gaps — the other half of the request
+
+"If something is incomplete or missing, explain it simply so I can add it."
+`shared/src/happenings/readiness.ts` answers that, and is deliberately NOT the
+existing `capability_gaps` surface: that records what the KERNEL lacked while
+doing its own work and is fixed by writing code. This records what the OWNER
+has not supplied and is fixed by connecting an account or answering a
+question. Different audience, different fix, no merge.
+
+Four rules keep it from becoming nagging — which is the real failure mode,
+because a report that lists what a "good setup" has trains the owner to ignore
+it, and then the one gap that mattered is ignored with the rest:
+
+- Grounded: reported only from real absent state, never from a wish list.
+- One sentence of consequence: what the system cannot do while it exists. A
+  gap with no consequence is not a check.
+- One action, and where to take it. "Configure your environment" is not one.
+- Silent when satisfied. The healthy output of the module is `[]`.
+
+The calendar checks distinguish three states that a single "calendar not
+connected" would have conflated, each with a different fix: no grant, a grant
+whose first sync has not completed, and every calendar switched off — which is
+a DECISION the owner made (D-205), not a fault. Telling them to reconnect a
+working account would be worse than saying nothing.
+
+Preferences needed a new seam: `getPreferences` returns defaults for both "the
+owner chose this" and "the owner never looked", which is right for every
+formatting call site and useless here. `hasStoredPreferences` separates them,
+so an owner in Tehran silently running the shipped `Asia/Dubai` default — one
+hour wrong on every time the system states or records — finally gets told.
+
+**The general rule this leaves behind:** a system that does real work still
+looks dead if its surface only shows aggregate state. Counts describe a
+system; cards describe what it is doing. And a feed that is a projection of
+the governed ledger cannot lie about either, which is why the projection was
+worth more than the write path it replaced.

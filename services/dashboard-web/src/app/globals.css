@@ -1918,3 +1918,279 @@ button { font: inherit; }
 }
 
 .prefs-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* ==========================================================================
+ * Happening layer (D-208) — every happening is a card; a child card flies
+ * under its parent after its dwell. See app/jarvis/HappeningLayer.tsx.
+ *
+ * Layout law: this sits ON the /jarvis stage, above the board and canvases,
+ * and it must never swallow the pointer. Only the cards, piles and buttons
+ * take events; the layer itself is transparent to the black hole's drag and
+ * to the board's pan/zoom underneath.
+ * ========================================================================== */
+
+/* z-index 3 is deliberate and sits between two existing layers:
+ *   ABOVE .jboard-cards (2) and both canvases, so a card is readable over the
+ *   singularity instead of being clipped by it;
+ *   BELOW .jboard-panel (6) and, being earlier in DOM at the same z as
+ *   .jarvis-telem (3), below the telemetry — the four corner readouts must
+ *   never be covered by a passing card.
+ * The padding keeps clear of all four telemetry cells (top pad+~60px,
+ * bottom-safe+88px plus their own height), which is why it is this large. */
+.hp-layer {
+  position: absolute; inset: 0; z-index: 3;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: 190px 1fr minmax(280px, 25vw);
+  grid-template-areas: 'rail focus settled';
+  gap: 14px;
+  padding: calc(var(--jarvis-pad) + 78px) var(--jarvis-pad)
+           calc(var(--jarvis-bottom-safe) + 156px);
+  align-items: stretch;
+  font-size: 12.5px;
+}
+.hp-layer > * { pointer-events: auto; }
+
+/* --------------------------------- rail --------------------------------- */
+
+.hp-rail {
+  grid-area: rail;
+  display: flex; flex-direction: column; gap: 6px;
+  align-self: start; max-height: 100%; overflow-y: auto;
+  scrollbar-width: thin;
+}
+.hp-rail-head { display: flex; align-items: center; gap: 6px; padding: 0 4px 4px; }
+.hp-rail-title { font-size: 10px; letter-spacing: 1px; color: var(--muted-2); }
+.hp-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted-2); flex: none;
+}
+.hp-live-dot.is-live { background: var(--ok); box-shadow: 0 0 8px rgba(69, 224, 168, .8); animation: hp-breathe 2.6s var(--ease) infinite; }
+@keyframes hp-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+.hp-pile {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  border-right: 2px solid var(--hp-accent, var(--border-2));
+  background: rgba(8, 12, 22, .58);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  color: var(--muted); font: inherit; text-align: right; cursor: pointer;
+  transition: border-color .25s var(--ease), color .25s var(--ease), background .25s var(--ease);
+}
+.hp-pile:hover { color: var(--text); border-color: var(--border-2); }
+.hp-pile.is-open { color: var(--text); background: rgba(20, 26, 42, .78); border-color: var(--hp-accent, var(--accent)); }
+.hp-pile-label { font-size: 11.5px; }
+.hp-pile-count { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted-2); }
+
+/* Category accents — the same families the board's orbits use, so a card
+ * means the same colour wherever the owner sees it. */
+.hp-pile--dialogue,  .hp-card--dialogue  { --hp-accent: #ffd68c; }
+.hp-pile--calendar,  .hp-card--calendar  { --hp-accent: #6ea8ff; }
+.hp-pile--tasks,     .hp-card--tasks     { --hp-accent: #9ba0ff; }
+.hp-pile--memory,    .hp-card--memory    { --hp-accent: #6ecdff; }
+.hp-pile--personal,  .hp-card--personal  { --hp-accent: #7ee7a8; }
+.hp-pile--knowledge, .hp-card--knowledge { --hp-accent: #5adcff; }
+.hp-pile--trust,     .hp-card--trust     { --hp-accent: #ffbe60; }
+.hp-pile--system,    .hp-card--system    { --hp-accent: #b0bed8; }
+
+/* -------------------------------- cards --------------------------------- */
+
+.hp-card {
+  border: 1px solid var(--border);
+  border-right: 2px solid var(--hp-accent, var(--border-2));
+  border-radius: var(--r-sm);
+  background: rgba(8, 12, 22, .72);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 5px;
+  box-shadow: var(--shadow);
+}
+.hp-card-head { display: flex; align-items: center; gap: 7px; }
+.hp-kind { font-size: 10px; letter-spacing: .6px; color: var(--muted-2); }
+.hp-time { margin-inline-start: auto; font-size: 10px; color: var(--muted-2); font-variant-numeric: tabular-nums; }
+.hp-title { font-size: 12.5px; line-height: 1.55; color: var(--text); unicode-bidi: plaintext; }
+.hp-detail {
+  font-size: 11.5px; line-height: 1.6; color: var(--muted); unicode-bidi: plaintext;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 1px; }
+.hp-cat { font-size: 10px; color: var(--muted-2); }
+.hp-link { font-size: 10.5px; color: var(--accent); text-decoration: none; margin-inline-start: auto; }
+.hp-link:hover { text-decoration: underline; }
+
+.hp-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--muted-2); }
+.hp-dot--ok { background: var(--ok); }
+.hp-dot--failed, .hp-dot--denied { background: var(--err); }
+.hp-dot--waiting { background: var(--warn); box-shadow: 0 0 8px rgba(255, 193, 77, .7); }
+.hp-dot--running { background: var(--accent); animation: hp-breathe 1.4s var(--ease) infinite; }
+
+.hp-badge {
+  font-size: 9.5px; padding: 2px 7px; border-radius: var(--r-pill);
+  border: 1px solid var(--border); color: var(--muted);
+}
+.hp-badge--ok { color: var(--ok); border-color: rgba(69, 224, 168, .35); }
+.hp-badge--failed, .hp-badge--denied { color: var(--err); border-color: rgba(255, 107, 129, .35); }
+.hp-badge--waiting { color: var(--warn); border-color: rgba(255, 193, 77, .45); }
+.hp-badge--running { color: var(--accent); border-color: rgba(110, 168, 255, .4); }
+
+/* -------------------------------- focus --------------------------------- */
+
+.hp-focus {
+  grid-area: focus;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  gap: 10px; pointer-events: none;
+  /* The singularity lives behind this column; leave its centre visible. */
+  padding-top: 4vh;
+}
+.hp-focus > * { pointer-events: auto; }
+
+.hp-card--focus {
+  width: min(380px, 100%);
+  background: rgba(10, 14, 26, .88);
+  border-color: var(--border-2);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, .03);
+  animation: hp-arrive .5s var(--ease) both;
+  /* `transform` is set inline at launch; `will-change` keeps the flight on
+   * the compositor so a busy stage never drops the animation to a jump. */
+  will-change: transform, opacity;
+}
+.hp-card--focus[data-weight='high'] {
+  border-color: var(--hp-accent, var(--accent-2));
+  box-shadow: var(--shadow-lg), 0 0 24px -6px var(--hp-accent, var(--accent-2));
+}
+@keyframes hp-arrive {
+  from { opacity: 0; transform: translateY(14px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The flight. Duration MUST stay in step with FLIGHT_MS in HappeningLayer. */
+.hp-card--flying {
+  transition: transform .9s cubic-bezier(.55, .06, .32, 1), opacity .9s ease-in;
+  animation: none;
+  pointer-events: none;
+}
+
+/* ------------------------------- settled -------------------------------- */
+
+.hp-settled {
+  grid-area: settled;
+  display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto; scrollbar-width: thin;
+  padding-inline-end: 2px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.hp-empty {
+  font-size: 11.5px; line-height: 1.8; color: var(--muted-2);
+  padding: 12px; border: 1px dashed var(--border); border-radius: var(--r-sm);
+  margin: 0;
+}
+
+.hp-group { position: relative; display: flex; flex-direction: column; }
+/* A group whose root is currently in focus/flight: hold the space so the
+ * column does not jump when the card lands, but show nothing yet. */
+.hp-group.is-placeholder > .hp-card { opacity: .25; }
+
+.hp-card--root { animation: hp-settle .45s var(--ease) both; }
+@keyframes hp-settle {
+  from { opacity: 0; transform: scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+
+.hp-nest-toggle {
+  display: flex; align-items: center; gap: 6px; margin-top: 4px;
+  padding: 4px 8px; border-radius: var(--r-pill);
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font: inherit; font-size: 10.5px; cursor: pointer;
+  align-self: flex-start;
+  transition: color .2s var(--ease), border-color .2s var(--ease);
+}
+.hp-nest-toggle:hover { color: var(--text); border-color: var(--border-2); }
+.hp-nest-count {
+  font-variant-numeric: tabular-nums; font-weight: 700;
+  color: var(--hp-accent, var(--accent));
+}
+
+/* Collapsed nest — stacked slabs peeking out under the parent, so a card that
+ * carries children looks like it does before anyone clicks. */
+.hp-stack { display: flex; flex-direction: column; align-items: stretch; padding: 0 6px; }
+.hp-stack-slab {
+  height: 3px; margin-top: 2px; border-radius: 0 0 4px 4px;
+  background: var(--hp-accent, var(--border-2)); opacity: .5;
+}
+.hp-stack-slab:nth-child(2) { margin-inline: 5px; opacity: .32; }
+.hp-stack-slab:nth-child(3) { margin-inline: 10px; opacity: .2; }
+
+.hp-children {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 6px 12px 2px 0; padding-inline-end: 10px;
+  border-inline-end: 1px solid var(--border);
+  animation: hp-fan .28s var(--ease) both;
+}
+@keyframes hp-fan {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+.hp-card--child { background: rgba(8, 12, 22, .58); padding: 8px 10px; }
+
+/* ------------------------------ responsive ------------------------------ */
+
+@media (max-width: 1180px) {
+  .hp-layer {
+    grid-template-columns: 150px 1fr;
+    grid-template-areas: 'rail focus' 'settled settled';
+    grid-template-rows: 1fr auto;
+  }
+  .hp-settled { max-height: 34vh; }
+}
+@media (max-width: 780px) {
+  .hp-layer {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'rail' 'focus' 'settled';
+    grid-template-rows: auto 1fr auto;
+    padding: calc(var(--jarvis-pad) + 44px) 12px calc(var(--jarvis-bottom-safe) + 88px);
+  }
+  .hp-rail { flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 6px; }
+  .hp-rail-head { display: none; }
+  .hp-pile { flex: none; }
+  .hp-settled { max-height: 30vh; }
+  .hp-card--focus { width: 100%; }
+}
+
+/* Motion off: no arrival, no flight, no pulse — the same cards, held still. */
+@media (prefers-reduced-motion: reduce) {
+  .hp-card--focus, .hp-card--root, .hp-children { animation: none; }
+  .hp-card--flying { transition: none; }
+  .hp-live-dot.is-live, .hp-dot--running { animation: none; }
+}
+
+/* Readiness gaps (D-208) — standing conditions, not happenings. Pinned to the
+ * top of the settled column so a gap can never scroll out of the owner's
+ * sight; it leaves only when the underlying check passes. */
+.hp-gaps {
+  flex: none;
+  border: 1px solid rgba(255, 193, 77, .32);
+  border-radius: var(--r-sm);
+  background: rgba(24, 18, 8, .72);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.hp-gaps-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 11px; border: 0; background: transparent;
+  color: var(--text); font: inherit; font-size: 11.5px; cursor: pointer; text-align: right;
+}
+.hp-gaps-title { flex: 1; }
+.hp-gaps-chevron { color: var(--muted-2); font-size: 10px; }
+.hp-gaps-list { list-style: none; margin: 0; padding: 0 11px 10px; display: flex; flex-direction: column; gap: 10px; }
+.hp-gap { display: flex; flex-direction: column; gap: 3px; padding-top: 9px; border-top: 1px solid var(--border); }
+.hp-gap:first-child { border-top: 0; padding-top: 0; }
+.hp-gap-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.hp-gap-title { font-size: 11.5px; color: var(--text); unicode-bidi: plaintext; }
+.hp-gap-why { margin: 0; font-size: 11px; line-height: 1.7; color: var(--muted); unicode-bidi: plaintext; }
+/* The action is the point of the whole panel — it gets the only bright text. */
+.hp-gap-do {
+  margin: 0; font-size: 11px; line-height: 1.7; color: var(--warn);
+  unicode-bidi: plaintext;
+}

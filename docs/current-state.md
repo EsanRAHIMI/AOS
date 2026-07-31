@@ -3,7 +3,7 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-19 · covers commits `ad8aa69` (D-177) → CIN-1 first slice (D-179)._
+_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-208 (happening stage + readiness gaps)._
 
 > **NEW NORTH STAR (2026-07-19):** the founder's **CIN v2** proposal
 > (`docs/CIN v2.pdf`) is the adopted post-K2 direction — see
@@ -33,6 +33,23 @@ _Last updated: 2026-07-19 · covers commits `ad8aa69` (D-177) → CIN-1 first sl
 > Owner activation state (2026-07-19): K1 auth seeded on Atlas
 > (`FACTORY_OWNER_*`), genesis entities live on Atlas,
 > `ScopeFieldsSchema.tenantId` accepts explicit null.
+
+> **D-208 (2026-07-31) — the stage shows what the system is DOING.**
+> `/jarvis` gained a **happening layer**: one card per real happening, with
+> children animating under their parent after a weight-proportional dwell.
+> The feed is a READ-SIDE PROJECTION (`shared/src/happenings/`) over
+> `jarvis_session_turns` + `tool_invocations` + `agent_approval_checkpoints` +
+> `proactive_events` + `loop_cycles` — **no new write path**, so a card exists
+> iff its governed row does. Transport: `GET /v1/jarvis/happenings` plus
+> `happenings.snapshot` / `happening` frames on the existing
+> `/v1/stream/owner` SSE. Also `GET /v1/jarvis/readiness` +
+> `shared/src/happenings/readiness.ts` — what the OWNER still has to supply,
+> each gap with one consequence and one action, silent when satisfied.
+> New seam: `hasStoredPreferences()` separates "chose this" from "never
+> looked". 24 new contract tests (15 happenings + 9 readiness).
+> **Suites after D-208: shared 471 pass / 6 skipped, gateway 254 pass,
+> dashboard 13 files pass; shared + gateway + dashboard all typecheck clean.**
+> Still NOT product-verified in a browser with a real model — see the banner.
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build
