@@ -793,6 +793,33 @@ export async function readTasks(actorId: string, opts: { includeCompleted?: bool
   });
 }
 
+/**
+ * Find mirrored events by title, ignoring the date range and the enabled flag.
+ *
+ * Every other read is deliberately narrow — a month view has no business
+ * pulling a year. This one is deliberately wide, because it exists to answer
+ * "where did it go?", and each of those filters is a place an event can hide.
+ */
+export async function findEvents(
+  actorId: string, q: string, limit = 20,
+): Promise<CalendarEvent[]> {
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  // Escaped: a title with a bracket in it must not become a broken regex.
+  const safe = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const docs = await eventsCol()
+    .find(
+      { actorId, account, summary: { $regex: safe, $options: 'i' } } as never,
+      { projection: { _id: 0 } as never },
+    )
+    .sort({ start: 1 })
+    .limit(Math.min(limit, 50))
+    .toArray();
+  return docs.map((d) => {
+    const ev = CalendarEventSchema.parse(d);
+    return { ...ev, description: plainText(ev.description), location: plainText(ev.location) };
+  });
+}
+
 export async function syncStates(actorId: string): Promise<SyncState[]> {
   const docs = await stateCol().find({ actorId }, { projection: { _id: 0 } as never }).toArray();
   return docs.map((d) => SyncStateSchema.parse(d));

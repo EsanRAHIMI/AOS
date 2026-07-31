@@ -60,11 +60,6 @@ function connectMessage(code: string): { tone: 'err' | 'ok'; title: string; deta
   return { tone: 'err', title: 'اتصال ناموفق بود', detail: code };
 }
 
-/** The day a day-view shows: the selection if valid, else the anchor. */
-function selectedOrAnchor(sel: string | undefined, anchor: string): string {
-  return /^\d{4}-\d{2}-\d{2}$/.test(sel ?? '') ? sel! : anchor;
-}
-
 type Task = { taskId: string; title: string; due: string; status: string; notes: string; createdByAos: boolean };
 
 export default async function CalendarPage({ searchParams }: {
@@ -82,13 +77,26 @@ export default async function CalendarPage({ searchParams }: {
   /* Gregorian unless asked otherwise (D-197): it is what Google, invitations
    * and everyone the owner works with use. */
   const system: CalSystem = sp.cal === 'jalali' ? 'jalali' : DEFAULT_CAL_SYSTEM;
-  const anchor = /^\d{4}-\d{2}-\d{2}$/.test(sp.day ?? '') ? sp.day! : todayKey();
-  const selected = /^\d{4}-\d{2}-\d{2}$/.test(sp.sel ?? '') ? sp.sel! : anchor;
+  const rawAnchor = /^\d{4}-\d{2}-\d{2}$/.test(sp.day ?? '') ? sp.day! : todayKey();
+  const rawSelected = /^\d{4}-\d{2}-\d{2}$/.test(sp.sel ?? '') ? sp.sel! : rawAnchor;
+
+  /* In the day view the anchor and the selection ARE the same day (D-199b).
+   *
+   * They drifted apart: paging in month view sets `day` to the 1st of the
+   * month (that is what `shiftMonth` does), while `sel` keeps the day you had
+   * chosen. Switching to the day view then left the URL saying
+   * `day=2026-07-01&sel=2026-07-31` — the header, the arrows and the fetch
+   * window all followed the anchor, so the owner was paging around 1 July
+   * while looking for something on the 31st and concluding it had never been
+   * created. A view of one day has exactly one day; there is nothing for a
+   * second variable to mean. */
+  const anchor = view === 'day' ? rawSelected : rawAnchor;
+  const selected = view === 'day' ? rawSelected : rawSelected;
 
   /* Fetch exactly the window the current view needs — the mirror is local, but
    * a month view has no business pulling a year of rows into the page. */
   const window = view === 'day'
-    ? { from: selectedOrAnchor(sp.sel, anchor), to: addDays(selectedOrAnchor(sp.sel, anchor), 1) }
+    ? { from: selected, to: addDays(selected, 1) }
     : view === 'week'
       ? { from: buildWeek(anchor, system)[0].key, to: addDays(buildWeek(anchor, system)[6].key, 1) }
       : view === 'agenda'

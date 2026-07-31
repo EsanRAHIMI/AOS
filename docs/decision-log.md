@@ -4453,3 +4453,40 @@ block-level newlines are applied. The owner's exact string now renders as
 ```
 
 and that exact string is a test, so it cannot regress quietly.
+
+## D-199b — the day view was anchored on a different day
+
+The owner: "what happened to the event I asked for, and why can't I see it?"
+
+**What the log proves.** Every request in it returned 200, and the URL was
+
+```
+/calendar?view=day&day=2026-07-01&sel=2026-07-31
+```
+
+Two different days in one day view. `shiftMonth` lands on the 1st of the month
+— correct for paging months — so paging in the month view sets `day` to the
+1st while `sel` keeps the day you had chosen. Switching to the day view then
+left the header, the arrows and the fetch window following the anchor while the
+selection said otherwise. The owner was paging around 1 July looking for
+something on the 31st.
+
+**Fix.** A view of one day has exactly one day; there is nothing for a second
+variable to mean. In `view=day` the anchor IS the selection, and the arrows
+move both — otherwise stepping changes the header while the content stays put.
+
+**What the log cannot prove, and the tool that now can.** Whether the event
+reached Google is not visible from HTTP logs: Jarvis writes through the shared
+tool in-process, not through a route. Worse, every read was scoped to a date
+range AND to enabled calendars, so an event on the wrong day, in a calendar
+that is switched off, or outside the synced window (one month back, three
+forward) was indistinguishable from one that was never created.
+
+`calendar_find_event` searches all mirrored events by title with none of those
+filters. It answers the question with evidence, and its negative is explicit:
+"not there — either never created, in a calendar that is not synced, or outside
+the window. Say this plainly; do not guess that it exists."
+
+**Two smaller fixes on the way.** The fake DB gained `$regex`/`$options`, and a
+profile test asserting "دیروز" against a hard-coded date had aged into a
+failure — a relative assertion needs a relative fixture.

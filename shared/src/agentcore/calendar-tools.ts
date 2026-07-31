@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { AgentToolRegistry, type ToolResult } from './registry.js';
 import {
   readAgenda, readTasks, listCalendars, classifyWrite,
-  createEvent, updateEvent, createTask, getGrant, ensureAosCalendar, CALENDAR_ACTOR_ID,
+  createEvent, updateEvent, createTask, getGrant, ensureAosCalendar, findEvents, CALENDAR_ACTOR_ID,
   type CalendarEvent, type CalendarRef,
 } from '../calendar/index.js';
 
@@ -236,6 +236,42 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
         return `${describe(e, names)}\n  starts in ${mins} minute(s)`;
       });
       return { ok: true, summary: lines.join('\n'), data: events };
+    },
+  });
+
+  /**
+   * Find an event by name, anywhere in the mirror (D-199b).
+   *
+   * Written because the owner asked "what happened to the event I told you to
+   * add, and why can't I see it?" and neither of us could answer: reads were
+   * scoped to a date range, so an event on the wrong day, in a calendar that
+   * is switched off, or in a month outside the sync window was simply
+   * invisible. A search that ignores all three answers the question directly —
+   * including the useful negative, "it is not there".
+   */
+  registry.register({
+    definition: def('calendar_find_event',
+      'Search ALL mirrored events by title, ignoring date range and whether the calendar is enabled. Use when the owner asks where an event went or whether one was really created.'),
+    inputSchema: z.object({
+      q: z.string().min(1).describe('part of the title, case-insensitive'),
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const blocked = await blockedReason(ctx);
+      if (blocked) return { ok: false, summary: blocked };
+      const found = await findEvents(CALENDAR_ACTOR_ID, String(args.q), Number(args.limit ?? 20));
+      if (!found.length) {
+        return {
+          ok: true,
+          summary: `No mirrored event matches "${args.q}". It was either never created, created in a calendar that is not synced, or created outside the synced window (one month back, three forward). Say this plainly — do not guess that it exists.`,
+        };
+      }
+      const names = await calendarNames(CALENDAR_ACTOR_ID);
+      return {
+        ok: true,
+        summary: `${found.length} match(es):\n${found.map((e) => describe(e, names)).join('\n')}`,
+        data: found,
+      };
     },
   });
 

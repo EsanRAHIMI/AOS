@@ -260,3 +260,46 @@ describe('calendar writes are callable, and gated where it actually matters', ()
     expect(out).toContain('REACHED_GOOGLE');
   });
 });
+
+/**
+ * D-199b — "what happened to the event I asked for?"
+ *
+ * Neither of us could answer, because every read was scoped to a date range
+ * and to enabled calendars. An event on the wrong day, in a calendar switched
+ * off, or outside the synced window was simply invisible — indistinguishable
+ * from never having been created. This search removes all three filters, so
+ * the answer is evidence instead of a guess, including the useful negative.
+ */
+describe('calendar_find_event', () => {
+  it('finds an event outside the date range every other read is scoped to', async () => {
+    await connect();
+    await seedEvent({ eventId: 'far', summary: 'آپدیت AOS', start: '2027-01-05T09:00:00.000Z', end: '2027-01-05T10:00:00.000Z' });
+    const res = await buildCoreToolFamilies().get('calendar_find_event')!.executor({ q: 'آپدیت' }, ctx);
+    expect(res.ok).toBe(true);
+    expect(res.summary).toContain('آپدیت AOS');
+  });
+
+  it('matches case-insensitively on part of the title', async () => {
+    await connect();
+    await seedEvent({ eventId: 'x', summary: 'Weekly AOS Review' });
+    const res = await buildCoreToolFamilies().get('calendar_find_event')!.executor({ q: 'aos rev' }, ctx);
+    expect(res.summary).toContain('Weekly AOS Review');
+  });
+
+  it('says plainly that nothing matched, and names the three places it could be hiding', async () => {
+    await connect();
+    await seedEvent();
+    const res = await buildCoreToolFamilies().get('calendar_find_event')!.executor({ q: 'چیزی که وجود ندارد' }, ctx);
+    expect(res.summary).toContain('No mirrored event matches');
+    expect(res.summary).toContain('not synced');
+    expect(res.summary).toContain('do not guess');
+  });
+
+  it('treats a title with regex characters as text, not as a pattern', async () => {
+    await connect();
+    await seedEvent({ eventId: 'r', summary: 'Review (Q3) [draft]' });
+    const res = await buildCoreToolFamilies().get('calendar_find_event')!.executor({ q: '(Q3)' }, ctx);
+    expect(res.ok).toBe(true);
+    expect(res.summary).toContain('Review (Q3)');
+  });
+});

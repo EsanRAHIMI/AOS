@@ -245,7 +245,11 @@ describe('direction follows the content, not the page', () => {
 
 describe('attestations and technical disclosure', () => {
   it('explains a claim and marks a revoked one', () => {
-    const ok = html(<AttestationRow claim={{ claimId: 'c1', claimType: 'identity_verified', issuerEntityId: 'cin_ent_gov', issuedAt: '2026-07-29T10:00:00.000Z' }} />);
+    /* The date is relative to NOW, so a hard-coded one silently ages into a
+     * failure: this asserted "دیروز" against a fixture that had drifted to two
+     * days old. A relative assertion needs a relative fixture. */
+    const yesterday = new Date(Date.now() - 26 * 3_600_000).toISOString();
+    const ok = html(<AttestationRow claim={{ claimId: 'c1', claimType: 'identity_verified', issuerEntityId: 'cin_ent_gov', issuedAt: yesterday }} />);
     expect(ok).toContain('هویت شما تأیید شده است');
     expect(ok).toContain('دیروز');
 

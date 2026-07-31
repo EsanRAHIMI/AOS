@@ -252,9 +252,13 @@ export function CalendarNav({
   return (
     <div className="calx-nav">
       <div className="calx-nav-when">
-        <Link href={href(view, prev, selected, system)} className="calx-arrow" aria-label="قبلی">‹</Link>
+        {/* Stepping a day must move the selection too, or the arrows change
+          * the header while the content stays put (D-199b). */}
+        <Link href={href(view, prev, view === 'day' ? prev : selected, system)}
+          className="calx-arrow" aria-label="قبلی">‹</Link>
         <strong>{title}</strong>
-        <Link href={href(view, next, selected, system)} className="calx-arrow" aria-label="بعدی">›</Link>
+        <Link href={href(view, next, view === 'day' ? next : selected, system)}
+          className="calx-arrow" aria-label="بعدی">›</Link>
         <Link href={href(view, todayKey(), todayKey(), system)} className="calx-today">امروز</Link>
       </div>
 

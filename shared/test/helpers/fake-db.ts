@@ -29,6 +29,12 @@ function matches(doc: Doc, filter: Doc | undefined): boolean {
           else if (op === '$lt') { if (!(String(value ?? '') < String(arg))) return false; }
           else if (op === '$gte') { if (!(String(value ?? '') >= String(arg))) return false; }
           else if (op === '$lte') { if (!(String(value ?? '') <= String(arg))) return false; }
+          else if (op === '$regex') {
+            // Mongo's own semantics: `$options: 'i'` sits alongside `$regex`.
+            const flags = String((cond as Record<string, unknown>).$options ?? '');
+            if (!new RegExp(String(arg), flags).test(String(value ?? ''))) return false;
+          }
+          else if (op === '$options') { /* consumed by $regex above */ }
           else throw new Error(`fake-db: unsupported operator ${op} on ${key} — extend the fake`);
         }
         continue;
