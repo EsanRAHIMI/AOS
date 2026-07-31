@@ -12,7 +12,7 @@
  * notes are written. Notes are AOS's own layer (see `shared/src/calendar/notes.ts`);
  * they are never written into the Google event.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { bidiProps } from '@/lib/rtl';
 import { saveNoteAction, deleteNoteAction } from './notes-action';
 import {
@@ -44,7 +44,28 @@ export function DayTimeline({
   calendars: Record<string, string>;
   notes: Record<string, EventNoteView[]>;
 }) {
-  const t = buildDayTimeline(dayKey, events);
+  /**
+   * "Now" is client-only, on purpose (D-198c).
+   *
+   * The server rendered the marker at 50.9804% and the browser hydrated it at
+   * 51.17647% — the two machines simply read the clock at different instants.
+   * No amount of rounding fixes that; the value is *supposed* to differ. So the
+   * layout is computed without a clock, and the marker is added after mount,
+   * where there is nothing to reconcile against.
+   *
+   * It then ticks, which is what a "now" line is for. Thirty seconds is well
+   * under one pixel of drift on a twelve-hour track.
+   */
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // EPOCH keeps the server and the first client render byte-identical: same
+  // input, same output, no clock involved.
+  const t = buildDayTimeline(dayKey, events, new Date(nowMs ?? 0));
   const [selected, setSelected] = useState<string>(t.lanes[0]?.event.eventId ?? '');
   const [notes, setNotes] = useState(initialNotes);
   const [draft, setDraft] = useState('');
@@ -112,8 +133,9 @@ export function DayTimeline({
               style={{ left: `${(i / (t.hours.length - 1)) * 100}%` }} />
           ))}
 
-          {/* Where you are in the day — the one thing a timeline must show. */}
-          {t.nowPct >= 0 && (
+          {/* Where you are in the day — the one thing a timeline must show.
+            * Absent until mounted, so there is no server value to disagree with. */}
+          {nowMs !== null && t.nowPct >= 0 && (
             <span className="daytl-now" style={{ left: `${t.nowPct}%` }}>
               <i />
             </span>
@@ -207,6 +229,12 @@ export function DayTimeline({
                  * `auto` is also the right behaviour: a note may be Persian or
                  * a pasted English link, and the browser picks per content. */
                 dir="auto"
+                /* A browser extension rewrites this element's `dir` before
+                 * React loads — `inpage.js` is in the hydration stack. We
+                 * cannot stop it and it changes nothing that matters, so the
+                 * mismatch is declared expected rather than left as noise that
+                 * would hide a real one. */
+                suppressHydrationWarning
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="یادداشتی برای این رویداد بنویسید…"

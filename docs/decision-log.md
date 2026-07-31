@@ -4388,3 +4388,35 @@ briefing is computed on demand per page load rather than cached.
 **Not an error at all:** the `FSTWRN004` errorHandler warning is Fastify
 noticing the gateway sets an error handler twice in one scope, and the
 `inpage.js` frames in the stack are a browser extension, not our code.
+
+## D-198c — the hydration mismatch was the clock, not the direction
+
+The fuller error named two attributes. Only one was mine, and it was the one I
+had not looked at.
+
+```
+<span className="daytl-now" style={{
++  left: "51.17647058823529%"   // client
+-  left: "50.9804%"             // server
+}}>
+```
+
+The now-marker was computed during render. The server read the clock at one
+instant and the browser hydrated milliseconds later, so the two values differ —
+and are *supposed* to differ. Rounding would only make the collision less
+frequent, not impossible; the value is genuinely time-dependent, and
+time-dependent UI cannot be server-rendered.
+
+**Fix.** `buildDayTimeline` is handed `new Date(0)` on the server, so the same
+input always yields the same output and the geometry is a pure function of the
+day's events. The marker itself is rendered only once `nowMs` is set in an
+effect — after mount, where there is nothing to reconcile against. It then
+ticks every 30 seconds, which is what a "now" line is for and well under a
+pixel of drift on a twelve-hour track. Two tests pin it: identical geometry at
+any clock, and no marker at the epoch.
+
+**The second attribute was not ours.** The textarea's `dir` is rewritten by a
+browser extension before React loads — `inpage.js` frames are in the hydration
+stack. `suppressHydrationWarning` declares that mismatch expected, so it stops
+masking real ones. Suppressing a warning you have not diagnosed is how the
+clock bug hid behind it for a turn.

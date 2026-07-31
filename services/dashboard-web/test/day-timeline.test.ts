@@ -91,3 +91,31 @@ describe('buildDayTimeline', () => {
     expect(t.hours.length).toBeGreaterThan(1);
   });
 });
+
+/**
+ * D-198c — the hydration mismatch was the clock.
+ *
+ * The server rendered the now-marker at 50.9804% and the browser hydrated it at
+ * 51.17647%: two machines reading the clock milliseconds apart. Rounding does
+ * not fix a value that is meant to differ. The layout must therefore be
+ * clock-independent, and the marker is added only after mount.
+ */
+describe('the layout does not depend on the clock', () => {
+  const events = [ev('a', '10:00', '11:00'), ev('b', '10:30', '12:00')];
+
+  it('produces identical geometry whenever it is rendered', () => {
+    const first = buildDayTimeline(DAY, events, new Date(`${DAY}T09:00:00Z`));
+    const later = buildDayTimeline(DAY, events, new Date(`${DAY}T17:43:11Z`));
+
+    expect(later.fromHour).toBe(first.fromHour);
+    expect(later.toHour).toBe(first.toHour);
+    expect(later.laneCount).toBe(first.laneCount);
+    expect(later.lanes.map((l) => [l.leftPct, l.widthPct, l.lane]))
+      .toEqual(first.lanes.map((l) => [l.leftPct, l.widthPct, l.lane]));
+  });
+
+  it('draws no now-marker for the epoch, which is what the server renders with', () => {
+    // The server is handed `new Date(0)` precisely so its output is a constant.
+    expect(buildDayTimeline(DAY, events, new Date(0)).nowPct).toBe(-1);
+  });
+});
