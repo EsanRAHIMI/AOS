@@ -18,16 +18,18 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { upcomingForAlertsAction } from '@/app/calendar/alerts-action';
-import { dueAlerts, pruneFired, type AlertEvent } from './eventAlerts';
+import { dueAlerts, pruneFired, alertKey, type AlertEvent } from './eventAlerts';
 import { alertSentence } from './speech';
 
 const POLL_MS = 60_000;
 const STORAGE_KEY = 'aos.jarvis.eventAlerts';
-const LEAD_KEY = 'aos.jarvis.eventAlertsLead';
+const LEAD_KEY = 'aos.jarvis.eventAlertsFallbackLead';
 
 export interface LiveAlert {
   eventId: string;
+  calendarId: string;
   minutes: number;
+  lead: number;
   title: string;
   sentence: string;
   start: string;
@@ -37,6 +39,11 @@ export interface LiveAlert {
 export interface UseEventAlerts {
   enabled: boolean;
   setEnabled: (on: boolean) => void;
+  /**
+   * Fallback only (D-197). An event that carries its own Google notification
+   * settings is announced on ITS schedule; this is what an event using the
+   * calendar's defaults gets, because Google does not expose those per event.
+   */
   leadMinutes: number;
   setLeadMinutes: (m: number) => void;
   /** The most recent announcement, for the on-screen card. */
@@ -46,7 +53,11 @@ export interface UseEventAlerts {
   next: AlertEvent | null;
 }
 
-export function useEventAlerts(speak: (text: string) => void): UseEventAlerts {
+export function useEventAlerts(
+  speak: (text: string) => void,
+  /** Called for every announcement so it can be archived in the conversation. */
+  onAnnounce?: (alert: LiveAlert, event: AlertEvent) => void,
+): UseEventAlerts {
   const [enabled, setEnabledState] = useState(false);
   const [leadMinutes, setLeadState] = useState(10);
   const [alert, setAlert] = useState<LiveAlert | null>(null);
@@ -55,6 +66,8 @@ export function useEventAlerts(speak: (text: string) => void): UseEventAlerts {
   const firedRef = useRef<Set<string>>(new Set());
   const speakRef = useRef(speak);
   speakRef.current = speak;
+  const onAnnounceRef = useRef(onAnnounce);
+  onAnnounceRef.current = onAnnounce;
   const leadRef = useRef(leadMinutes);
   leadRef.current = leadMinutes;
 
@@ -102,17 +115,21 @@ export function useEventAlerts(speak: (text: string) => void): UseEventAlerts {
       // Announce the imminent one only. Two voices over each other is worse
       // than one missed reminder, and the rest are still coming.
       const first = due[0];
-      firedRef.current.add(first.event.eventId);
+      firedRef.current.add(alertKey(first.event.eventId, first.lead));
       const sentence = alertSentence(first.event, first.minutes);
-      setAlert({
+      const live: LiveAlert = {
         eventId: first.event.eventId,
+        calendarId: String(first.event.calendarId ?? ''),
         minutes: first.minutes,
+        lead: first.lead,
         title: first.event.summary || 'رویداد',
         sentence,
         start: String(first.event.start ?? ''),
         at: now,
-      });
+      };
+      setAlert(live);
       speakRef.current(sentence);
+      onAnnounceRef.current?.(live, first.event);
     };
 
     void tick();

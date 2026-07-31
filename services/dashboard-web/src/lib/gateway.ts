@@ -65,6 +65,9 @@ export const gateway = {
   jarvisTurn: (sessionId: string, text: string, transport: 'text' | 'voice' = 'text') =>
     call<{ turnId: string; runId: string | null; status: string; replyText: string; pendingApprovalId: string | null; reasoningMode: string }>(
       `/v1/jarvis/sessions/${sessionId}/turns`, { method: 'POST', body: JSON.stringify({ text, transport }) }),
+  /** Archive an unprompted announcement as a real turn (D-197). */
+  jarvisAnnounce: (sessionId: string, body: { trigger: string; text: string; eventId?: string; calendarId?: string }) =>
+    call<{ turnId: string }>(`/v1/jarvis/sessions/${sessionId}/announce`, { method: 'POST', body: JSON.stringify(body) }),
   jarvisApprovalDecision: (approvalId: string, runId: string, action: 'approve' | 'reject', reason?: string) =>
     call<{ status: string; replyText: string; pendingApprovalId: string | null }>(
       `/v1/jarvis/loop-approvals/${approvalId}/decision`, { method: 'POST', body: JSON.stringify({ action, runId, reason }) }),

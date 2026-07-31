@@ -198,3 +198,37 @@ export async function compactSession(actor: SessionActor, sessionId: string, opt
   await sessions().updateOne({ sessionId }, { $set: { rollingSummary: folded, updatedAt: nowIso() } });
   return { folded: toFold.length };
 }
+
+/**
+ * Archive something Jarvis said on its own initiative (D-197).
+ *
+ * A calendar alert is a real utterance: the owner heard it, and their next
+ * sentence is usually about it — "این رویداد رو نیم ساعت عقب بنداز", "لینکش
+ * رو بده". Before this it lived only in a React state variable, so the moment
+ * it was dismissed the conversation had no idea it had ever happened and the
+ * follow-up landed on an assistant with amnesia.
+ *
+ * Written as a completed turn so it flows through the same transcript builder
+ * as everything else — one history, not a second parallel one. The `userText`
+ * is the trigger, phrased so a later turn reads it as context rather than as
+ * something the owner typed.
+ */
+export async function recordAnnouncement(
+  actor: SessionActor,
+  sessionId: string,
+  args: { trigger: string; text: string; eventId?: string; calendarId?: string },
+): Promise<JarvisSessionTurn | null> {
+  const session = await getJarvisSession(actor, sessionId);
+  if (!session) return null;
+
+  const turn = await beginTurn(actor, sessionId, args.trigger, 'voice');
+  await completeTurn(turn.turnId, {
+    replyText: args.text,
+    status: 'completed',
+    stopReason: 'completed',
+    /* Carried so a follow-up can act without re-deriving which event this was:
+     * "نیم ساعت عقب بنداز" needs an id, not a title. */
+    sourceIds: [args.calendarId ?? '', args.eventId ?? ''].filter(Boolean),
+  });
+  return { ...turn, replyText: args.text, status: 'completed' };
+}

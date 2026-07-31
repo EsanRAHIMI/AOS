@@ -104,11 +104,12 @@ describe('week view', () => {
 
 describe('month navigation', () => {
   it('moves a whole Jalali month and lands on day 1', () => {
-    const next = shiftMonth('2026-07-31', 1);
+    // Gregorian is the default now (D-197), so the Jalali behaviour is asked for.
+    const next = shiftMonth('2026-07-31', 1, 'jalali');
     expect(toJalali(next).day).toBe(1);
     expect(toJalali(next).month).toBe(6);
 
-    const prev = shiftMonth('2026-07-31', -1);
+    const prev = shiftMonth('2026-07-31', -1, 'jalali');
     expect(toJalali(prev).day).toBe(1);
     expect(toJalali(prev).month).toBe(4);
   });

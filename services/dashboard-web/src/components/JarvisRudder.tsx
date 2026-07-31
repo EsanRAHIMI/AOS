@@ -25,6 +25,7 @@ import { JarvisConversation, type ConversationState } from '@/components/JarvisC
 import { bidiProps } from '@/lib/rtl';
 import { useVoice } from '@/lib/useVoice';
 import { useEventAlerts } from '@/lib/useEventAlerts';
+import { archiveAlertAction } from '@/app/calendar/announce-action';
 
 const BRIEFING_REFRESH_MS = 120_000;
 
@@ -83,7 +84,10 @@ export function JarvisRudder({ role }: { role: string }) {
    * conversation, because it must keep working while the panel is closed —
    * that is the entire point of a reminder. */
   const voice = useVoice({ lang: 'fa-IR', onFinal: () => undefined });
-  const alerts = useEventAlerts(voice.speak);
+  const alerts = useEventAlerts(voice.speak, (a) => {
+    // Archive it as a turn so "نیم ساعت عقب بنداز" has something to refer to.
+    void archiveAlertAction({ text: a.sentence, eventId: a.eventId, calendarId: a.calendarId, title: a.title });
+  });
 
   const nextLabel = (() => {
     if (!alerts.enabled || !alerts.next?.start) return '';
@@ -107,8 +111,15 @@ export function JarvisRudder({ role }: { role: string }) {
             <strong {...bidiProps(alerts.alert.title)}>{alerts.alert.title}</strong>
             <span className="jrud-alert-when">
               {alerts.alert.minutes <= 0 ? 'همین حالا شروع می‌شود' : `${alerts.alert.minutes} دقیقهٔ دیگر`}
+              {alerts.alert.start && ` · ${new Date(alerts.alert.start).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}`}
             </span>
+            {/* The spoken sentence carries the detail; showing it verbatim
+              * keeps screen and voice identical. It is plain text — Google's
+              * HTML descriptions are stripped at the sync boundary now. */}
             <p {...bidiProps(alerts.alert.sentence)}>{alerts.alert.sentence}</p>
+            <button type="button" className="jrud-alert-ask" onClick={() => setOpen(true)}>
+              دربارهٔ این رویداد صحبت کنیم
+            </button>
           </div>
           <button type="button" className="jrud-alert-x" onClick={alerts.dismiss} aria-label="بستن">×</button>
         </div>

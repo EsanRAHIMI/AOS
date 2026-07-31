@@ -1736,3 +1736,17 @@ button { font: inherit; }
   color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 2px 4px;
 }
 .jrud-alert-x:hover { color: var(--fg); }
+
+/* The alert's follow-up affordance (D-197): the reminder is archived in the
+ * conversation, so acting on it is one click, not a retyped question. */
+.jrud-alert-ask {
+  margin-top: 8px; padding: 4px 10px; border-radius: 999px;
+  font: inherit; font-size: .72rem; cursor: pointer;
+  color: #a7f3d0; background: rgba(52,211,153,.10);
+  border: 1px solid rgba(52,211,153,.34);
+}
+.jrud-alert-ask:hover { background: rgba(52,211,153,.18); }
+
+/* Secondary date — present but never competing with the primary one. */
+.calx-alt { font-size: .72rem; color: var(--muted); }
+.calx-sys { display: inline-flex; gap: 4px; margin-inline-start: 8px; }

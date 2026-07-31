@@ -28,7 +28,7 @@ import {
   ERROR_CODES, failure, success, genId,
   buildCoreToolFamilies, type AgentToolRegistry,
   runJarvisTurn, resumeJarvisApproval, type SessionActor,
-  createJarvisSession, getJarvisSession, listJarvisSessions, listSessionTurns,
+  createJarvisSession, getJarvisSession, listJarvisSessions, listSessionTurns, recordAnnouncement,
   getAgentLoopRun, listAgentLoopSteps, cancelAgentLoop,
   listMemories, correctMemory, pinMemory, deleteMemory,
   modelRegistryFromEnv, probeModelProvider,
@@ -89,6 +89,29 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
     const session = await createJarvisSession(actorFor(req), { title: req.body?.title }, publish);
     return success(session);
   });
+
+  /**
+   * Archive an announcement Jarvis made on its own (D-197) — today, a calendar
+   * alert. It becomes a real turn so the transcript, and therefore the next
+   * reply, knows it happened. Without this the owner says "نیم ساعت عقب
+   * بنداز" to an assistant that never mentioned anything.
+   */
+  app.post<{ Params: { id: string }; Body: { trigger?: string; text?: string; eventId?: string; calendarId?: string } }>(
+    '/v1/jarvis/sessions/:id/announce',
+    async (req, reply) => {
+      if (!guard(req)) return deny(reply);
+      const text = String(req.body?.text ?? '').trim();
+      if (!text) return failure(ERROR_CODES.VALIDATION, 'text is required');
+      const turn = await recordAnnouncement(actorFor(req), req.params.id, {
+        trigger: String(req.body?.trigger ?? 'یادآوری خودکار تقویم'),
+        text,
+        eventId: req.body?.eventId,
+        calendarId: req.body?.calendarId,
+      });
+      if (!turn) return failure(ERROR_CODES.NOT_FOUND, 'session not found');
+      return success(turn);
+    },
+  );
 
   app.get('/v1/jarvis/sessions', async (req, reply) => {
     if (!guard(req)) return deny(reply);

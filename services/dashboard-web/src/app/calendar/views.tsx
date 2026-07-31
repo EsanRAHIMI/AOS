@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { bidiProps } from '@/lib/rtl';
 import {
-  WEEKDAY_FA, buildMonthGrid, buildWeek, indexByDay, toJalali, timeLabel,
+  WEEKDAY_FA, buildMonthGrid, buildWeek, indexByDay, dateParts, toJalali, toGregorian, timeLabel,
   calendarHue, durationMinutes, minutesFromMidnight, todayKey,
-  type CalEvent, type CalView, type GridDay,
+  DEFAULT_CAL_SYSTEM,
+  type CalEvent, type CalView, type CalSystem, type GridDay,
 } from './format';
 
 /**
@@ -18,9 +19,11 @@ import {
  * linkable, back/forward works, and there is no client store to desynchronise.
  */
 
-function href(view: CalView, day: string, selected?: string): string {
+function href(view: CalView, day: string, selected?: string, system?: CalSystem): string {
   const p = new URLSearchParams({ view, day });
   if (selected) p.set('sel', selected);
+  // Only in the URL when it is not the default — a clean link for the common case.
+  if (system && system !== DEFAULT_CAL_SYSTEM) p.set('cal', system);
   return `/calendar?${p.toString()}`;
 }
 
@@ -38,11 +41,11 @@ function chip(e: CalEvent): React.CSSProperties {
 /* ------------------------------------------------------------------ month */
 
 export function MonthGrid({
-  anchor, events, selected, view,
+  anchor, events, selected, view, system = DEFAULT_CAL_SYSTEM,
 }: {
-  anchor: string; events: CalEvent[]; selected: string; view: CalView;
+  anchor: string; events: CalEvent[]; selected: string; view: CalView; system?: CalSystem;
 }) {
-  const grid = buildMonthGrid(anchor);
+  const grid = buildMonthGrid(anchor, system);
   const byDay = indexByDay(events);
 
   return (
@@ -56,7 +59,7 @@ export function MonthGrid({
           return (
             <Link
               key={d.key}
-              href={href(view, anchor, d.key)}
+              href={href(view, anchor, d.key, system)}
               className={[
                 'calx-cell',
                 d.inMonth ? '' : 'out',
@@ -67,7 +70,9 @@ export function MonthGrid({
             >
               <span className="calx-cell-h">
                 <span className="calx-j">{d.jalali.day}</span>
-                <span className="calx-g" dir="ltr">{d.gDay}</span>
+                {/* The other calendar, quietly. Iranian working life runs on
+                  * both, and converting in your head is a tax. */}
+                <span className="calx-g" dir="ltr">{d.alt?.day ?? d.gDay}</span>
               </span>
               <span className="calx-cell-body">
                 {list.slice(0, 3).map((e) => (
@@ -91,11 +96,12 @@ export function MonthGrid({
 const HOUR_PX = 44;
 
 export function WeekGrid({
-  anchor, events, selected, view,
+  anchor, events, selected, view, system = DEFAULT_CAL_SYSTEM, days,
 }: {
   anchor: string; events: CalEvent[]; selected: string; view: CalView;
+  system?: CalSystem; days?: GridDay[];
 }) {
-  const week = buildWeek(anchor);
+  const week = days ?? buildWeek(anchor, system);
   const byDay = indexByDay(events);
 
   return (
@@ -103,7 +109,7 @@ export function WeekGrid({
       <div className="calx-week-head">
         <span className="calx-gutter" />
         {week.map((d) => (
-          <Link key={d.key} href={href(view, anchor, d.key)}
+          <Link key={d.key} href={href(view, anchor, d.key, system)}
             className={`calx-week-day${d.isToday ? ' today' : ''}${d.key === selected ? ' sel' : ''}`}>
             <b>{WEEKDAY_FA[(new Date(`${d.key}T12:00:00Z`).getDay() + 1) % 7]}</b>
             <span>{d.jalali.day} {d.jalali.monthName}</span>
@@ -145,8 +151,8 @@ export function WeekGrid({
 
 /* ----------------------------------------------------------------- agenda */
 
-export function Agenda({ events, selected, anchor, view }: {
-  events: CalEvent[]; selected: string; anchor: string; view: CalView;
+export function Agenda({ events, selected, anchor, view, system = DEFAULT_CAL_SYSTEM }: {
+  events: CalEvent[]; selected: string; anchor: string; view: CalView; system?: CalSystem;
 }) {
   const byDay = indexByDay(events);
   const days = [...byDay.keys()].sort();
@@ -159,10 +165,10 @@ export function Agenda({ events, selected, anchor, view }: {
   return (
     <div className="calx-agenda">
       {days.map((key) => {
-        const j = toJalali(key);
+        const j = dateParts(key, system);
         return (
           <div key={key} className={`calx-aday${key === today ? ' today' : ''}`}>
-            <Link href={href(view, anchor, key)} className="calx-aday-h">
+            <Link href={href(view, anchor, key, system)} className="calx-aday-h">
               <b>{j.day} {j.monthName}</b>
               <span dir="ltr">{key}</span>
             </Link>
@@ -186,10 +192,11 @@ export function Agenda({ events, selected, anchor, view }: {
 
 /* -------------------------------------------------------------- day panel */
 
-export function DayPanel({ dayKey, events, calendars }: {
-  dayKey: string; events: CalEvent[]; calendars?: Record<string, string>;
+export function DayPanel({ dayKey, events, calendars, system = DEFAULT_CAL_SYSTEM }: {
+  dayKey: string; events: CalEvent[]; calendars?: Record<string, string>; system?: CalSystem;
 }) {
-  const j = toJalali(dayKey);
+  const j = dateParts(dayKey, system);
+  const alt = system === 'jalali' ? toGregorian(dayKey) : toJalali(dayKey);
   const list = (indexByDay(events).get(dayKey) ?? []);
   const weekday = WEEKDAY_FA[(new Date(`${dayKey}T12:00:00Z`).getDay() + 1) % 7];
 
@@ -197,7 +204,7 @@ export function DayPanel({ dayKey, events, calendars }: {
     <section className="cal-glass calx-day">
       <header className="calx-day-h">
         <h2>{weekday} {j.day} {j.monthName} {j.year}</h2>
-        <span dir="ltr">{dayKey}</span>
+        <span className="calx-alt">{alt.day} {alt.monthName} {alt.year}</span>
       </header>
 
       {list.length === 0 ? (
@@ -237,24 +244,36 @@ export function DayPanel({ dayKey, events, calendars }: {
 /* ------------------------------------------------------------- navigation */
 
 export function CalendarNav({
-  view, anchor, prev, next, selected, title,
+  view, anchor, prev, next, selected, title, system = DEFAULT_CAL_SYSTEM,
 }: {
   view: CalView; anchor: string; prev: string; next: string; selected: string; title: string;
+  system?: CalSystem;
 }) {
   return (
     <div className="calx-nav">
       <div className="calx-nav-when">
-        <Link href={href(view, prev, selected)} className="calx-arrow" aria-label="قبلی">‹</Link>
+        <Link href={href(view, prev, selected, system)} className="calx-arrow" aria-label="قبلی">‹</Link>
         <strong>{title}</strong>
-        <Link href={href(view, next, selected)} className="calx-arrow" aria-label="بعدی">›</Link>
-        <Link href={href(view, todayKey(), todayKey())} className="calx-today">امروز</Link>
+        <Link href={href(view, next, selected, system)} className="calx-arrow" aria-label="بعدی">›</Link>
+        <Link href={href(view, todayKey(), todayKey(), system)} className="calx-today">امروز</Link>
       </div>
 
       <div className="calx-views" role="tablist">
-        {([['month', 'ماه'], ['week', 'هفته'], ['agenda', 'فهرست']] as Array<[CalView, string]>).map(([v, label]) => (
-          <Link key={v} href={href(v, anchor, selected)} className={`calx-view${v === view ? ' on' : ''}`}
+        {([['month', 'ماه'], ['week', 'هفته'], ['day', 'روز'], ['agenda', 'فهرست']] as Array<[CalView, string]>).map(([v, label]) => (
+          <Link key={v} href={href(v, anchor, selected, system)} className={`calx-view${v === view ? ' on' : ''}`}
             aria-selected={v === view} role="tab">{label}</Link>
         ))}
+      </div>
+
+      {/* Calendar system. Two links, not a dropdown: it is a binary choice and
+        * the current one should be readable without opening anything. */}
+      <div className="calx-sys" role="tablist" aria-label="تقویم">
+        <Link href={href(view, anchor, selected, 'gregorian')}
+          className={`calx-view${system === 'gregorian' ? ' on' : ''}`} role="tab"
+          aria-selected={system === 'gregorian'}>میلادی</Link>
+        <Link href={href(view, anchor, selected, 'jalali')}
+          className={`calx-view${system === 'jalali' ? ' on' : ''}`} role="tab"
+          aria-selected={system === 'jalali'}>شمسی</Link>
       </div>
     </div>
   );

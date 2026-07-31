@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { pickVoice, speechText, chunkForSpeech, alertSentence } from '@/lib/speech';
-import { dueAlerts, pruneFired, type AlertEvent } from '@/lib/eventAlerts';
+import { dueAlerts, pruneFired, alertKey, reminderLeads, type AlertEvent } from '@/lib/eventAlerts';
 
 /* ------------------------------------------------------------ voice pick */
 
@@ -145,8 +145,10 @@ describe('dueAlerts', () => {
   });
 
   it('never announces the same event twice — the nagging failure', () => {
+    // The key is `eventId@lead`: one event may legitimately fire at 60 and
+    // again at 10, but never twice at the same reminder.
     const e = at(5, 'x');
-    expect(dueAlerts([e], now, 10, new Set(['x']))).toHaveLength(0);
+    expect(dueAlerts([e], now, 10, new Set([alertKey('x', 10)]))).toHaveLength(0);
   });
 
   it('does not interrupt an event that already started', () => {
@@ -177,16 +179,68 @@ describe('dueAlerts', () => {
 describe('pruneFired', () => {
   it('forgets events that have started, so the set cannot grow forever', () => {
     const now = Date.now();
-    const kept = pruneFired(new Set(['past', 'future']), [
+    const kept = pruneFired(new Set([alertKey('past', 10), alertKey('future', 10)]), [
       { eventId: 'past', start: new Date(now - 60_000).toISOString() },
       { eventId: 'future', start: new Date(now + 60_000).toISOString() },
     ], now);
-    expect([...kept]).toEqual(['future']);
+    expect([...kept]).toEqual([alertKey('future', 10)]);
   });
 
   it('keeps a future event remembered, so it is not announced again', () => {
     const now = Date.now();
-    const kept = pruneFired(new Set(['soon']), [{ eventId: 'soon', start: new Date(now + 300_000).toISOString() }], now);
-    expect(kept.has('soon')).toBe(true);
+    const kept = pruneFired(new Set([alertKey('soon', 10)]), [{ eventId: 'soon', start: new Date(now + 300_000).toISOString() }], now);
+    expect(kept.has(alertKey('soon', 10))).toBe(true);
+  });
+});
+
+/**
+ * D-197 — the reminder times come from the EVENT, not from a global setting.
+ *
+ * The owner sets notifications per event in Google. Overriding that with one
+ * app-wide lead means an event they wanted an hour's warning for arrives with
+ * ten minutes, and an event they deliberately silenced still speaks.
+ */
+describe('reminderLeads', () => {
+  it('honours the event\'s own notification settings', () => {
+    const e: AlertEvent = {
+      eventId: 'a', start: new Date().toISOString(),
+      reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }, { method: 'popup', minutes: 10 }] },
+    };
+    expect(reminderLeads(e, 15)).toEqual([60, 10]);
+  });
+
+  it('falls back to the app setting only when the event defers to its calendar', () => {
+    expect(reminderLeads({ eventId: 'a', reminders: { useDefault: true } }, 25)).toEqual([25]);
+    expect(reminderLeads({ eventId: 'a' }, 25)).toEqual([25]);
+  });
+
+  it('stays silent for an event the owner explicitly gave no reminders', () => {
+    expect(reminderLeads({ eventId: 'a', reminders: { useDefault: false, overrides: [] } }, 15)).toEqual([]);
+  });
+
+  it('ignores email reminders — Google already sent that mail', () => {
+    const e: AlertEvent = { eventId: 'a', reminders: { useDefault: false, overrides: [{ method: 'email', minutes: 1440 }] } };
+    expect(reminderLeads(e, 15)).toEqual([]);
+  });
+
+  it('fires each configured reminder once, not once per event', () => {
+    const now = Date.now();
+    const e: AlertEvent = {
+      eventId: 'm', start: new Date(now + 9 * 60_000).toISOString(),
+      reminders: { useDefault: false, overrides: [{ minutes: 60 }, { minutes: 10 }] },
+    };
+    // The 60-minute one is long past; the 10-minute one is due.
+    expect(dueAlerts([e], now, 15, new Set([alertKey('m', 60)]))[0]?.lead).toBe(10);
+    // And once it has fired, silence.
+    expect(dueAlerts([e], now, 15, new Set([alertKey('m', 60), alertKey('m', 10)]))).toHaveLength(0);
+  });
+
+  it('does not announce an event whose reminders were turned off', () => {
+    const now = Date.now();
+    const e: AlertEvent = {
+      eventId: 'q', start: new Date(now + 2 * 60_000).toISOString(),
+      reminders: { useDefault: false, overrides: [] },
+    };
+    expect(dueAlerts([e], now, 30, new Set())).toHaveLength(0);
   });
 });

@@ -13,7 +13,7 @@ import { createFakeDb } from './helpers/fake-db.js';
 import {
   encryptSecret, decryptSecret, vaultAvailability, storeGrant, getGrant, markGrantRevoked,
   googleAvailability, buildAuthUrl, GOOGLE_SCOPES, GoogleApiError, classifyWrite,
-  AOS_CALENDAR_SUMMARY, PRIME_WINDOWS, monthBoundary,
+  AOS_CALENDAR_SUMMARY, PRIME_WINDOWS, monthBoundary, CalendarEventSchema,
 } from '../src/calendar/index.js';
 
 const KEY = '0'.repeat(64);                    // 32 bytes of hex
@@ -404,5 +404,54 @@ describe('migration off the sync-token design', () => {
     // Google is unconfigured here, so it fails — but it must have decided on a
     // FULL pass, which is the thing being asserted.
     expect(res.fullSync).toBe(true);
+  });
+});
+
+/**
+ * D-197 — Google descriptions are HTML, and we were mirroring the markup.
+ *
+ * That is why the notification card showed literal `<br>` and `&nbsp;`, and
+ * why the speech engine read angle brackets aloud. Converting once at the sync
+ * boundary means grid, alert card, Jarvis and TTS all get text, and none of
+ * them has to remember to sanitise.
+ */
+describe('plainText', () => {
+  it('turns a Google description into something readable and speakable', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    expect(plainText('سلام<br>دنیا')).toBe('سلام\nدنیا');
+    expect(plainText('<p>یک</p><p>دو</p>')).toBe('یک\nدو');
+    expect(plainText('<a href="https://x.com">لینک</a>')).toBe('لینک');
+    expect(plainText('a&nbsp;b')).toBe('a b');
+    expect(plainText('&lt;tag&gt; &amp; more')).toBe('<tag> & more');
+  });
+
+  it('keeps list structure legible instead of running items together', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    expect(plainText('<ul><li>مرغ</li><li>برنج</li></ul>')).toBe('• مرغ\n• برنج');
+  });
+
+  it('leaves plain text alone and survives empty input', async () => {
+    const { plainText } = await import('../src/calendar/sync.js');
+    expect(plainText('یک متن ساده')).toBe('یک متن ساده');
+    expect(plainText('')).toBe('');
+  });
+});
+
+describe('event reminders are mirrored', () => {
+  it('keeps the event\'s own notification settings, which is what alerts fire on', () => {
+    const parsed = CalendarEventSchema.parse({
+      actorId: 'owner', calendarId: 'c', eventId: 'e', syncedAt: new Date().toISOString(),
+      reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }] },
+    });
+    expect(parsed.reminders.useDefault).toBe(false);
+    expect(parsed.reminders.overrides[0].minutes).toBe(60);
+  });
+
+  it('defaults to "use the calendar\'s defaults" for an event that says nothing', () => {
+    const parsed = CalendarEventSchema.parse({
+      actorId: 'owner', calendarId: 'c', eventId: 'e', syncedAt: new Date().toISOString(),
+    });
+    expect(parsed.reminders.useDefault).toBe(true);
+    expect(parsed.reminders.overrides).toEqual([]);
   });
 });

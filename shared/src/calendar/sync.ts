@@ -80,6 +80,22 @@ export const CalendarEventSchema = z.object({
   htmlLink: z.string().default(''),
   organizerEmail: z.string().default(''),
   attendees: z.array(z.object({ email: z.string(), responseStatus: z.string().default('') })).default([]),
+  /**
+   * The event's OWN notification settings, as configured in Google (D-197).
+   *
+   * `useDefault` means "whatever the calendar's defaults are"; otherwise
+   * `overrides` is the exact list the owner set on this event. Alerts are
+   * driven from this and nothing else — a reminder the owner did not ask for
+   * is an interruption, and one they did ask for arriving at the wrong time is
+   * worse than none.
+   */
+  reminders: z.object({
+    useDefault: z.boolean().default(true),
+    overrides: z.array(z.object({
+      method: z.string().default('popup'),
+      minutes: z.number().int().default(10),
+    })).default([]),
+  }).default({ useDefault: true, overrides: [] }),
   /** Google's own change token — lets us skip rewrites that changed nothing. */
   etag: z.string().default(''),
   updated: z.string().default(''),
@@ -173,6 +189,32 @@ async function writeState(state: SyncState): Promise<void> {
   );
 }
 
+/**
+ * Google descriptions are HTML fragments, not text (D-197).
+ *
+ * Unescaped, they reach the UI as literal `<br>` and `&nbsp;` and the speech
+ * engine reads the angle brackets out loud. Converting at the sync boundary
+ * means every consumer — grid, alert card, Jarvis, TTS — gets text, and none
+ * of them has to remember to sanitise.
+ */
+export function plainText(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(p|div|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCharCode(Number(d)))
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function toEvent(actorId: string, calendarId: string, raw: Record<string, unknown>, account: string): CalendarEvent {
   const start = raw.start as { dateTime?: string; date?: string; timeZone?: string } | undefined;
   const end = raw.end as { dateTime?: string; date?: string } | undefined;
@@ -185,7 +227,9 @@ function toEvent(actorId: string, calendarId: string, raw: Record<string, unknow
     eventId: String(raw.id ?? ''),
     status: String(raw.status ?? 'confirmed'),
     summary: String(raw.summary ?? ''),
-    description: String(raw.description ?? ''),
+    // Google stores descriptions as HTML. Mirroring the markup verbatim is how
+    // "<br>" and "<a href=…>" ended up read aloud and printed in the alert card.
+    description: plainText(String(raw.description ?? '')),
     location: String(raw.location ?? ''),
     start: start?.dateTime ?? start?.date ?? '',
     end: end?.dateTime ?? end?.date ?? '',
@@ -200,6 +244,13 @@ function toEvent(actorId: string, calendarId: string, raw: Record<string, unknow
       ? (raw.attendees as Array<{ email?: string; responseStatus?: string }>)
         .map((a) => ({ email: String(a.email ?? ''), responseStatus: String(a.responseStatus ?? '') }))
       : [],
+    reminders: {
+      useDefault: (raw.reminders as { useDefault?: boolean } | undefined)?.useDefault !== false,
+      overrides: Array.isArray((raw.reminders as { overrides?: unknown[] } | undefined)?.overrides)
+        ? ((raw.reminders as { overrides: Array<{ method?: string; minutes?: number }> }).overrides)
+          .map((o) => ({ method: String(o.method ?? 'popup'), minutes: Number(o.minutes ?? 10) }))
+        : [],
+    },
     etag: String(raw.etag ?? ''),
     updated: String(raw.updated ?? ''),
     createdByAos: props.aos === '1',

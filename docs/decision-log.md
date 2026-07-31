@@ -4285,3 +4285,42 @@ call returns.
 **Naming.** `AOS · Autonomous OS` → `AOS`. It is a calendar name in the owner's
 Google sidebar next to "کار" and "خانواده". The old name is kept as an alias so
 the already-created calendar is still recognised as ours.
+
+## D-197 — five corrections to the calendar
+
+**1. Gregorian by default.** The grid was cut on Jalali months. Google, meeting
+invitations and everyone the owner works with use Gregorian, so that is now the
+default; Jalali is one click away in the nav. Both dates appear in every cell
+and in the day panel — the choice only decides which calendar the MONTHS are
+cut on, because a grid can have only one month.
+
+**2. Day view.** `view=day` renders as a one-column week: same hour rail, same
+blocks, no second layout to keep in sync.
+
+**3. Reminders come from the event.** Alerts used one app-wide lead time.
+Google models this per event — `reminders.useDefault`, or explicit `overrides`
+— so the mirror now carries it and `reminderLeads` honours it. An event set to
+warn an hour ahead warns an hour ahead; one the owner deliberately silenced
+(`useDefault: false`, empty overrides) says nothing; `email` overrides are
+skipped because Google already sent that mail. The app-wide setting survives
+only as the fallback for events that defer to their calendar's defaults, which
+Google does not expose per event.
+
+Dedupe identity became `eventId@lead`, since one event legitimately fires at 60
+and again at 10 — but never twice at the same reminder.
+
+**4. The unreadable card.** Google stores descriptions as HTML. We mirrored the
+markup verbatim, so `<br>` and `&nbsp;` were printed on the alert card and the
+speech engine read the angle brackets out loud. `plainText()` converts once at
+the sync boundary: every consumer — grid, card, Jarvis, TTS — gets text, and
+none of them has to remember to sanitise.
+
+**5. Alerts are part of the conversation.** An announcement is a real utterance
+the owner heard, and their next sentence is usually about it: "نیم ساعت عقب
+بنداز", "لینکش رو بده". It lived in a React state variable, so the moment it was
+dismissed the conversation had no record of it and the follow-up reached an
+assistant with amnesia. `recordAnnouncement` writes it as a completed turn —
+one history, not a parallel one — carrying the event and calendar ids so a
+follow-up can act without re-deriving which event was meant. The card gets a
+"دربارهٔ این رویداد صحبت کنیم" button. Archiving is best-effort: failing to
+record it must never stop the reminder being shown and spoken.

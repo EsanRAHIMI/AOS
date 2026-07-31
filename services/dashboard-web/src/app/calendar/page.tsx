@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { gateway } from '@/lib/gateway';
 import { CalendarControls, ConnectButton, CalendarPicker, type CalendarRow } from './controls';
 import { MonthGrid, WeekGrid, Agenda, DayPanel, CalendarNav } from './views';
-import { toJalali, shiftMonth, addDays, todayKey, buildWeek, type CalEvent, type CalView } from './format';
+import { dateParts, shiftMonth, addDays, todayKey, buildWeek, DEFAULT_CAL_SYSTEM, type CalEvent, type CalView, type CalSystem } from './format';
 import { bidiProps } from '@/lib/rtl';
 
 export const dynamic = 'force-dynamic';
@@ -59,10 +59,15 @@ function connectMessage(code: string): { tone: 'err' | 'ok'; title: string; deta
   return { tone: 'err', title: 'اتصال ناموفق بود', detail: code };
 }
 
+/** The day a day-view shows: the selection if valid, else the anchor. */
+function selectedOrAnchor(sel: string | undefined, anchor: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(sel ?? '') ? sel! : anchor;
+}
+
 type Task = { taskId: string; title: string; due: string; status: string; notes: string; createdByAos: boolean };
 
 export default async function CalendarPage({ searchParams }: {
-  searchParams: Promise<{ connect?: string; view?: string; day?: string; sel?: string }>;
+  searchParams: Promise<{ connect?: string; view?: string; day?: string; sel?: string; cal?: string }>;
 }) {
   const sp = await searchParams;
   const connectMsg = connectMessage(sp.connect ?? '');
@@ -70,17 +75,24 @@ export default async function CalendarPage({ searchParams }: {
   const setup = status?.setup;
   const connected = Boolean(status?.connected);
 
-  const view: CalView = sp.view === 'week' ? 'week' : sp.view === 'agenda' ? 'agenda' : 'month';
+  const view: CalView = sp.view === 'week' ? 'week'
+    : sp.view === 'day' ? 'day'
+      : sp.view === 'agenda' ? 'agenda' : 'month';
+  /* Gregorian unless asked otherwise (D-197): it is what Google, invitations
+   * and everyone the owner works with use. */
+  const system: CalSystem = sp.cal === 'jalali' ? 'jalali' : DEFAULT_CAL_SYSTEM;
   const anchor = /^\d{4}-\d{2}-\d{2}$/.test(sp.day ?? '') ? sp.day! : todayKey();
   const selected = /^\d{4}-\d{2}-\d{2}$/.test(sp.sel ?? '') ? sp.sel! : anchor;
 
   /* Fetch exactly the window the current view needs — the mirror is local, but
    * a month view has no business pulling a year of rows into the page. */
-  const window = view === 'week'
-    ? { from: buildWeek(anchor)[0].key, to: addDays(buildWeek(anchor)[6].key, 1) }
-    : view === 'agenda'
-      ? { from: anchor, to: addDays(anchor, 30) }
-      : { from: addDays(anchor, -45), to: addDays(anchor, 45) };
+  const window = view === 'day'
+    ? { from: selectedOrAnchor(sp.sel, anchor), to: addDays(selectedOrAnchor(sp.sel, anchor), 1) }
+    : view === 'week'
+      ? { from: buildWeek(anchor, system)[0].key, to: addDays(buildWeek(anchor, system)[6].key, 1) }
+      : view === 'agenda'
+        ? { from: anchor, to: addDays(anchor, 30) }
+        : { from: addDays(anchor, -45), to: addDays(anchor, 45) };
 
   const [agendaRes, tasksRes] = connected
     ? await Promise.all([gateway.calendarAgenda(window.from, window.to), gateway.calendarTasks()])
@@ -89,12 +101,17 @@ export default async function CalendarPage({ searchParams }: {
   const events = (agendaRes?.events ?? []) as unknown as CalEvent[];
   const tasks = (tasksRes?.tasks ?? []) as unknown as Task[];
 
-  const j = toJalali(anchor);
-  const title = view === 'week'
-    ? `هفتهٔ ${toJalali(buildWeek(anchor)[0].key).day} ${toJalali(buildWeek(anchor)[0].key).monthName}`
-    : `${j.monthName} ${j.year}`;
-  const prev = view === 'month' ? shiftMonth(anchor, -1) : addDays(anchor, view === 'week' ? -7 : -30);
-  const next = view === 'month' ? shiftMonth(anchor, 1) : addDays(anchor, view === 'week' ? 7 : 30);
+  const j = dateParts(anchor, system);
+  const weekStart = buildWeek(anchor, system)[0].key;
+  const dayParts = dateParts(selected, system);
+  const title = view === 'day'
+    ? `${dayParts.day} ${dayParts.monthName} ${dayParts.year}`
+    : view === 'week'
+      ? `هفتهٔ ${dateParts(weekStart, system).day} ${dateParts(weekStart, system).monthName}`
+      : `${j.monthName} ${j.year}`;
+  const step = view === 'day' ? 1 : view === 'week' ? 7 : 30;
+  const prev = view === 'month' ? shiftMonth(anchor, -1, system) : addDays(anchor, -step);
+  const next = view === 'month' ? shiftMonth(anchor, 1, system) : addDays(anchor, step);
 
   const overdue = tasks.filter((t) => t.due && t.due.slice(0, 10) < todayKey());
 
@@ -169,17 +186,23 @@ export default async function CalendarPage({ searchParams }: {
       {/* -------------------------------------------------------- connected */}
       {connected && (
         <>
-          <CalendarNav view={view} anchor={anchor} prev={prev} next={next} selected={selected} title={title} />
+          <CalendarNav view={view} anchor={anchor} prev={prev} next={next} selected={selected} title={title} system={system} />
 
           <div className="calx-layout">
             <section className="cal-glass calx-main">
-              {view === 'month' && <MonthGrid anchor={anchor} events={events} selected={selected} view={view} />}
-              {view === 'week' && <WeekGrid anchor={anchor} events={events} selected={selected} view={view} />}
-              {view === 'agenda' && <Agenda anchor={anchor} events={events} selected={selected} view={view} />}
+              {view === 'month' && <MonthGrid anchor={anchor} events={events} selected={selected} view={view} system={system} />}
+              {view === 'week' && <WeekGrid anchor={anchor} events={events} selected={selected} view={view} system={system} />}
+              {/* A day is a week of one column — same hour rail, same blocks,
+                * so there is no second layout to keep in sync. */}
+              {view === 'day' && (
+                <WeekGrid anchor={selected} events={events} selected={selected} view={view} system={system}
+                  days={buildWeek(selected, system).filter((d) => d.key === selected)} />
+              )}
+              {view === 'agenda' && <Agenda anchor={anchor} events={events} selected={selected} view={view} system={system} />}
             </section>
 
             <div className="calx-side">
-              <DayPanel dayKey={selected} events={events} calendars={calendarNames} />
+              <DayPanel dayKey={selected} events={events} calendars={calendarNames} system={system} />
 
               <section className="cal-glass calx-picker">
                 <CalendarPicker calendars={(status?.calendars ?? []) as unknown as CalendarRow[]} />
@@ -200,7 +223,7 @@ export default async function CalendarPage({ searchParams }: {
                       return (
                         <li key={t.taskId} className={late ? 'late' : ''}>
                           <span className="cal-task-t" {...bidiProps(t.title)}>{t.title}</span>
-                          {t.due && <span className="cal-task-d" dir="ltr">{toJalali(t.due.slice(0, 10)).day} {toJalali(t.due.slice(0, 10)).monthName}</span>}
+                          {t.due && <span className="cal-task-d" dir="ltr">{dateParts(t.due.slice(0, 10), system).day} {dateParts(t.due.slice(0, 10), system).monthName}</span>}
                           {t.createdByAos && <span className="cal-tag">AOS</span>}
                         </li>
                       );

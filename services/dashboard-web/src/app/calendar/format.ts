@@ -17,7 +17,18 @@
  *    version did exactly that.
  */
 
-export type CalView = 'month' | 'week' | 'agenda';
+export type CalView = 'month' | 'week' | 'day' | 'agenda';
+
+/**
+ * Which calendar system the grid is built in (D-197).
+ *
+ * Gregorian is the default: it is what the owner's Google Calendar, their
+ * meeting invitations and everyone they work with use. Jalali stays one click
+ * away, and both dates are always shown in each cell — the question is only
+ * which one the MONTHS are cut on, because a grid can only have one month.
+ */
+export type CalSystem = 'gregorian' | 'jalali';
+export const DEFAULT_CAL_SYSTEM: CalSystem = 'gregorian';
 
 export interface CalEvent {
   eventId: string;
@@ -54,6 +65,24 @@ const jalaliParts = new Intl.DateTimeFormat('en-u-ca-persian-nu-latn', {
 const jalaliMonthName = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { month: 'long', timeZone: 'UTC' });
 
 export interface JalaliDate { year: number; month: number; day: number; monthName: string }
+
+const gregorianMonthName = new Intl.DateTimeFormat('en-GB', { month: 'long', timeZone: 'UTC' });
+
+/** Gregorian parts, in the same shape so callers need no branching. */
+export function toGregorian(dayKey: string): JalaliDate {
+  const d = new Date(`${dayKey}T12:00:00Z`);
+  return {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    monthName: gregorianMonthName.format(d),
+  };
+}
+
+/** Date parts in whichever system the view is using. */
+export function dateParts(dayKey: string, system: CalSystem = DEFAULT_CAL_SYSTEM): JalaliDate {
+  return system === 'jalali' ? toJalali(dayKey) : toGregorian(dayKey);
+}
 
 /** Jalali parts for a YYYY-MM-DD day key, via the runtime's own calendar. */
 export function toJalali(dayKey: string): JalaliDate {
@@ -124,6 +153,8 @@ export interface GridDay {
   inMonth: boolean;
   isToday: boolean;
   isFriday: boolean;
+  /** The same day in the other calendar system. */
+  alt?: JalaliDate;
 }
 
 /**
@@ -132,12 +163,14 @@ export interface GridDay {
  * Six rows always, never five-or-six: a grid that changes height as you page
  * through months makes the whole page jump, which reads as broken.
  */
-export function buildMonthGrid(anchorKey: string, now: Date = new Date()): GridDay[] {
-  const anchor = toJalali(anchorKey);
+export function buildMonthGrid(
+  anchorKey: string, system: CalSystem = DEFAULT_CAL_SYSTEM, now: Date = new Date(),
+): GridDay[] {
+  const anchor = dateParts(anchorKey, system);
 
-  // Walk back to day 1 of this Jalali month.
+  // Walk back to day 1 of the month, in whichever system is active.
   let first = anchorKey;
-  for (let i = 0; i < 40 && toJalali(first).day !== 1; i += 1) first = addDays(first, -1);
+  for (let i = 0; i < 40 && dateParts(first, system).day !== 1; i += 1) first = addDays(first, -1);
 
   // Then back to the Saturday that starts that week.
   let cursor = first;
@@ -149,12 +182,15 @@ export function buildMonthGrid(anchorKey: string, now: Date = new Date()): GridD
   const out: GridDay[] = [];
   for (let i = 0; i < 42; i += 1) {
     const key = addDays(cursor, i);
-    const j = toJalali(key);
+    const j = dateParts(key, system);
     const d = new Date(`${key}T12:00:00Z`);
     out.push({
       key,
       gDay: d.getUTCDate(),
       jalali: j,
+      /* The secondary date, always present: the owner reads one and schedules
+       * in the other, so hiding either costs a mental conversion. */
+      alt: system === 'jalali' ? toGregorian(key) : toJalali(key),
       inMonth: j.month === anchor.month && j.year === anchor.year,
       isToday: key === today,
       isFriday: saturdayIndex(d) === 6,
@@ -164,7 +200,7 @@ export function buildMonthGrid(anchorKey: string, now: Date = new Date()): GridD
 }
 
 /** The Saturday-based week containing `anchorKey`. */
-export function buildWeek(anchorKey: string, now: Date = new Date()): GridDay[] {
+export function buildWeek(anchorKey: string, system: CalSystem = DEFAULT_CAL_SYSTEM, now: Date = new Date()): GridDay[] {
   let cursor = anchorKey;
   for (let i = 0; i < 7 && saturdayIndex(new Date(`${cursor}T12:00:00Z`)) !== 0; i += 1) {
     cursor = addDays(cursor, -1);
@@ -176,7 +212,8 @@ export function buildWeek(anchorKey: string, now: Date = new Date()): GridDay[] 
     return {
       key,
       gDay: d.getUTCDate(),
-      jalali: toJalali(key),
+      jalali: dateParts(key, system),
+      alt: system === 'jalali' ? toGregorian(key) : toJalali(key),
       inMonth: true,
       isToday: key === today,
       isFriday: saturdayIndex(d) === 6,
@@ -184,21 +221,20 @@ export function buildWeek(anchorKey: string, now: Date = new Date()): GridDay[] 
   });
 }
 
-/** Shift by whole Jalali months, landing on day 1. */
-export function shiftMonth(anchorKey: string, delta: number): string {
+/** Shift by whole months in the active system, landing on day 1. */
+export function shiftMonth(anchorKey: string, delta: number, system: CalSystem = DEFAULT_CAL_SYSTEM): string {
   let key = anchorKey;
   const dir = delta >= 0 ? 1 : -1;
   for (let step = 0; step < Math.abs(delta); step += 1) {
-    const start = toJalali(key);
+    const start = dateParts(key, system);
     // Walk day by day until the month index changes, then to that month's day 1.
     let guard = 0;
     while (guard < 45) {
       key = addDays(key, dir);
-      const j = toJalali(key);
-      if (j.month !== start.month) break;
+      if (dateParts(key, system).month !== start.month) break;
       guard += 1;
     }
-    while (toJalali(key).day !== 1) key = addDays(key, dir >= 0 ? -1 : -1);
+    while (dateParts(key, system).day !== 1) key = addDays(key, -1);
   }
   return key;
 }
