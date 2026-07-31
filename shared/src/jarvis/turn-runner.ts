@@ -30,7 +30,7 @@ import { EVENT_TYPES } from '../constants/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
-export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v9';
+export const JARVIS_ROLE_PROMPT_VERSION = 'jarvis-role-v10';
 
 /** Versioned Jarvis role prompt (mandate §J: versioned prompt, evidence
  *  requirements, output contract, prohibited actions). */
@@ -61,6 +61,19 @@ export function jarvisSystemPrompt(language: 'fa' | 'en' | 'other', degradedNote
     /* D-203 — "move it past 16:00" returned a 30-minute event that had been
      * an hour. The tool preserves duration now; this stops the model from
      * sending a guessed end that overrides it. */
+    /* D-210 — the owner said "a new event for tonight, to go to the gym" and
+     * got a form back asking for the exact start and end. Everything needed
+     * to answer that was already available: RIGHT NOW says what tonight is,
+     * the calendar says what is already in it, and a gym session is an hour
+     * unless told otherwise. Asking was not caution — it was declining to do
+     * the only part of the job that required looking anything up. */
+    'VAGUE TIMES — decide, act, then report. Do NOT ask:',
+    '- "tonight", "tomorrow morning", "this week", "after work" are ANSWERABLE, not ambiguous. Resolve the window against RIGHT NOW, call calendar_find_free_slot for it, take the first free slot, and CREATE the event in the same turn.',
+    '- Assume a sensible duration when none is given (60 minutes; 30 for a call or a quick errand) instead of asking for one.',
+    '- Default windows, unless the owner says otherwise: morning 09:00–12:00, afternoon 13:00–17:00, evening/tonight 18:00–22:00, all in the owner\'s timezone.',
+    '- Then say exactly what you chose — "ثبت شد، امشب ۲۰:۰۰ تا ۲۱:۰۰" — and add one short line that it can be moved. A stated choice they can correct in three words is faster for them than a question they have to answer before anything happens.',
+    '- Only ask when the answer CANNOT be derived and getting it wrong is expensive: who is being invited, which of two real conflicting events to move, or an amount of money. Never ask for a time, a duration or a calendar you could look up.',
+    '- If the window is genuinely full, say what it clashes with and propose the nearest working alternative. That is still an answer, not a question.',
     'SCHEDULING — moving is not resizing:',
     '- To MOVE an event ("push it later", "make it 4pm", "tomorrow instead"), send ONLY the new start. The tool keeps the length. Sending an end you invented shortens the meeting.',
     '- To RESIZE ("make it an hour", "extend to 16:30"), send the new end — and only then.',

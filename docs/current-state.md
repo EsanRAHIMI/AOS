@@ -3,7 +3,7 @@
 **This is the single fastest way to understand the repo without re-auditing.**
 When it disagrees with older docs, this file + the code win. Keep it current.
 
-_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-209 (presence: attention gate + ambient voice)._
+_Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-210 (ambient-voice fixes + vague-time scheduling)._
 
 > **NEW NORTH STAR (2026-07-19):** the founder's **CIN v2** proposal
 > (`docs/CIN v2.pdf`) is the adopted post-K2 direction — see
@@ -68,6 +68,21 @@ _Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-209 (presenc
 > beside the switch. Also fixed a latent hook-order crash in `JarvisRudder`.
 > 39 new tests. **Suites after D-209: shared 509 pass / 6 skipped, gateway 254
 > pass, dashboard 188 pass; all three typecheck clean.**
+
+> **D-210 (2026-07-31) — first live use of ambient voice, three bugs fixed.**
+> One spoken sentence arrived as every prefix of itself concatenated
+> (`interimResults` re-delivers the same index with a longer transcript;
+> the handler appended instead of rebuilding). The command is now REBUILT from
+> the results list via `utteranceFrom` — idempotent by construction — with
+> `base` marking what an earlier command already consumed. It was also
+> submitted TWICE: the stop flag was a ref shared across effect runs, so a
+> StrictMode remount left two recognisers on one microphone; it is now a
+> per-run closure variable plus a 4s duplicate window. Third: asked for an
+> event "tonight", Jarvis returned a form asking for the exact time. New tool
+> `calendar_find_free_slot` + prompt rule `VAGUE TIMES — decide, act, then
+> report` (prompt version → `jarvis-role-v10`). **Suites after D-210: shared
+> 520 pass / 6 skipped, gateway 254 pass, dashboard 194 pass; all typecheck
+> clean.**
 
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build

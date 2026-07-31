@@ -5053,3 +5053,91 @@ unconditional.
 are different features, and shipping the first without the second is how
 assistants get muted. The heartbeat had been finding true things to say for
 thirty commits; what it lacked was the judgement not to say them yet.
+
+## D-210 — one sentence, said once, scheduled without a form
+
+The owner turned on ambient listening, said one sentence, and got this back as
+the command text:
+
+> اگر جارویز اگر جارویز اگر بخواهیم جارویز اگر بخواهیم ادامه … باید باید باید
+> یک باید یک تق باید یک تقویم …
+
+Then Jarvis submitted it **twice**, and answered both times with a form asking
+what time they wanted to go to the gym.
+
+Three bugs, all shipped in D-209 the same day.
+
+### 1. Every prefix of the sentence, concatenated
+
+`interimResults` does not stream new words — it re-delivers the SAME result
+index with a longer transcript on every event:
+
+```
+event 1   results[0] = "باید"
+event 2   results[0] = "باید یک"
+event 3   results[0] = "باید یک تقویم"
+```
+
+The handler appended each event's text to a buffer, so one sentence arrived as
+every revision of itself, in order. The comment above that loop even claimed it
+was avoiding this ("only the results from this event onward matter") — it was
+reasoning about `resultIndex` as if it advanced per word, which it does not
+for an utterance still in progress.
+
+The results list IS the utterance, so the command is now REBUILT from it on
+every event (`utteranceFrom`) rather than accumulated. Rebuilding is idempotent
+by construction: it does not matter how many events arrive, or in what order.
+
+A second, quieter bug lived next to it: the browser does not clear `results`
+when a command is submitted, so the previous sentence would have become a
+prefix of the next one. `base` marks where the current utterance starts and is
+advanced at submission.
+
+### 2. Two recognisers, one microphone
+
+The stop flag was a **ref shared across effect runs**. React StrictMode mounts
+effects twice in development: cleanup set the ref true, the second run set it
+straight back to false, and the first recogniser's pending `onend` then saw
+`false` and scheduled a restart. Two recognisers, both listening, both hearing
+the same sentence, both submitting it.
+
+It is now a closure variable local to each effect run, which a dead run's
+callbacks cannot reach. A 4-second duplicate window on identical command text
+covers the remaining paths (a late `onresult` re-arming the silence timer, a
+restart mid-sentence) without blocking an owner who genuinely repeats
+themselves — which they do, precisely when the first attempt appeared to do
+nothing.
+
+### 3. Asking for what it could have looked up
+
+"A new event for tonight, to go to the gym" came back as a form: title,
+date, **"please specify the exact start and end time"**, calendar.
+
+Nothing in that question needed the owner. RIGHT NOW says what tonight is, the
+mirror says what is already in it, and an hour is a reasonable default for a
+gym session. The reply was not being careful — it was declining to do the one
+part of the task that required looking anything up, and it converted a
+five-second instruction into a conversation with two round trips.
+
+`calendar_find_free_slot` makes deciding cheaper than asking: give it a window
+and a duration, it returns real openings computed against the actual calendar.
+All-day events are excluded, because treating "on leave" as a 24-hour block
+would report every evening as busy and send the model straight back to asking.
+
+The prompt rule (`VAGUE TIMES — decide, act, then report`) states the defaults
+explicitly — evening is 18:00–22:00, a meeting is 60 minutes, a call is 30 —
+and draws the line at what genuinely cannot be derived: who to invite, which
+of two real conflicts to move, an amount of money. Never a time, a duration or
+a calendar.
+
+Both tool summaries are written as instructions rather than data, because the
+summary is what the model actually acts on. A full window returns
+`No free slot … tell the owner what it clashes with and propose the nearest
+alternative — do not ask them to pick a time`, so even the negative case ends
+in an answer.
+
+**The general rule this leaves behind:** a stated choice the owner can correct
+in three words beats a question they must answer before anything happens. And
+a handler over a live, revised, browser-owned list must derive its state from
+that list, never accumulate alongside it — accumulation and revision cannot
+both be right.

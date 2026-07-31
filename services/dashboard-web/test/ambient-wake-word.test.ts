@@ -84,3 +84,81 @@ describe('spelling variants — Persian STT is not consistent', () => {
     expect(afterWakeWord('JARVIS what is next')).toBe('what is next');
   });
 });
+
+/* ========================================================================== *
+ * D-210 — the utterance rebuild
+ * ========================================================================== */
+
+import { utteranceFrom, type SpeechResults } from '../src/lib/useAmbientVoice';
+
+/** Build a fake results list the way the browser delivers one. */
+function results(items: Array<{ text: string; final?: boolean }>): SpeechResults {
+  return items.map((i) => ({ isFinal: Boolean(i.final), 0: { transcript: i.text } })) as unknown as SpeechResults;
+}
+
+describe('one sentence stays one sentence', () => {
+  /**
+   * The reported bug, reproduced exactly.
+   *
+   * The owner said ONE sentence and it arrived as every prefix of itself
+   * concatenated: "باید باید یک باید یک تقویم …". That is what appending each
+   * interim event to a buffer produces, because the SAME result index is
+   * re-delivered with a longer transcript on every event.
+   */
+  it('is idempotent across the interim revisions of one result', () => {
+    const revisions = ['باید', 'باید یک', 'باید یک تقویم', 'باید یک تقویم جدید'];
+    const seen = revisions.map((text) => utteranceFrom(results([{ text }])));
+    // Each rebuild equals that revision — never the concatenation of all of them.
+    expect(seen).toEqual(revisions);
+    expect(seen[seen.length - 1]).toBe('باید یک تقویم جدید');
+    expect(seen[seen.length - 1]).not.toContain('باید باید');
+  });
+
+  it('joins genuinely separate results without repeating them', () => {
+    const r = results([
+      { text: 'جارویس', final: true },
+      { text: 'یک رویداد برای امشب بگذار' },
+    ]);
+    expect(utteranceFrom(r)).toBe('جارویس یک رویداد برای امشب بگذار');
+  });
+
+  it('never accumulates, however many times the same list is read', () => {
+    const r = results([{ text: 'جارویس فردا رو خالی کن', final: true }]);
+    expect(utteranceFrom(r)).toBe(utteranceFrom(r));
+    expect(utteranceFrom(r)).toBe('جارویس فردا رو خالی کن');
+  });
+});
+
+describe('a submitted command does not leak into the next one', () => {
+  it('skips results consumed by an earlier command via `base`', () => {
+    // The browser does NOT clear `results` when we submit; `base` is what
+    // stops the previous sentence becoming a prefix of the next one.
+    const r = results([
+      { text: 'جارویس فردا رو خالی کن', final: true },
+      { text: 'جارویس برنامهٔ امروز چیه', final: true },
+    ]);
+    expect(utteranceFrom(r, 1)).toBe('جارویس برنامهٔ امروز چیه');
+    expect(utteranceFrom(r, 1)).not.toContain('خالی کن');
+  });
+
+  it('returns empty once everything has been consumed', () => {
+    const r = results([{ text: 'جارویس سلام', final: true }]);
+    expect(utteranceFrom(r, 1)).toBe('');
+  });
+});
+
+describe('the rebuild and the wake-word gate compose', () => {
+  it('yields the command once, not once per interim revision', () => {
+    // End to end: the revisions of one utterance, each passed through both
+    // functions, must all produce the SAME command.
+    const revisions = [
+      'جارویس یک',
+      'جارویس یک رویداد',
+      'جارویس یک رویداد برای امشب',
+    ];
+    const commands = revisions.map((text) => afterWakeWord(utteranceFrom(results([{ text }]))));
+    expect(commands).toEqual(['یک', 'یک رویداد', 'یک رویداد برای امشب']);
+    // The final value is the whole command, with no duplicated fragments.
+    expect(commands[commands.length - 1]).toBe('یک رویداد برای امشب');
+  });
+});

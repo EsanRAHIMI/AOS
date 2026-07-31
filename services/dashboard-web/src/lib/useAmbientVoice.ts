@@ -73,6 +73,13 @@ const COMMAND_SILENCE_MS = 1200;
 const RESTART_DELAY_MS = 350;
 /** Consecutive failed restarts before ambient mode gives up and says so. */
 const MAX_RESTART_FAILURES = 5;
+/**
+ * Window in which an identical command is treated as a duplicate delivery
+ * rather than a repetition. Long enough to absorb a restart or a late event,
+ * short enough that an owner saying the same thing twice on purpose is heard
+ * twice — which they do, when the first attempt appeared to do nothing.
+ */
+const DUPLICATE_WINDOW_MS = 4000;
 
 /** Characters that mean the same sound but are different bytes. 1:1 only. */
 const FOLD: Record<string, string> = {
@@ -131,6 +138,36 @@ export function afterWakeWord(heard: string): string | null {
   return heard.slice(origStart).replace(/^[\s‌,،.:؛…]+/, '').trim();
 }
 
+/** The shape of the browser's live results list, narrowed to what we read. */
+export type SpeechResults = ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
+
+/**
+ * Rebuild the current utterance from the recogniser's live results list.
+ *
+ * This is the fix for the bug that made one spoken sentence arrive as every
+ * prefix of itself concatenated (D-210). With `interimResults`, the SAME
+ * result index is re-delivered on every event with a longer transcript:
+ *
+ *   event 1  results[0] = "باید"            (interim)
+ *   event 2  results[0] = "باید یک"          (interim)
+ *   event 3  results[0] = "باید یک تقویم"     (interim)
+ *
+ * Appending each event's text to a buffer therefore produces
+ * "باید باید یک باید یک تقویم …". Reading the whole list fresh each time
+ * cannot: the list IS the utterance, so the result is idempotent no matter
+ * how many events arrive.
+ *
+ * `base` skips results already submitted as an earlier command — the list is
+ * not cleared when a command is sent, only when the recogniser is replaced.
+ */
+export function utteranceFrom(results: SpeechResults, base = 0): string {
+  let out = '';
+  for (let i = Math.max(0, base); i < results.length; i += 1) {
+    out += `${results[i]?.[0]?.transcript ?? ''} `;
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
 export interface UseAmbientVoice {
   /** The browser can do continuous recognition at all. */
   supported: boolean;
@@ -175,9 +212,11 @@ export function useAmbientVoice(opts: {
   const restartRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silenceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const failuresRef = useRef(0);
-  const stoppingRef = useRef(false);
   /** Command text lives in a ref: it must survive a re-render mid-utterance. */
   const bufRef = useRef('');
+  /** Last submission — deliberately a ref that OUTLIVES an effect run, so a
+   *  StrictMode remount cannot resubmit what the previous run already sent. */
+  const lastSubmitRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
 
   const onCommandRef = useRef(onCommand);
   const onBargeInRef = useRef(onBargeIn);
@@ -199,22 +238,57 @@ export function useAmbientVoice(opts: {
     const Ctor = speechCtor();
     if (!Ctor) { setError('این مرورگر تشخیص گفتار پیوسته ندارد.'); setAmbientState(false); return; }
 
-    stoppingRef.current = false;
+    /**
+     * Stop flag, LOCAL to this effect run (D-210).
+     *
+     * It used to be a ref shared across runs, and that was a real bug: React
+     * StrictMode mounts effects twice in development. Cleanup set the shared
+     * ref true, the second run immediately set it back to false, and the first
+     * recogniser's pending `onend` then saw `false` and scheduled a restart —
+     * leaving TWO recognisers listening to one microphone. Both heard the same
+     * sentence and both submitted it, which is why one spoken command arrived
+     * as two identical turns. A closure variable cannot be reached by a dead
+     * run's callbacks.
+     */
+    let stopped = false;
+
+    /**
+     * Index into `e.results` where the CURRENT utterance begins.
+     *
+     * The Web Speech API's `results` is a growing, live list for the lifetime
+     * of one recogniser. After a command is submitted, its results are still
+     * in that list — so the next rebuild must start after them or the previous
+     * command is spoken again as a prefix of the next one.
+     */
+    let base = 0;
 
     const finish = () => {
       const cmd = bufRef.current.trim();
       bufRef.current = '';
       setAwake(false);
       setCommand('');
-      if (cmd) onCommandRef.current(cmd);
+      if (!cmd) return;
+
+      /* Dedupe (D-210). Two paths can deliver the same utterance: a late
+       * `onresult` re-firing the silence timer, and a recogniser restarting
+       * mid-sentence. Neither is worth a second identical turn, and "say it
+       * again" is a real thing owners do — so the guard is a short window,
+       * not a permanent blocklist. */
+      const now = Date.now();
+      if (cmd === lastSubmitRef.current.text && now - lastSubmitRef.current.at < DUPLICATE_WINDOW_MS) return;
+      lastSubmitRef.current = { text: cmd, at: now };
+
+      onCommandRef.current(cmd);
     };
 
     const start = () => {
-      if (stoppingRef.current) return;
+      if (stopped) return;
       const rec = new Ctor();
       rec.lang = lang;
       rec.continuous = true;
       rec.interimResults = true;
+      // A fresh recogniser has a fresh, empty results list.
+      base = 0;
 
       rec.onstart = () => { setHearing(true); failuresRef.current = 0; };
 
@@ -222,30 +296,35 @@ export function useAmbientVoice(opts: {
         // Barge-in: the owner's voice always outranks the assistant's.
         if (speakingRef.current) onBargeInRef.current?.();
 
-        // Only the results from this event onward matter; re-reading the whole
-        // buffer on every event is what makes continuous mode duplicate text.
-        let heard = '';
-        for (let i = e.resultIndex; i < e.results.length; i += 1) {
-          heard += e.results[i]?.[0]?.transcript ?? '';
-        }
-        if (!heard.trim()) return;
+        /* REBUILD, never append (D-210).
+         *
+         * With `interimResults`, the same result index is re-delivered on
+         * every event with a longer transcript: "باید" → "باید یک" → "باید یک
+         * تقویم". The previous version appended each of those to a buffer, so
+         * one sentence arrived as every prefix of itself concatenated. The
+         * results list is the whole truth about the utterance, so the command
+         * is derived from it fresh each time and cannot accumulate. */
+        const whole = utteranceFrom(e.results, base);
+        if (!whole) return;
 
-        if (!bufRef.current) {
-          const after = afterWakeWord(heard);
-          // NOT the wake word ⇒ discard. This is the privacy contract: the
-          // ambient stream never reaches state, storage or the network.
-          if (after === null) return;
-          setAwake(true);
-          bufRef.current = after;
-        } else {
-          // Verbatim, for the same reason `afterWakeWord` is verbatim: what
-          // reaches the model must be what was said.
-          bufRef.current = `${bufRef.current} ${heard}`.replace(/\s+/g, ' ').trim();
-        }
-        setCommand(bufRef.current);
+        /* The command is always "everything after the LAST wake word in this
+         * utterance" — recomputed, not accumulated. Null means the owner has
+         * not addressed Jarvis, and the text is discarded here in the browser:
+         * that is the privacy contract, and it now also holds for every
+         * interim revision rather than only the first. */
+        const after = afterWakeWord(whole);
+        if (after === null) return;
+
+        setAwake(true);
+        bufRef.current = after;
+        setCommand(after);
 
         if (silenceRef.current) clearTimeout(silenceRef.current);
-        silenceRef.current = setTimeout(finish, COMMAND_SILENCE_MS);
+        silenceRef.current = setTimeout(() => {
+          // Everything heard so far belongs to the command being submitted.
+          base = e.results.length;
+          finish();
+        }, COMMAND_SILENCE_MS);
       };
 
       rec.onerror = (ev) => {
@@ -253,7 +332,7 @@ export function useAmbientVoice(opts: {
         setHearing(false);
         // Permission is terminal: retrying it produces a browser prompt loop.
         if (code === 'not-allowed' || code === 'service-not-allowed') {
-          stoppingRef.current = true;
+          stopped = true;
           setError('اجازهٔ میکروفون داده نشد.');
           setAmbientState(false);
           return;
@@ -264,7 +343,7 @@ export function useAmbientVoice(opts: {
 
       rec.onend = () => {
         setHearing(false);
-        if (stoppingRef.current) return;
+        if (stopped) return;
         if (failuresRef.current >= MAX_RESTART_FAILURES) {
           setError('تشخیص گفتار مدام قطع شد؛ حالت شنیدن دائمی خاموش شد.');
           setAmbientState(false);
@@ -282,7 +361,7 @@ export function useAmbientVoice(opts: {
     start();
 
     return () => {
-      stoppingRef.current = true;
+      stopped = true;
       if (restartRef.current) clearTimeout(restartRef.current);
       if (silenceRef.current) clearTimeout(silenceRef.current);
       try { recRef.current?.abort(); } catch { /* already gone */ }

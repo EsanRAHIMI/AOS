@@ -301,6 +301,16 @@ different machine with different failure modes.
   text that FOLLOWS the wake word in the same utterance, returned **verbatim**
   — `fold()` keeps an index map so the split survives normalisation and the
   owner's exact words reach the model.
+- **The utterance is REBUILT, never appended (D-210).** `interimResults`
+  re-delivers the same result index with a longer transcript on every event,
+  so appending yields every prefix of the sentence concatenated. The results
+  list is the utterance: `utteranceFrom(results, base)` derives the command
+  fresh each event and is idempotent. `base` skips results already submitted —
+  the browser does not clear the list on submit.
+- **One recogniser, always.** The stop flag is a closure variable local to each
+  effect run, not a shared ref: with a ref, a StrictMode remount left the
+  previous recogniser alive and one spoken sentence became two turns. A 4s
+  duplicate window on identical text covers the remaining races.
 - **Privacy**: Chrome's SpeechRecognition uploads audio. Ambient mode is off
   by default, **never persisted**, and its `disclosure` string is rendered
   beside the switch. Everything heard before the wake word is discarded in the
@@ -308,3 +318,24 @@ different machine with different failure modes.
 - **Barge-in**: speech detected while Jarvis is speaking cancels the utterance.
 - Commands enter through `JarvisConversation`'s `injected={{ text, nonce }}`
   prop — the nonce is what lets the owner repeat the same command twice.
+
+
+## 13. Vague times are answers, not questions (D-210)
+
+`calendar_find_free_slot(fromIso, toIso, durationMinutes?)` returns real
+openings computed against the mirror. All-day events are excluded — treating
+"on leave" as a 24-hour block reports every evening as busy.
+
+The prompt rule `VAGUE TIMES — decide, act, then report` requires Jarvis to
+resolve "tonight" / "tomorrow morning" against RIGHT NOW, call this tool, take
+the **first** free slot, create the event in the same turn, and state the time
+it chose so the owner can correct it in three words.
+
+Defaults, so nothing has to be asked: morning 09:00–12:00, afternoon
+13:00–17:00, evening 18:00–22:00 (owner's timezone); 60 minutes, or 30 for a
+call or quick errand.
+
+Asking is reserved for what cannot be derived and is expensive to get wrong:
+who to invite, which of two real conflicting events to move, an amount of
+money. **Never** a time, a duration or a calendar. A full window is still an
+answer — report the clash and propose the nearest alternative.

@@ -604,5 +604,89 @@ export function registerCalendarTools(registry: AgentToolRegistry): AgentToolReg
     },
   });
 
+  /**
+   * Turn a vague time into a real one (D-210).
+   *
+   * Written because the owner said "a new event for tonight, to go to the
+   * gym" and got back a form asking for the exact start and end. Every input
+   * needed to answer that was already in the system: what tonight means, what
+   * is already on the calendar, and how long a gym session is. Asking was not
+   * caution, it was refusing to do the one part that required looking things
+   * up — and it turned a five-second instruction into a conversation.
+   *
+   * The tool does the search; the model does not do date arithmetic. It
+   * returns concrete candidate slots so the reply can be "I put it at 20:00,
+   * say the word if you want it moved" rather than a question.
+   */
+  registry.register({
+    definition: def('calendar_find_free_slot',
+      'Find real free slots in a time window, respecting existing events. Use this to turn a vague time ("tonight", "tomorrow morning", "sometime this week") into a concrete start/end BEFORE creating an event — never ask the owner for an exact time you could compute.'),
+    inputSchema: z.object({
+      fromIso: z.string().describe('ISO start of the window to search (resolve "tonight" etc. against RIGHT NOW first)'),
+      toIso: z.string().describe('ISO end of the window to search'),
+      durationMinutes: z.number().int().min(5).max(600).optional()
+        .describe('how long the new event needs (default 60)'),
+      limit: z.number().int().min(1).max(10).optional().describe('how many candidates (default 3)'),
+    }),
+    executor: async (args, ctx): Promise<ToolResult> => {
+      const blocked = await blockedReason(ctx);
+      if (blocked) return { ok: false, summary: blocked };
+
+      const fromMs = Date.parse(String(args.fromIso));
+      const toMs = Date.parse(String(args.toIso));
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+        return cannotWrite('بازهٔ زمانی نامعتبر است');
+      }
+      const durationMs = Number(args.durationMinutes ?? 60) * 60_000;
+      const want = Math.max(1, Number(args.limit ?? 3));
+
+      const events = await readAgenda({
+        actorId: CALENDAR_ACTOR_ID,
+        fromIso: new Date(fromMs - 12 * 3_600_000).toISOString(),
+        toIso: new Date(toMs).toISOString(),
+      });
+      /* All-day events do not occupy a time slot. Treating "on leave" as a
+       * 24-hour block would report a free evening as busy and send the model
+       * straight back to asking. */
+      const busy = events
+        .filter((e) => !e.allDay)
+        .map((e) => ({ s: Date.parse(e.start), e: Date.parse(e.end) }))
+        .filter((b) => Number.isFinite(b.s) && Number.isFinite(b.e) && b.e > fromMs)
+        .sort((a, b) => a.s - b.s);
+
+      const slots: Array<{ start: string; end: string }> = [];
+      let cursor = fromMs;
+      for (const b of busy) {
+        if (slots.length >= want) break;
+        if (b.s - cursor >= durationMs) {
+          slots.push({ start: new Date(cursor).toISOString(), end: new Date(cursor + durationMs).toISOString() });
+        }
+        cursor = Math.max(cursor, b.e);
+      }
+      if (slots.length < want && toMs - cursor >= durationMs) {
+        slots.push({ start: new Date(cursor).toISOString(), end: new Date(cursor + durationMs).toISOString() });
+      }
+
+      if (!slots.length) {
+        // An honest negative WITH its cause, so the model reports a real
+        // conflict instead of falling back to asking for a time.
+        return {
+          ok: true,
+          summary: `No free ${args.durationMinutes ?? 60}-minute slot between ${args.fromIso} and ${args.toIso}. `
+            + `${busy.length} event(s) occupy the window: ${busy.map((b) => `${new Date(b.s).toISOString()}→${new Date(b.e).toISOString()}`).join(', ') || 'none'}. `
+            + 'Tell the owner what it clashes with and propose the nearest alternative — do not ask them to pick a time.',
+          data: { slots: [], busy },
+        };
+      }
+
+      return {
+        ok: true,
+        summary: `${slots.length} free slot(s): ${slots.map((s) => `${s.start} → ${s.end}`).join(', ')}. `
+          + 'Use the FIRST one unless the owner said otherwise, create the event now, and state the time you chose so they can correct it.',
+        data: { slots, busy },
+      };
+    },
+  });
+
   return registry;
 }
