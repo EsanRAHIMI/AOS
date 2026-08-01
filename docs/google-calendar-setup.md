@@ -106,6 +106,11 @@ GOOGLE_CLIENT_ID=<from step 4>
 GOOGLE_CLIENT_SECRET=<from step 4>
 GOOGLE_REDIRECT_URI=http://localhost:4100/api/calendar/callback
 GOOGLE_TOKEN_ENC_KEY=<64 hex chars from step 5>
+# Optional defaults: reconcile external changes four times/day; refresh after
+# two stale hours; expire a crashed sync owner's distributed lease in 10 min.
+GOOGLE_CALENDAR_SYNC_INTERVAL_MS=21600000
+GOOGLE_CALENDAR_STALE_AFTER_MS=7200000
+GOOGLE_CALENDAR_SYNC_LEASE_MS=600000
 ```
 
 For production, set `GOOGLE_REDIRECT_URI` to the `https://` dashboard variant
@@ -117,6 +122,18 @@ you registered — it must match **byte for byte**, or Google returns
 
 Open `/calendar` in the dashboard and press **connect**. You will be sent to
 Google, approve the scopes, and land back on the callback.
+
+### Sync behaviour
+
+- AOS-created event/task changes are written through to the local mirror from
+  Google's own response; they do not wait for or trigger a full sync.
+- Changes made in Google or another calendar client are reconciled four times
+  per day by default. Opening a stale agenda also requests a background sync.
+- Each reconciliation is a bounded snapshot (one month back, three forward),
+  so deleted or moved-away events are removed without scanning account history.
+- A Redis lease makes the timer safe with multiple gateway replicas. If Redis
+  is unavailable, the process-local guard preserves availability and the log
+  marks lock coordination as degraded.
 
 ### Scopes requested, and why each one
 
@@ -151,18 +168,17 @@ undo no amount of careful coding on our side can match.
 
 ## 9. How sync works (and why it is built this way)
 
-- **Full sync once, then incremental with `syncToken` forever.** Every list
-  call passes the stored token and stores the new `nextSyncToken`.
-- **Deletions arrive as results**, not as absences — cancelled events come back
-  with `status: cancelled` precisely so clients can remove them. The mirror
-  deletes them; skipping that is how a cancelled meeting stays on your screen.
-- **Query parameters are identical across every request in a series** and live
-  in one constant. Google rejects a sync token combined with `timeMin`, `q`,
-  `orderBy` or `updatedMin`, and mismatched parameters make sync fail quietly.
-- **`410 GONE` wipes that calendar's mirror and re-runs a full sync**, rather
-  than merging stale rows into fresh data.
-- **`nextSyncToken` only appears on the last page**, so it is stored only after
-  pagination completes.
+- **The mirror is deliberately bounded** to one month back and three months
+  forward. It never walks years of recurring-event history.
+- **Scheduled/manual refreshes are snapshots.** After every page succeeds, a
+  mirrored row absent from Google is removed; this covers deletion and events
+  moved outside the window.
+- **AOS writes are write-through.** Google's create/update response is mirrored
+  immediately, without waiting for or launching a snapshot.
+- **Freshness is resource-wide.** The oldest enabled calendar or Tasks state
+  decides whether data is stale; a fresh calendar cannot hide a stale one.
+- **Redis leases and a local in-flight guard** allow only one reconciliation at
+  a time across requests and replicas.
 - **Backoff** is exponential with jitter for `429`, `403 rateLimitExceeded`,
   `404` and `5xx`; `400/401/403-permission/409/412` never retry blindly.
 

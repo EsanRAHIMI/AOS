@@ -7,17 +7,23 @@
  * over the calendar permanently. So: crypto, the write policy, and the sync
  * rules the official guide imposes.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setTestDb } from '../src/db/index.js';
 import { createFakeDb } from './helpers/fake-db.js';
 import {
   encryptSecret, decryptSecret, vaultAvailability, storeGrant, getGrant, markGrantRevoked,
-  googleAvailability, buildAuthUrl, GOOGLE_SCOPES, GoogleApiError, classifyWrite,
+  googleAvailability, buildAuthUrl, GOOGLE_SCOPES, missingRequiredGoogleScopes, GoogleApiError, classifyWrite,
   AOS_CALENDAR_SUMMARY, PRIME_WINDOWS, monthBoundary, CalendarEventSchema,
 } from '../src/calendar/index.js';
 
 const KEY = '0'.repeat(64);                    // 32 bytes of hex
 const ENV = { GOOGLE_TOKEN_ENC_KEY: KEY } as unknown as NodeJS.ProcessEnv;
+const GOOGLE_ENV = {
+  ...ENV,
+  GOOGLE_CLIENT_ID: 'fixture-client',
+  GOOGLE_CLIENT_SECRET: 'fixture-secret',
+  GOOGLE_REDIRECT_URI: 'http://localhost/callback',
+} as NodeJS.ProcessEnv;
 
 beforeEach(() => { setTestDb(createFakeDb().db); });
 
@@ -99,6 +105,14 @@ describe('oauth configuration', () => {
     expect(GOOGLE_SCOPES).toContain('https://www.googleapis.com/auth/tasks');
     expect(GOOGLE_SCOPES).not.toContain('https://www.googleapis.com/auth/calendar');
   });
+
+  it('detects a partially granted operational scope set', () => {
+    expect(missingRequiredGoogleScopes([...GOOGLE_SCOPES])).toEqual([]);
+    expect(missingRequiredGoogleScopes(['openid', 'email'])).toContain('https://www.googleapis.com/auth/calendar.events');
+    // OAuth may omit `scope` when it is identical to the request; absence alone
+    // is not evidence of partial consent.
+    expect(missingRequiredGoogleScopes([])).toEqual([]);
+  });
 });
 
 describe('google error semantics', () => {
@@ -171,6 +185,13 @@ describe('oauth state — durable, single use, time-boxed', () => {
     await rememberOAuthState('once');
     expect(await consumeOAuthState('once')).toBe(true);
     expect(await consumeOAuthState('once')).toBe(false);
+  });
+
+  it('allows only one of two concurrent callback consumers', async () => {
+    const { rememberOAuthState, consumeOAuthState } = await import('../src/calendar/tokens.js');
+    await rememberOAuthState('raced');
+    const results = await Promise.all([consumeOAuthState('raced'), consumeOAuthState('raced')]);
+    expect(results.sort()).toEqual([false, true]);
   });
 
   it('rejects a state that was never minted', async () => {
@@ -379,6 +400,120 @@ describe('event sync is bounded and incremental', () => {
       new URL('../src/calendar/sync.ts', import.meta.url), 'utf8',
     ));
     expect(src).toContain('showDeleted: true');
+  });
+});
+
+describe('low-frequency freshness and immediate writes', () => {
+  it('uses the oldest required resource, so one stale calendar cannot hide behind a fresh one', async () => {
+    const { calendarFreshness } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await storeGrant({ actorId: 'owner', refreshToken: 'rt', accountEmail: 'owner@example.com' }, ENV);
+    for (const calendarId of ['old', 'new']) {
+      await collection(COLLECTIONS.CALENDARS).insertOne({
+        actorId: 'owner', account: 'owner@example.com', calendarId, enabled: true, updatedAt: 'x',
+      } as never);
+    }
+    const now = new Date('2026-08-01T12:00:00.000Z');
+    for (const [resourceId, lastSyncAt] of [
+      ['old', '2026-08-01T06:00:00.000Z'],
+      ['new', '2026-08-01T11:30:00.000Z'],
+      ['tasks:@default', '2026-08-01T11:45:00.000Z'],
+    ]) {
+      await collection(COLLECTIONS.CALENDAR_SYNC_STATE).insertOne({
+        actorId: 'owner', resourceId, kind: resourceId === 'tasks:@default' ? 'tasks' : 'events',
+        lastSyncAt, lastFullSyncAt: lastSyncAt, syncToken: '', lastError: '', fullResyncCount: 0, updatedAt: lastSyncAt,
+      } as never);
+    }
+    const freshness = await calendarFreshness('owner', 2 * 60 * 60_000, now);
+    expect(freshness.stale).toBe(true);
+    expect(freshness.oldestSuccessfulSyncAt).toBe('2026-08-01T06:00:00.000Z');
+    expect(freshness.ageMs).toBe(6 * 60 * 60_000);
+  });
+
+  it('does not run a second stale sync while another replica owns the Redis lease', async () => {
+    const { syncCalendarCoordinated } = await import('../src/calendar/sync.js');
+    const { RedisBackbone } = await import('../src/redis/index.js');
+    const { createFakeRedisServer } = await import('./helpers/fake-redis.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await storeGrant({ actorId: 'owner', refreshToken: 'rt', accountEmail: 'owner@example.com' }, ENV);
+    await collection(COLLECTIONS.CALENDARS).insertOne({
+      actorId: 'owner', account: 'owner@example.com', calendarId: 'primary', enabled: true, updatedAt: 'x',
+    } as never);
+    const { makeClient } = createFakeRedisServer();
+    const holder = new RedisBackbone({ url: 'fake://redis', client: makeClient() });
+    const contender = new RedisBackbone({ url: 'fake://redis', client: makeClient() });
+    expect(await holder.acquireLease('calendar:sync:owner', 'other-replica', 60_000)).toBe(true);
+    const result = await syncCalendarCoordinated({
+      actorId: 'owner', staleAfterMs: 1, leaseMs: 60_000, redis: contender, env: GOOGLE_ENV,
+    });
+    expect(result.status).toBe('locked');
+    await holder.quit();
+    await contender.quit();
+  });
+
+  it('mirrors an AOS-created Google Task immediately without a follow-up sync', async () => {
+    const { createTask } = await import('../src/calendar/write.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await storeGrant({
+      actorId: 'owner', refreshToken: 'rt', accessToken: 'at', expiresInSec: 3600,
+      accountEmail: 'owner@example.com',
+    }, ENV);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      id: 'task-live', title: 'Pay invoice', notes: '[aos]', status: 'needsAction', updated: new Date().toISOString(),
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    await createTask({ actorId: 'owner', title: 'Pay invoice' }, GOOGLE_ENV);
+    const mirrored = await collection(COLLECTIONS.CALENDAR_TASKS).findOne({ actorId: 'owner', taskId: 'task-live' });
+    expect(mirrored).toMatchObject({ title: 'Pay invoice', createdByAos: true });
+    vi.unstubAllGlobals();
+  });
+
+  it('removes a stale task missing from a successful complete task-list snapshot', async () => {
+    const { syncTasks } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await storeGrant({
+      actorId: 'owner', refreshToken: 'rt', accessToken: 'at', expiresInSec: 3600,
+      accountEmail: 'owner@example.com',
+    }, ENV);
+    await collection(COLLECTIONS.CALENDAR_TASKS).insertOne({
+      actorId: 'owner', account: 'owner@example.com', taskListId: '@default', taskId: 'deleted-elsewhere',
+      title: 'Old task', status: 'needsAction', syncedAt: 'x',
+    } as never);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })));
+    const result = await syncTasks('owner', '@default', GOOGLE_ENV);
+    expect(result.deleted).toBe(1);
+    expect(await collection(COLLECTIONS.CALENDAR_TASKS).findOne({
+      actorId: 'owner', taskId: 'deleted-elsewhere',
+    })).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('removes a stale event missing from a successful bounded snapshot', async () => {
+    const { syncEventWindow } = await import('../src/calendar/sync.js');
+    const { collection } = await import('../src/db/index.js');
+    const { COLLECTIONS } = await import('../src/constants/index.js');
+    await storeGrant({
+      actorId: 'owner', refreshToken: 'rt', accessToken: 'at', expiresInSec: 3600,
+      accountEmail: 'owner@example.com',
+    }, ENV);
+    await collection(COLLECTIONS.CALENDAR_EVENTS).insertOne({
+      actorId: 'owner', account: 'owner@example.com', calendarId: 'primary', eventId: 'moved-away',
+      start: '2026-08-10T09:00:00.000Z', end: '2026-08-10T10:00:00.000Z', syncedAt: 'x',
+    } as never);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })));
+    const result = await syncEventWindow(
+      'owner', 'primary', '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '', GOOGLE_ENV, true,
+    );
+    expect(result.deleted).toBe(1);
+    expect(await collection(COLLECTIONS.CALENDAR_EVENTS).findOne({ actorId: 'owner', eventId: 'moved-away' })).toBeNull();
+    vi.unstubAllGlobals();
   });
 });
 

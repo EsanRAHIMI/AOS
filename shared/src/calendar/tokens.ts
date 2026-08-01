@@ -254,8 +254,7 @@ export async function rememberOAuthState(state: string): Promise<void> {
 
 /** Single use: consuming it deletes it, so a replayed callback fails. */
 export async function consumeOAuthState(state: string): Promise<boolean> {
-  const doc = await statesCol().findOne({ state });
+  const doc = await statesCol().findOneAndDelete({ state });
   if (!doc) return false;
-  await statesCol().deleteOne({ state });
   return Date.parse(doc.expiresAt) >= Date.now();
 }

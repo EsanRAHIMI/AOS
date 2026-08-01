@@ -29,12 +29,18 @@ export async function syncCalendarAction(): Promise<{ ok: boolean; error: string
   }
 }
 
-export async function disconnectCalendarAction(): Promise<{ ok: boolean }> {
+export async function disconnectCalendarAction(): Promise<{ ok: boolean; error: string; warning: string }> {
   try {
-    await gateway.calendarDisconnect();
+    const result = await gateway.calendarDisconnect();
     revalidatePath('/calendar');
-    return { ok: true };
-  } catch { return { ok: false }; }
+    return {
+      ok: true,
+      error: '',
+      warning: result.revoked ? '' : 'اتصال محلی حذف شد، اما لغو دسترسی در گوگل پاسخ موفق نداد. دسترسی AOS را از تنظیمات حساب Google نیز بررسی کنید.',
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'قطع اتصال ناموفق بود', warning: '' };
+  }
 }
 
 export async function createEventAction(body: Record<string, unknown>) {

@@ -60,8 +60,8 @@ describe('exchange does not block on the first sync', () => {
     const route = read('../gateway-api/src/routes/calendar.ts');
     const exchange = route.slice(route.indexOf("app.post('/v1/calendar/oauth/exchange'"));
     const body = exchange.slice(0, exchange.indexOf("app.post('/v1/calendar/disconnect'"));
-    expect(body).toContain('void syncAll(');
-    expect(body).not.toContain('await syncAll(');
+    expect(body).toContain("void refresh('oauth')");
+    expect(body).not.toContain("await refresh('oauth')");
   });
 
   it('the callback re-checks real state before claiming failure', () => {

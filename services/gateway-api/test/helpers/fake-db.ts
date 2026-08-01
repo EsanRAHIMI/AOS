@@ -33,6 +33,7 @@ function matches(doc: Doc, filter: Doc | undefined): boolean {
         else if (op === '$exists') { if ((key in doc) !== Boolean(arg)) return false; }
         else if (op === '$ne') { if (value === arg) return false; }
         else if (op === '$gte') { if (!(String(value) >= String(arg))) return false; }
+        else if (op === '$lt') { if (!(String(value) < String(arg))) return false; }
         else if (op === '$lte') { if (!(String(value) <= String(arg))) return false; }
         else { throw new Error(`fake-db: unsupported operator ${op} on ${key} — extend the fake`); }
       }
@@ -112,11 +113,21 @@ export class FakeCollection {
     applyUpdate(hit, update);
     return project(opts?.returnDocument === 'after' ? hit : before, opts?.projection);
   }
+  async findOneAndDelete(filter: Doc): Promise<Doc | null> {
+    const i = this.docs.findIndex((d) => matches(d, filter));
+    if (i === -1) return null;
+    return this.docs.splice(i, 1)[0] ?? null;
+  }
   async deleteOne(filter: Doc): Promise<{ deletedCount: number }> {
     const i = this.docs.findIndex((d) => matches(d, filter));
     if (i === -1) return { deletedCount: 0 };
     this.docs.splice(i, 1);
     return { deletedCount: 1 };
+  }
+  async deleteMany(filter: Doc): Promise<{ deletedCount: number }> {
+    const before = this.docs.length;
+    this.docs = this.docs.filter((d) => !matches(d, filter));
+    return { deletedCount: before - this.docs.length };
   }
   async countDocuments(filter?: Doc): Promise<number> {
     return this.docs.filter((d) => matches(d, filter)).length;

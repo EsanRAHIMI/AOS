@@ -8,7 +8,7 @@
  * changed. Idempotent — run it as often as you like.
  *
  * Usage:
- *   MONGODB_URI=... [MONGODB_DB_NAME=autonomous_os_kernel] node --import tsx scripts/ensure-indexes.mjs
+ *   MONGODB_URI=... [MONGODB_DB_NAME=autonomous_os_kernel] node scripts/ensure-indexes.mjs
  *   ... --plan     # print the plan and exit without touching the database
  */
 import { connectMongo, closeMongo, ensureIndexes, describeIndexPlan, INDEX_PLAN } from '@factory/shared';

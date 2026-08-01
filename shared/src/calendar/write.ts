@@ -13,7 +13,10 @@
  * in the owner's name.
  */
 import { googleCall, CALENDAR_API, TASKS_API } from './google.js';
-import { ensureAosCalendar, listCalendars, mirrorWrittenEvent, forgetMirroredEvent, type CalendarRef } from './sync.js';
+import {
+  ensureAosCalendar, listCalendars, mirrorWrittenEvent, forgetMirroredEvent,
+  mirrorWrittenTask, type CalendarRef,
+} from './sync.js';
 
 export type WriteSensitivity = 'free' | 'approval' | 'blocked';
 
@@ -201,7 +204,7 @@ export async function createTask(input: CreateTaskInput, env: NodeJS.ProcessEnv 
   // Tasks has no extendedProperties, so provenance is a marker in the notes —
   // visible to the owner, which is the honest place for it.
   const notes = `${input.notes ?? ''}${input.notes ? '\n\n' : ''}[aos]`;
-  return googleCall<Record<string, unknown>>(
+  const created = await googleCall<Record<string, unknown>>(
     input.actorId, TASKS_API, `/lists/${encodeURIComponent(listId)}/tasks`,
     {
       method: 'POST',
@@ -213,13 +216,17 @@ export async function createTask(input: CreateTaskInput, env: NodeJS.ProcessEnv 
       env,
     },
   );
+  await mirrorWrittenTask(input.actorId, listId, created).catch(() => undefined);
+  return created;
 }
 
 export async function completeTask(
   actorId: string, taskId: string, taskListId = '@default', env: NodeJS.ProcessEnv = process.env,
 ) {
-  return googleCall<Record<string, unknown>>(
+  const completed = await googleCall<Record<string, unknown>>(
     actorId, TASKS_API, `/lists/${encodeURIComponent(taskListId)}/tasks/${encodeURIComponent(taskId)}`,
     { method: 'PATCH', body: { status: 'completed' }, env },
   );
+  await mirrorWrittenTask(actorId, taskListId, completed).catch(() => undefined);
+  return completed;
 }

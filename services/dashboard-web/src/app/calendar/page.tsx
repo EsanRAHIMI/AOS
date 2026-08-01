@@ -70,6 +70,7 @@ export default async function CalendarPage({ searchParams }: {
   const status = await gateway.calendarStatus();
   const setup = status?.setup;
   const connected = Boolean(status?.connected);
+  const freshness = status?.freshness;
 
   const view: CalView = sp.view === 'week' ? 'week'
     : sp.view === 'day' ? 'day'
@@ -143,7 +144,13 @@ export default async function CalendarPage({ searchParams }: {
           <h1>تقویم و کارها</h1>
           <p className="cal-sub">
             {connected
-              ? <>متصل به <span dir="ltr">{status?.accountEmail || 'Google'}</span> — این صفحه از آینهٔ محلی می‌خواند، پس سریع است و به سهمیهٔ گوگل دست نمی‌زند.</>
+              ? <>
+                  متصل به <span dir="ltr">{status?.accountEmail || 'Google'}</span>
+                  {' — '}{freshness?.oldestSuccessfulSyncAt
+                    ? `آخرین همگام‌سازی کامل ${new Date(freshness.oldestSuccessfulSyncAt).toLocaleString('fa-IR')}`
+                    : 'در انتظار اولین همگام‌سازی'}
+                  {freshness?.stale ? ' — به‌روزرسانی در پس‌زمینه شروع می‌شود' : ''}
+                </>
               : 'هنوز به گوگل کلندر وصل نشده‌اید.'}
           </p>
         </div>

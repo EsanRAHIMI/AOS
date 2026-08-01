@@ -2,6 +2,37 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-08-01 — Calendar freshness follows the owner's write pattern (D-214)
+
+The Google connection was healthy, but the mirror had no autonomous freshness
+policy: it changed only after consent, a manual sync, a calendar toggle, or an
+AOS event write. Jarvis and pre-event alerts read that mirror exclusively, so
+a healthy OAuth grant could still produce an hours-old daily schedule.
+
+- AOS event and Google Task writes now use Google's authoritative response as
+  an immediate write-through. Creating an event no longer launches an
+  unrelated full account sync; Tasks no longer remain invisible until later.
+- External changes use a bounded four-month snapshot four times per day by
+  default, plus a non-blocking stale-read trigger after two hours. Successful
+  snapshots reconcile absence as well as presence, removing events deleted or
+  moved outside the useful window.
+- A process-local in-flight guard plus an owner-specific Redis lease prevents
+  duplicate syncs across requests and gateway replicas. Leases expire after a
+  crash; Redis failure degrades to local coordination rather than making the
+  calendar unavailable.
+- Calendar mutations use a strict dashboard gateway client, so HTTP failures
+  can no longer be reported as successful `null` responses. The page exposes
+  oldest-resource freshness, not the misleading newest sync timestamp.
+- Google calls have bounded per-attempt timeouts and transient network retries.
+  Disconnect attempts OAuth revocation before deleting the encrypted local
+  grant and mirror.
+- Added account/window indexes for reconciliation and the missing note identity
+  and event-note indexes.
+
+Rollout is configuration-compatible: all cadence variables have conservative
+defaults. Setting `GOOGLE_CALENDAR_SYNC_INTERVAL_MS=0` disables only the timer;
+manual sync, stale-read refresh and immediate AOS writes remain available.
+
 ## 2026-07-31 — Runtime readiness becomes a deployment gate (D-213)
 
 Local builds proved code compatibility but did not prove that Atlas, hosted

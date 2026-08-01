@@ -55,6 +55,18 @@ export class FakeRedisBroker {
     this.store.delete(key);
   }
 
+  setIfAbsent(key: string, value: string, ttlMs: number): boolean {
+    if (this.get(key) !== null) return false;
+    this.set(key, value, ttlMs);
+    return true;
+  }
+
+  compareAndDelete(key: string, expectedValue: string): boolean {
+    if (this.get(key) !== expectedValue) return false;
+    this.del(key);
+    return true;
+  }
+
   /** Synchronous delivery — deterministic for tests; real Redis is async but the fan-out contract doesn't depend on that timing. */
   publish(channel: string, message: string): number {
     const subs = this.channels.get(channel);
@@ -106,6 +118,12 @@ export class FakeRedisClient implements RedisLike {
   async quit(): Promise<void> {
     for (const u of this.unsubscribers) u();
     this.unsubscribers = [];
+  }
+  async setIfAbsent(key: string, value: string, ttlMs: number): Promise<boolean> {
+    return this.broker.setIfAbsent(key, value, ttlMs);
+  }
+  async compareAndDelete(key: string, expectedValue: string): Promise<boolean> {
+    return this.broker.compareAndDelete(key, expectedValue);
   }
 }
 

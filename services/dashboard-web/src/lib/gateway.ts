@@ -57,6 +57,26 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
+/** Mutations must never turn an HTTP/API failure into a successful `null`. */
+async function callStrict<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(await authHeaders()),
+      ...(init?.headers ?? {}),
+    },
+    cache: 'no-store',
+    signal: init?.signal ?? AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+  });
+  const body = await res.json().catch(() => null) as ApiEnvelope<T> | null;
+  if (!res.ok || !body?.ok) {
+    throw new Error(body?.error?.message || `gateway request failed (${res.status})`);
+  }
+  if (body.data === undefined) throw new Error('gateway returned no data');
+  return body.data;
+}
+
 export const gateway = {
   // --- K2 Persistent Jarvis (D-177) ---
   jarvisSessions: () => call<Array<{ sessionId: string; title: string; turnCount: number; lastTurnAt: string | null; totalCostUsd: number }>>('/v1/jarvis/sessions'),
@@ -381,33 +401,37 @@ export const gateway = {
     setup: { oauthConfigured: boolean; oauthMissing: string[]; vaultConfigured: boolean; vaultReason: string };
     connected: boolean; accountEmail: string; scopes: string[]; revokedAt: string | null; lastError: string;
     calendars: Array<Record<string, unknown>>; sync: Array<Record<string, unknown>>;
+    freshness: {
+      connected: boolean; stale: boolean; oldestSuccessfulSyncAt: string; ageMs: number | null;
+      missingResources: string[]; failedResources: Array<{ resourceId: string; error: string }>;
+    } | null;
   }>('/v1/calendar/status'),
-  calendarAuthUrl: () => call<{ url: string }>('/v1/calendar/oauth/start'),
+  calendarAuthUrl: () => callStrict<{ url: string }>('/v1/calendar/oauth/start'),
   calendarExchange: (code: string, state: string) =>
-    call<{ accountEmail: string; synced: number }>('/v1/calendar/oauth/exchange',
+    callStrict<{ accountEmail: string; syncStarted: boolean; primed: number }>('/v1/calendar/oauth/exchange',
       { method: 'POST', body: JSON.stringify({ code, state }) }),
-  calendarDisconnect: () => call<{ removed: boolean }>('/v1/calendar/disconnect', { method: 'POST', body: '{}' }),
+  calendarDisconnect: () => callStrict<{ removed: boolean; revoked: boolean }>('/v1/calendar/disconnect', { method: 'POST', body: '{}' }),
   calendarToggle: (calendarId: string, enabled: boolean) =>
-    call<{ calendarId: string; enabled: boolean; removed: number }>('/v1/calendar/calendars/toggle',
+    callStrict<{ calendarId: string; enabled: boolean; removed: number }>('/v1/calendar/calendars/toggle',
       { method: 'POST', body: JSON.stringify({ calendarId, enabled }) }),
-  calendarSync: () => call<{ results: Array<Record<string, unknown>> }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
+  calendarSync: () => callStrict<{ results: Array<Record<string, unknown>>; staged: boolean; status?: string }>('/v1/calendar/sync', { method: 'POST', body: '{}' }),
   ownerPreferences: () => call<{ preferences: Record<string, unknown> }>('/v1/settings/preferences'),
   saveOwnerPreferences: (patch: Record<string, unknown>) =>
     call<{ preferences: Record<string, unknown> }>('/v1/settings/preferences', { method: 'PUT', body: JSON.stringify(patch) }),
   calendarNotes: (eventIds: string[]) => call<{ notes: Record<string, Array<Record<string, unknown>>> }>(
     `/v1/calendar/notes?eventIds=${encodeURIComponent(eventIds.join(','))}`),
   calendarSaveNote: (body: { calendarId: string; eventId: string; body: string; noteId?: string }) =>
-    call<{ note: Record<string, unknown> | null }>('/v1/calendar/notes', { method: 'POST', body: JSON.stringify(body) }),
+    callStrict<{ note: Record<string, unknown> | null }>('/v1/calendar/notes', { method: 'POST', body: JSON.stringify(body) }),
   calendarDeleteNote: (noteId: string) =>
-    call<{ deleted: boolean }>(`/v1/calendar/notes/${noteId}`, { method: 'DELETE' }),
+    callStrict<{ deleted: boolean }>(`/v1/calendar/notes/${noteId}`, { method: 'DELETE' }),
   calendarAgenda: (from?: string, to?: string) => call<{ events: Array<Record<string, unknown>> }>(
     `/v1/calendar/agenda${from ? `?from=${encodeURIComponent(from)}${to ? `&to=${encodeURIComponent(to)}` : ''}` : ''}`),
   calendarTasks: () => call<{ tasks: Array<Record<string, unknown>> }>('/v1/calendar/tasks'),
   createCalendarEvent: (body: Record<string, unknown>) =>
-    call<{ event?: Record<string, unknown>; requiresApproval: boolean; reason?: string }>(
+    callStrict<{ event?: Record<string, unknown>; requiresApproval: boolean; reason?: string }>(
       '/v1/calendar/events', { method: 'POST', body: JSON.stringify(body) }),
   createCalendarTask: (body: Record<string, unknown>) =>
-    call<{ task: Record<string, unknown> }>('/v1/calendar/tasks', { method: 'POST', body: JSON.stringify(body) }),
+    callStrict<{ task: Record<string, unknown> }>('/v1/calendar/tasks', { method: 'POST', body: JSON.stringify(body) }),
 
   cinLedgerVerify: () => call<{ chainId: string; ok: boolean; length: number; headHash: string | null; brokenAtSeq: number | null; reason: string | null }>('/v1/cin/ledger/verify'),
 

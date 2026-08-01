@@ -12,6 +12,7 @@ import {
   BaseEnvSchema,
   MongoEnvSchema,
   RedisEnvSchema,
+  CalendarSyncEnvSchema,
   AgentQueueEnvSchema,
   AgentTaskQueueClient,
   dispatchViaQueueOrHttp,
@@ -260,7 +261,10 @@ import { manifest } from './factory/manifest.js';
 // K1.3 seam — the gateway is buildable without listening (and, for tests,
 // without a real Mongo connection via the shared setTestDb seam). index.ts
 // is the only caller in production; characterization tests are the other.
-export const GatewayEnvSchema = BaseEnvSchema.merge(MongoEnvSchema).merge(RedisEnvSchema).merge(AgentQueueEnvSchema);
+export const GatewayEnvSchema = BaseEnvSchema.merge(MongoEnvSchema)
+  .merge(RedisEnvSchema)
+  .merge(AgentQueueEnvSchema)
+  .merge(CalendarSyncEnvSchema);
 export type GatewayEnv = ReturnType<(typeof GatewayEnvSchema)['parse']>;
 
 export interface BuildGatewayOptions {
@@ -1762,6 +1766,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
         isSafeMode,
         SAFE_MODE_SETTING,
         mutationLimiter,
+        redisBackbone,
         saveOp,
         executeViaApi,
         runVerification,

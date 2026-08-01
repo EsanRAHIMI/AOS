@@ -143,6 +143,14 @@ export function createFakeDb(): { db: Db; store: Map<string, Doc[]>; dump: (name
         applyUpdate(doc, update);
         return project(doc);
       },
+      findOneAndDelete: async (filter: Doc) => {
+        const list = rows();
+        const i = list.findIndex((d) => matches(d, filter));
+        if (i < 0) return null;
+        const [deleted] = list.splice(i, 1);
+        store.set(name, list);
+        return deleted ? project(deleted) : null;
+      },
       /* Single-document delete, matching driver semantics: removes at most one
        * row. `consumeOAuthState` relies on that — deleting more would make a
        * state collision silently invalidate someone else's pending consent. */

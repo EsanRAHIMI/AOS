@@ -5,24 +5,11 @@
  * because the failure modes here are quiet ones — a mirror that drifts still
  * renders, it just shows the owner a meeting that moved yesterday.
  *
- * The rules that guide imposes, and why each is obeyed literally:
- *
- *  1. **Full sync once, then incremental forever.** Each incremental list
- *     passes the stored `syncToken` and stores the new `nextSyncToken`.
- *  2. **Deleted entries always come back in the results** (`status: cancelled`)
- *     precisely so clients can remove them. A sync that only upserts leaves
- *     cancelled meetings on the owner's screen — so cancellations are deleted
- *     from the mirror, not skipped.
- *  3. **Query parameters must be identical across every request in a sync
- *     series**, and `timeMin`/`timeMax`/`q`/`orderBy`/`updatedMin` are illegal
- *     with a sync token. The parameter set therefore lives in ONE constant used
- *     by both the full and incremental paths — the moment they diverge, Google
- *     starts returning 400 and the mirror silently stops updating.
- *  4. **410 GONE means the token is dead**: wipe this calendar's slice of the
- *     mirror and run a full sync. Not an error to log and move past.
- *  5. **Paginate with `pageToken`; `nextSyncToken` appears only on the LAST
- *     page.** Storing a token mid-pagination would skip everything after it.
+ * The mirror intentionally covers the useful rolling window rather than all
+ * account history. AOS writes are mirrored immediately; bounded refreshes
+ * reconcile changes made by Google or another client.
  */
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { actorPartitionedCollection } from '../db/index.js';
 import { COLLECTIONS } from '../constants/index.js';
@@ -30,6 +17,7 @@ import { nowIso } from '../utils/index.js';
 import { googleCall, GoogleApiError, CALENDAR_API, TASKS_API } from './google.js';
 import { getGrant } from './tokens.js';
 import { purgeEventNotes } from './notes.js';
+import type { RedisBackbone } from '../redis/index.js';
 
 /* ------------------------------------------------------------------ models */
 
@@ -558,12 +546,13 @@ const WINDOW_PARAMS = { maxResults: 250, singleEvents: true, showDeleted: true }
  */
 export async function syncEventWindow(
   actorId: string, calendarId: string, fromIso: string, toIso: string,
-  updatedMin: string, env: NodeJS.ProcessEnv = process.env,
+  updatedMin: string, env: NodeJS.ProcessEnv = process.env, reconcile = false,
 ): Promise<{ upserted: number; deleted: number; pages: number; error: string }> {
   const account = (await getGrant(actorId))?.accountEmail ?? '';
   let upserted = 0;
   let deleted = 0;
   let pages = 0;
+  const seen = new Set<string>();
 
   try {
     let pageToken = '';
@@ -586,6 +575,7 @@ export async function syncEventWindow(
       for (const raw of res.items ?? []) {
         const ev = toEvent(actorId, calendarId, raw, account);
         if (!ev.eventId) continue;
+        seen.add(ev.eventId);
         // A cancellation is a result, not an absence — it must leave the mirror.
         if (ev.status === 'cancelled') {
           const r = await eventsCol().deleteOne({ actorId, calendarId, eventId: ev.eventId });
@@ -597,6 +587,19 @@ export async function syncEventWindow(
 
       if (!res.nextPageToken) break;
       pageToken = res.nextPageToken;
+    }
+
+    /* A bounded full snapshot is also negative evidence: a mirrored event
+     * absent from Google's successful response was deleted or moved outside
+     * the useful window. Delta responses cannot make that claim. */
+    if (reconcile) {
+      const staleFilter: Record<string, unknown> = {
+        actorId, account, calendarId,
+        start: { $gte: fromIso, $lt: toIso },
+      };
+      if (seen.size > 0) staleFilter.eventId = { $nin: [...seen] };
+      const stale = await eventsCol().deleteMany(staleFilter as never);
+      deleted += stale.deletedCount ?? 0;
     }
   } catch (err) {
     return { upserted, deleted, pages, error: err instanceof Error ? err.message : String(err) };
@@ -618,6 +621,7 @@ export function standardWindow(now: Date = new Date()): { from: string; to: stri
  */
 export async function syncEvents(
   actorId: string, calendarId: string, env: NodeJS.ProcessEnv = process.env,
+  opts: { fullReconcile?: boolean } = {},
 ): Promise<SyncResult> {
   const prior = await readState(actorId, calendarId, 'events');
   /* Migration (D-196). A row left by the token design carries a `lastSyncAt`
@@ -626,12 +630,12 @@ export async function syncEvents(
    * leftover token is the marker: if one is present, this calendar has never
    * had a trustworthy full pass and gets one now. */
   const staleTokenEra = Boolean(prior?.syncToken);
-  const first = !prior?.lastSyncAt || staleTokenEra;
+  const first = !prior?.lastSyncAt || staleTokenEra || Boolean(opts.fullReconcile);
   const { from, to } = standardWindow();
   // Back off a minute: two clocks, and a missed event is worse than a re-read.
   const updatedMin = first ? '' : new Date(new Date(prior!.lastSyncAt).getTime() - 60_000).toISOString();
 
-  const res = await syncEventWindow(actorId, calendarId, from, to, updatedMin, env);
+  const res = await syncEventWindow(actorId, calendarId, from, to, updatedMin, env, first);
 
   await writeState(SyncStateSchema.parse({
     actorId, resourceId: calendarId, kind: 'events',
@@ -651,6 +655,43 @@ export async function syncEvents(
 }
 
 /* --------------------------------------------------------------- task sync */
+
+function toTask(
+  actorId: string, taskListId: string, raw: Record<string, unknown>, account: string,
+): CalendarTask {
+  const notes = String(raw.notes ?? '');
+  return CalendarTaskSchema.parse({
+    actorId,
+    account,
+    taskListId,
+    taskId: String(raw.id ?? ''),
+    title: String(raw.title ?? ''),
+    notes,
+    status: String(raw.status ?? 'needsAction'),
+    due: String(raw.due ?? ''),
+    completed: String(raw.completed ?? ''),
+    parent: String(raw.parent ?? ''),
+    position: String(raw.position ?? ''),
+    updated: String(raw.updated ?? ''),
+    createdByAos: notes.includes('[aos]'),
+    syncedAt: nowIso(),
+  });
+}
+
+/** Mirror Google's authoritative response to an AOS task write immediately. */
+export async function mirrorWrittenTask(
+  actorId: string, taskListId: string, raw: Record<string, unknown>,
+): Promise<void> {
+  const taskId = String(raw.id ?? '');
+  if (!taskId) return;
+  if (raw.deleted === true) {
+    await tasksCol().deleteOne({ actorId, taskListId, taskId });
+    return;
+  }
+  const account = (await getGrant(actorId))?.accountEmail ?? '';
+  const task = toTask(actorId, taskListId, raw, account);
+  await tasksCol().updateOne({ actorId, taskListId, taskId }, { $set: task }, { upsert: true });
+}
 
 /**
  * Google Tasks — what the owner calls "reminders".
@@ -672,6 +713,7 @@ export async function syncTasks(
   let upserted = 0;
   let deleted = 0;
   let pages = 0;
+  const seen = new Set<string>();
 
   try {
     let pageToken = '';
@@ -693,26 +735,13 @@ export async function syncTasks(
       for (const raw of res.items ?? []) {
         const taskId = String(raw.id ?? '');
         if (!taskId) continue;
+        seen.add(taskId);
         if (raw.deleted === true) {
           const r = await tasksCol().deleteOne({ actorId, taskListId, taskId });
           deleted += r.deletedCount ?? 0;
           continue;
         }
-        const notes = String(raw.notes ?? '');
-        const task = CalendarTaskSchema.parse({
-          actorId, account, taskListId, taskId,
-          title: String(raw.title ?? ''),
-          notes,
-          status: String(raw.status ?? 'needsAction'),
-          due: String(raw.due ?? ''),
-          completed: String(raw.completed ?? ''),
-          parent: String(raw.parent ?? ''),
-          position: String(raw.position ?? ''),
-          updated: String(raw.updated ?? ''),
-          // Tasks has no extendedProperties, so provenance rides in the notes.
-          createdByAos: notes.includes('[aos]'),
-          syncedAt: nowIso(),
-        });
+        const task = toTask(actorId, taskListId, raw, account);
         await tasksCol().updateOne({ actorId, taskListId, taskId }, { $set: task }, { upsert: true });
         upserted += 1;
       }
@@ -720,6 +749,13 @@ export async function syncTasks(
       if (!res.nextPageToken) break;
       pageToken = res.nextPageToken;
     }
+
+    // This is a complete task-list snapshot. Absence is authoritative and
+    // heals old rows whose deletion tombstone is no longer returned by Google.
+    const staleFilter: Record<string, unknown> = { actorId, account, taskListId };
+    if (seen.size > 0) staleFilter.taskId = { $nin: [...seen] };
+    const stale = await tasksCol().deleteMany(staleFilter as never);
+    deleted += stale.deletedCount ?? 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await writeState(SyncStateSchema.parse({
@@ -1018,10 +1054,9 @@ export async function syncStates(actorId: string): Promise<SyncState[]> {
 /**
  * Staged sync, phase one (D-194): make the screen useful.
  *
- * Only calendars that have never been synced are primed. A calendar that
- * already holds a sync token has a cheaper route — one incremental call
- * instead of four windowed reads — so priming it again would spend the
- * owner's Google quota to learn nothing.
+ * Only calendars that have never been synced are primed. Warm calendars go
+ * directly to one bounded reconciliation, so priming them again would spend
+ * the owner's Google quota to learn nothing.
  *
  * Awaited by the caller, and deliberately short: four bounded reads per cold
  * calendar, current month first.
@@ -1056,19 +1091,122 @@ export async function syncFirstPaint(
 }
 
 /**
- * Staged sync, phase two: make the mirror complete and cheap to keep current.
- *
- * This is the unbounded, tokenised series. First run per calendar walks
- * everything (slow, once); every run after is a delta (fast, forever). Meant to
- * run in the BACKGROUND behind `syncFirstPaint`, which is why nothing here
- * needs to finish before the owner sees their month.
+ * Staged sync, phase two: reconcile the useful rolling window plus Tasks.
+ * Coordinated scheduled/manual callers request a full bounded snapshot so
+ * absence can safely remove stale rows; lower-level callers may still request
+ * a cheap updatedMin delta when negative reconciliation is not required.
  */
-export async function syncAll(actorId: string, env: NodeJS.ProcessEnv = process.env): Promise<SyncResult[]> {
+export async function syncAll(
+  actorId: string, env: NodeJS.ProcessEnv = process.env,
+  opts: { fullReconcile?: boolean } = {},
+): Promise<SyncResult[]> {
   const calendars = await syncCalendarList(actorId, env);
   const results: SyncResult[] = [];
   for (const cal of calendars.filter((c) => c.enabled)) {
-    results.push(await syncEvents(actorId, cal.calendarId, env));
+    results.push(await syncEvents(actorId, cal.calendarId, env, opts));
   }
   results.push(await syncTasks(actorId, '@default', env));
   return results;
+}
+
+/* ------------------------------------------------------- freshness + lock */
+
+export interface CalendarFreshness {
+  connected: boolean;
+  stale: boolean;
+  oldestSuccessfulSyncAt: string;
+  ageMs: number | null;
+  missingResources: string[];
+  failedResources: Array<{ resourceId: string; error: string }>;
+}
+
+/** Freshness is the oldest enabled calendar/task state, never the newest one. */
+export async function calendarFreshness(
+  actorId: string, staleAfterMs: number, now = new Date(),
+): Promise<CalendarFreshness> {
+  const grant = await getGrant(actorId);
+  if (!grant || grant.revokedAt) {
+    return { connected: false, stale: false, oldestSuccessfulSyncAt: '', ageMs: null, missingResources: [], failedResources: [] };
+  }
+  const calendars = (await listCalendars(actorId)).filter((calendar) => calendar.enabled);
+  const states = await syncStates(actorId);
+  const byResource = new Map(states.map((state) => [state.resourceId, state]));
+  const expected = [...calendars.map((calendar) => calendar.calendarId), 'tasks:@default'];
+  const missingResources = expected.filter((resourceId) => !byResource.get(resourceId)?.lastSyncAt);
+  const failedResources = expected
+    .map((resourceId) => ({ resourceId, error: byResource.get(resourceId)?.lastError ?? '' }))
+    .filter((item) => item.error);
+  const successful = expected
+    .map((resourceId) => byResource.get(resourceId))
+    .filter((state): state is SyncState => Boolean(state?.lastSyncAt && !state.lastError))
+    .map((state) => state.lastSyncAt)
+    .sort();
+  const oldestSuccessfulSyncAt = successful[0] ?? '';
+  const ageMs = oldestSuccessfulSyncAt ? Math.max(0, now.getTime() - Date.parse(oldestSuccessfulSyncAt)) : null;
+  return {
+    connected: true,
+    stale: missingResources.length > 0 || failedResources.length > 0 || ageMs === null || ageMs >= staleAfterMs,
+    oldestSuccessfulSyncAt,
+    ageMs,
+    missingResources,
+    failedResources,
+  };
+}
+
+export interface CoordinatedSyncResult {
+  status: 'fresh' | 'synced' | 'partial' | 'locked' | 'not_connected';
+  degradedLock: boolean;
+  freshness: CalendarFreshness;
+  results: SyncResult[];
+}
+
+const localSyncs = new Map<string, Promise<CoordinatedSyncResult>>();
+
+/**
+ * One sync per actor per process and, when Redis is available, per deployment.
+ * A Redis outage degrades to the local guard: duplicate reads cost quota but
+ * never make the calendar unavailable or corrupt its idempotent mirror.
+ */
+export async function syncCalendarCoordinated(args: {
+  actorId: string;
+  staleAfterMs: number;
+  leaseMs: number;
+  force?: boolean;
+  redis?: RedisBackbone;
+  env?: NodeJS.ProcessEnv;
+}): Promise<CoordinatedSyncResult> {
+  const running = localSyncs.get(args.actorId);
+  if (running) return running;
+
+  const run = (async (): Promise<CoordinatedSyncResult> => {
+    let freshness = await calendarFreshness(args.actorId, args.staleAfterMs);
+    if (!freshness.connected) return { status: 'not_connected', degradedLock: false, freshness, results: [] };
+    if (!args.force && !freshness.stale) return { status: 'fresh', degradedLock: false, freshness, results: [] };
+
+    const leaseKey = `calendar:sync:${args.actorId}`;
+    const leaseOwner = randomUUID();
+    const acquired = args.redis
+      ? await args.redis.acquireLease(leaseKey, leaseOwner, args.leaseMs)
+      : null;
+    if (acquired === false) return { status: 'locked', degradedLock: false, freshness, results: [] };
+
+    try {
+      // Another replica may have completed between the first check and lease.
+      freshness = await calendarFreshness(args.actorId, args.staleAfterMs);
+      if (!args.force && !freshness.stale) return { status: 'fresh', degradedLock: acquired === null, freshness, results: [] };
+      const results = await syncAll(args.actorId, args.env, { fullReconcile: true });
+      const partial = results.some((result) => Boolean(result.error));
+      const after = await calendarFreshness(args.actorId, args.staleAfterMs);
+      return { status: partial ? 'partial' : 'synced', degradedLock: acquired === null, freshness: after, results };
+    } finally {
+      if (acquired) await args.redis?.releaseLease(leaseKey, leaseOwner);
+    }
+  })();
+
+  localSyncs.set(args.actorId, run);
+  try {
+    return await run;
+  } finally {
+    if (localSyncs.get(args.actorId) === run) localSyncs.delete(args.actorId);
+  }
 }

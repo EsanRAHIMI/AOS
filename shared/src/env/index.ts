@@ -91,6 +91,16 @@ export const RedisEnvSchema = z.object({
   REDIS_KEY_PREFIX: z.string().optional().default('factory:'),
 });
 
+/** Low-frequency Google mirror refresh; writes from AOS remain immediate. */
+export const CalendarSyncEnvSchema = z.object({
+  /** Zero disables the background timer. Default: four checks per day. */
+  GOOGLE_CALENDAR_SYNC_INTERVAL_MS: z.coerce.number().int().nonnegative().optional().default(6 * 60 * 60_000),
+  /** Reads may request a background refresh once the oldest resource exceeds this age. */
+  GOOGLE_CALENDAR_STALE_AFTER_MS: z.coerce.number().int().positive().optional().default(2 * 60 * 60_000),
+  /** Must exceed a normal sync, but expires automatically after a crashed process. */
+  GOOGLE_CALENDAR_SYNC_LEASE_MS: z.coerce.number().int().positive().optional().default(10 * 60_000),
+});
+
 /**
  * K1 BullMQ Task Queue (D-173). Optional, not required — reuses `REDIS_URL`
  * from `RedisEnvSchema` (queue workers only start when it's set; unset means

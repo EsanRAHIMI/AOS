@@ -44,6 +44,14 @@ export const GOOGLE_SCOPES = [
   'email',
 ] as const;
 
+const REQUIRED_OPERATIONAL_SCOPES = GOOGLE_SCOPES.slice(0, 4);
+
+export function missingRequiredGoogleScopes(granted: string[]): string[] {
+  if (granted.length === 0) return [];
+  const set = new Set(granted);
+  return REQUIRED_OPERATIONAL_SCOPES.filter((scope) => !set.has(scope));
+}
+
 export interface GoogleConfig {
   clientId: string;
   clientSecret: string;
@@ -120,6 +128,7 @@ export async function exchangeCode(cfg: GoogleConfig, code: string): Promise<Tok
       redirect_uri: cfg.redirectUri,
       grant_type: 'authorization_code',
     }),
+    signal: AbortSignal.timeout(15_000),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`token exchange failed (${res.status}): ${JSON.stringify(body).slice(0, 300)}`);
@@ -136,6 +145,7 @@ export async function refreshAccessToken(cfg: GoogleConfig, refreshToken: string
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
     }),
+    signal: AbortSignal.timeout(15_000),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -152,6 +162,7 @@ export async function revokeToken(token: string): Promise<boolean> {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ token }),
+    signal: AbortSignal.timeout(15_000),
   });
   return res.ok;
 }
@@ -217,6 +228,7 @@ export interface CallOptions {
   /** Retries for transient failures only; permanent errors throw immediately. */
   maxAttempts?: number;
   env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
 }
 
 /**
@@ -237,14 +249,24 @@ export async function googleCall<T>(
   let lastErr: GoogleApiError | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const token = await accessTokenFor(actorId, env);
-    const res = await fetch(url, {
-      method: opts.method ?? 'GET',
-      headers: {
-        authorization: `Bearer ${token}`,
-        ...(opts.body ? { 'content-type': 'application/json' } : {}),
-      },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: opts.method ?? 'GET',
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(opts.body ? { 'content-type': 'application/json' } : {}),
+        },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 12_000),
+      });
+    } catch (cause) {
+      lastErr = new GoogleApiError(0, 'network', cause instanceof Error ? cause.message : 'network failure');
+      if (attempt + 1 >= maxAttempts) throw lastErr;
+      const wait = RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 250);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      continue;
+    }
 
     if (res.status === 204) return undefined as T;
     if (res.ok) return await res.json() as T;
@@ -271,7 +293,10 @@ export async function googleCall<T>(
 /** Which Google account this grant belongs to — shown in the UI. */
 export async function fetchAccountEmail(accessToken: string): Promise<string> {
   try {
-    const res = await fetch(USERINFO_API, { headers: { authorization: `Bearer ${accessToken}` } });
+    const res = await fetch(USERINFO_API, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(12_000),
+    });
     if (!res.ok) return '';
     const body = await res.json() as { email?: string };
     return body.email ?? '';

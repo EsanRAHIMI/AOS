@@ -10,9 +10,11 @@
 import { randomBytes } from 'node:crypto';
 import {
   googleAvailability, googleConfig, buildAuthUrl, exchangeCode, fetchAccountEmail,
-  storeGrant, getGrant, deleteGrant, vaultAvailability,
+  missingRequiredGoogleScopes,
+  storeGrant, getGrant, deleteGrant, vaultAvailability, decryptSecret, revokeToken,
   rememberOAuthState, consumeOAuthState,
-  CALENDAR_ACTOR_ID, syncAll, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
+  CALENDAR_ACTOR_ID, syncFirstPaint, syncCalendarList, listCalendars, readAgenda, readTasks, syncStates,
+  calendarFreshness, syncCalendarCoordinated,
   ensureAosCalendar, createEvent, createTask, classifyWrite, purgeMirror, setCalendarEnabled,
   saveEventNote, readEventNotes, deleteEventNote,
   getPreferences, setPreferences, PreferencesPatchSchema, diagnoseRange, backfillRange,
@@ -67,6 +69,35 @@ function landing(dash: string, ok: boolean, title: string, detail: string): stri
 
 export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps): void {
   const { guard, deny } = deps;
+  const syncOptions = (force = false) => ({
+    actorId: OWNER,
+    staleAfterMs: deps.env.GOOGLE_CALENDAR_STALE_AFTER_MS,
+    leaseMs: deps.env.GOOGLE_CALENDAR_SYNC_LEASE_MS,
+    force,
+    redis: deps.redisBackbone,
+  });
+  const refresh = async (reason: string, force = false) => {
+    const result = await syncCalendarCoordinated(syncOptions(force));
+    if (result.status === 'partial') deps.ctx.log.warn({ reason, results: result.results }, 'calendar sync partial');
+    else if (result.status === 'synced') deps.ctx.log.info({ reason, degradedLock: result.degradedLock }, 'calendar sync completed');
+    return result;
+  };
+
+  /* Four scheduled opportunities per day by default. The initial check heals
+   * a stale mirror after a restart; freshness prevents it spending quota when
+   * another replica or a recent user action already synced. */
+  let initialSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let periodicSyncTimer: ReturnType<typeof setInterval> | null = null;
+  if (deps.env.NODE_ENV !== 'test' && deps.env.GOOGLE_CALENDAR_SYNC_INTERVAL_MS > 0) {
+    initialSyncTimer = setTimeout(() => { void refresh('startup').catch((err) => deps.ctx.log.error({ err }, 'calendar startup sync failed')); }, 30_000);
+    initialSyncTimer.unref?.();
+    periodicSyncTimer = setInterval(() => { void refresh('schedule').catch((err) => deps.ctx.log.error({ err }, 'calendar scheduled sync failed')); }, deps.env.GOOGLE_CALENDAR_SYNC_INTERVAL_MS);
+    periodicSyncTimer.unref?.();
+  }
+  app.addHook('onClose', async () => {
+    if (initialSyncTimer) clearTimeout(initialSyncTimer);
+    if (periodicSyncTimer) clearInterval(periodicSyncTimer);
+  });
 
   const handle = async (reply: FastifyReplyLike, fn: () => Promise<unknown>) => {
     try {
@@ -101,6 +132,7 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
       lastError: grant?.lastError ?? '',
       calendars: grant ? await listCalendars(OWNER) : [],
       sync: grant ? await syncStates(OWNER) : [],
+      freshness: grant ? await calendarFreshness(OWNER, deps.env.GOOGLE_CALENDAR_STALE_AFTER_MS) : null,
     });
   });
 
@@ -143,12 +175,16 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     try {
       const tok = await exchangeCode(cfg, q.code);
       const email = await fetchAccountEmail(tok.access_token);
+      if (!email) throw new Error('Google account identity could not be verified; reconnect and try again');
+      const scopes = (tok.scope ?? '').split(' ').filter(Boolean);
+      const missingScopes = missingRequiredGoogleScopes(scopes);
+      if (missingScopes.length) throw new Error(`Google grant is missing required scopes: ${missingScopes.join(', ')}`);
       const grant = await storeGrant({
         actorId: OWNER,
         refreshToken: tok.refresh_token ?? '',
         accessToken: tok.access_token,
         expiresInSec: tok.expires_in,
-        scopes: (tok.scope ?? '').split(' ').filter(Boolean),
+        scopes,
         accountEmail: email,
       });
       /* Connecting a DIFFERENT Google account must not leave the previous
@@ -162,7 +198,7 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
       // First sync immediately: an empty calendar page right after connecting
       // looks broken even when it is merely unsynced.
       const results = await syncFirstPaint(OWNER).catch(() => []);
-      void syncAll(OWNER).catch(() => undefined);
+      void refresh('oauth-legacy', true).catch(() => undefined);
       const total = results.reduce((n, r) => n + r.upserted, 0);
       return page(true, 'اتصال برقرار شد', `${email || 'حساب گوگل'} وصل شد و ${total} مورد همگام‌سازی شد.`);
     } catch (err) {
@@ -201,12 +237,16 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     return handle(reply, async () => {
       const tok = await exchangeCode(cfg, body.code!);
       const email = await fetchAccountEmail(tok.access_token);
+      if (!email) throw new Error('Google account identity could not be verified; reconnect and try again');
+      const scopes = (tok.scope ?? '').split(' ').filter(Boolean);
+      const missingScopes = missingRequiredGoogleScopes(scopes);
+      if (missingScopes.length) throw new Error(`Google grant is missing required scopes: ${missingScopes.join(', ')}`);
       const grant = await storeGrant({
         actorId: OWNER,
         refreshToken: tok.refresh_token ?? '',
         accessToken: tok.access_token,
         expiresInSec: tok.expires_in,
-        scopes: (tok.scope ?? '').split(' ').filter(Boolean),
+        scopes,
         accountEmail: email,
       });
       if (grant.accountChanged) {
@@ -222,12 +262,11 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
        * timeout, so the caller gave up and reported failure while the grant was
        * already stored and the sync was still running. The exchange is the
        * thing the owner is waiting on; the sync is not. */
-      /* Staged (D-194): the four month windows are awaited — they are bounded
-       * and quick, and they are what the owner is about to look at. The
-       * unbounded tokenised walk then runs behind them. */
+      /* Staged (D-194/D-214): visible month windows are awaited; the bounded
+       * reconciliation then runs behind them under the distributed lease. */
       const primed = await syncFirstPaint(OWNER).catch(() => []);
-      void syncAll(OWNER)
-        .then((r) => deps.ctx.log.info({ synced: r.reduce((n, x) => n + x.upserted, 0) }, 'calendar initial sync done'))
+      void refresh('oauth')
+        .then((r) => deps.ctx.log.info({ synced: r.results.reduce((n, x) => n + x.upserted, 0) }, 'calendar initial sync done'))
         .catch((err) => deps.ctx.log.error({ err }, 'calendar initial sync failed'));
 
       return {
@@ -242,9 +281,20 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     if (!guard(req)) return deny(reply);
     // Disconnecting must take the data with it, not just the token.
     return handle(reply, async () => {
+      const grant = await getGrant(OWNER);
+      let revoked = false;
+      if (grant?.refreshTokenEnc) {
+        try {
+          revoked = await revokeToken(decryptSecret(grant.refreshTokenEnc));
+        } catch (err) {
+          // Local disconnect must still complete if Google's revoke endpoint is
+          // temporarily unavailable; surface the distinction to the caller.
+          deps.ctx.log.warn({ err }, 'google token revoke failed during disconnect');
+        }
+      }
       const removed = await deleteGrant(OWNER);
       const purged = await purgeMirror(OWNER);
-      return { removed, purged };
+      return { removed, revoked, purged };
     });
   });
 
@@ -338,15 +388,15 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
   app.post('/v1/calendar/sync', async (req, reply) => {
     if (!guard(req)) return deny(reply);
     return handle(reply, async () => {
-      /* Cold calendars get their four windows first so the grid fills fast;
-       * warm ones skip straight to the incremental delta, which is a single
-       * cheap call. Either way the owner is not waiting on a full walk. */
+      /* Cold calendars get visible windows first; warm ones go directly to a
+       * bounded snapshot. Neither path scans the account's full history. */
       const primed = await syncFirstPaint(OWNER);
       if (primed.length > 0) {
-        void syncAll(OWNER).catch((err) => deps.ctx.log.error({ err }, 'background series sync failed'));
+        void refresh('manual-after-prime', true).catch((err) => deps.ctx.log.error({ err }, 'background series sync failed'));
         return { results: [], primed: primed.reduce((n, r) => n + r.upserted, 0), staged: true };
       }
-      return { results: await syncAll(OWNER), primed: 0, staged: false };
+      const result = await refresh('manual', true);
+      return { results: result.results, primed: 0, staged: false, status: result.status };
     });
   });
 
@@ -366,7 +416,7 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
       // Enabling means it has never been synced; pull it now, in the background
       // so a big calendar cannot time the request out.
       if (res.enabled) {
-        void syncAll(OWNER).catch((err) => deps.ctx.log.error({ err }, 'calendar sync after enable failed'));
+        void refresh('calendar-enabled', true).catch((err) => deps.ctx.log.error({ err }, 'calendar sync after enable failed'));
       }
       return res;
     });
@@ -384,9 +434,15 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
     const q = req.query as { from?: string; to?: string; limit?: string };
     const from = q.from ?? new Date().toISOString().slice(0, 10);
     const to = q.to ?? new Date(Date.now() + 30 * 86_400_000).toISOString();
-    return handle(reply, async () => ({
-      events: await readAgenda({ actorId: OWNER, fromIso: from, toIso: to, limit: Number(q.limit ?? 250) }),
-    }));
+    return handle(reply, async () => {
+      const freshness = await calendarFreshness(OWNER, deps.env.GOOGLE_CALENDAR_STALE_AFTER_MS);
+      if (freshness.stale) void refresh('stale-agenda-read').catch((err) => deps.ctx.log.error({ err }, 'calendar read-triggered sync failed'));
+      return {
+        events: await readAgenda({ actorId: OWNER, fromIso: from, toIso: to, limit: Number(q.limit ?? 250) }),
+        freshness,
+        refreshStarted: freshness.stale,
+      };
+    });
   });
 
   app.get('/v1/calendar/tasks', async (req, reply) => {
@@ -443,7 +499,6 @@ export function registerCalendarRoutes(app: FastifyInstance, deps: GatewayDeps):
         attendees: body.attendees,
         withMeet: body.withMeet,
       });
-      await syncAll(OWNER).catch(() => undefined);
       return { event: created, requiresApproval: false };
     });
   });

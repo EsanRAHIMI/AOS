@@ -45,6 +45,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return back(status?.connected ? 'ok' : 'exchange_failed');
   } catch (e) {
     const message = e instanceof Error ? e.message : 'exchange_failed';
-    return back(message.includes('bad_state') ? 'bad_state' : message.slice(0, 80));
+    if (message.includes('bad_state')) return back('bad_state');
+    // A timeout can happen after the grant commit. Preserve the source-of-truth
+    // check even though calendar mutations now throw instead of returning null.
+    const status = await gateway.calendarStatus();
+    return back(status?.connected ? 'ok' : message.slice(0, 80));
   }
 }

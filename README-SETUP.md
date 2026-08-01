@@ -264,6 +264,9 @@ AGENT_QUEUE_BACKOFF_MS=2000
 AGENT_QUEUE_CONCURRENCY=4
 AGENT_QUEUE_TIMEOUT_MS=30000
 AGENT_DISPATCH_MODE=http
+GOOGLE_CALENDAR_SYNC_INTERVAL_MS=21600000
+GOOGLE_CALENDAR_STALE_AFTER_MS=7200000
+GOOGLE_CALENDAR_SYNC_LEASE_MS=600000
 ```
 
 **تست:** `curl https://api.simorx.com/health`
@@ -1307,4 +1310,3 @@ cp .env.example .env && pnpm sync:env && pnpm dev:all
 - راهنمای dashboard: `deployment/dokploy/dashboard-web.md`
 
 **Phase 10** — env جدید لازم نیست؛ فقط redeploy: `dashboard-web`، `gateway-api`، `orchestrator-agent`
-

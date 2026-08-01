@@ -67,15 +67,16 @@ export function CalendarControls({ connected }: { connected: boolean }) {
         className="btn btn-ghost"
         disabled={busy}
         onClick={async () => {
-          // Disconnecting removes OUR stored grant. It does not revoke the app
-          // in the Google account, so say so rather than implying it did.
-          if (!confirm('اتصال قطع شود؟ توکن ذخیره‌شده حذف می‌شود (دسترسی در حساب گوگل جداگانه لغو می‌شود).')) return;
+          // Revoke at Google first, then remove the encrypted local grant and mirror.
+          if (!confirm('اتصال قطع و دسترسی AOS در حساب گوگل لغو شود؟ داده‌های آینهٔ محلی نیز حذف می‌شوند.')) return;
           setBusy(true);
-          await disconnectCalendarAction();
+          const result = await disconnectCalendarAction();
           setBusy(false);
+          if (!result.ok) { setMsg(result.error); return; }
+          if (result.warning) window.alert(result.warning);
           window.location.reload();
         }}
-      >قطع اتصال</button>
+      >قطع اتصال و لغو دسترسی</button>
 
       {msg && <span className="cal-msg" {...bidiProps(msg)}>{msg}</span>}
     </div>

@@ -9,7 +9,7 @@
 import type { ServiceContext } from '@factory/service-kit';
 import {
   buildAuditLog, buildSecurityEvent, auditEnvironment, scoreNextActions,
-  classifyGoalScope, RateLimiter, type AgentTaskQueueClient, type DispatchOutcome,
+  classifyGoalScope, RateLimiter, type AgentTaskQueueClient, type DispatchOutcome, type RedisBackbone,
 } from '@factory/shared';
 import type {
   AccessDecision,
@@ -148,6 +148,7 @@ export interface GatewayDeps {
   isSafeMode: () => Promise<boolean>;
   SAFE_MODE_SETTING: string;
   mutationLimiter: RateLimiter;
+  redisBackbone: RedisBackbone;
   saveOp: (plan: OperationPlan) => Promise<OperationPlan>;
   executeViaApi: (plan: OperationPlan) => Promise<{ manualRequired: boolean }>;
   runVerification: (plan: OperationPlan) => Promise<VerificationResult>;

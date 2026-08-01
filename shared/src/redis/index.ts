@@ -30,6 +30,9 @@ export interface RedisLike {
   subscribe(channel: string, onMessage: (message: string) => void): Promise<void>;
   ping(): Promise<string>;
   quit(): Promise<void>;
+  /** Optional lease primitives; older test doubles remain valid without them. */
+  setIfAbsent?(key: string, value: string, ttlMs: number): Promise<boolean>;
+  compareAndDelete?(key: string, expectedValue: string): Promise<boolean>;
 }
 
 type MinimalLogger = Pick<Logger, 'warn'> | { warn: (obj: unknown, msg?: string) => void };
@@ -131,6 +134,31 @@ export class RedisBackbone {
       return true;
     } catch (err) {
       this.warn('set', err);
+      return false;
+    }
+  }
+
+  /**
+   * Acquire a bounded distributed lease. `null` means Redis is unavailable,
+   * while `false` means another healthy process currently owns the lease.
+   */
+  async acquireLease(key: string, owner: string, ttlMs: number): Promise<boolean | null> {
+    if (!this.enabled || !this.client?.setIfAbsent) return null;
+    try {
+      return await this.client.setIfAbsent(this.prefixed(key), owner, ttlMs);
+    } catch (err) {
+      this.warn('acquireLease', err);
+      return null;
+    }
+  }
+
+  /** Release only the lease this owner acquired; never delete a successor's lease. */
+  async releaseLease(key: string, owner: string): Promise<boolean> {
+    if (!this.enabled || !this.client?.compareAndDelete) return false;
+    try {
+      return await this.client.compareAndDelete(this.prefixed(key), owner);
+    } catch (err) {
+      this.warn('releaseLease', err);
       return false;
     }
   }
@@ -246,6 +274,18 @@ function createIoredisClient(url: string): RedisLike {
     async quit() {
       await cmd.quit().catch(() => undefined);
       await sub?.quit().catch(() => undefined);
+    },
+    async setIfAbsent(key, value, ttlMs) {
+      await ensureConnected();
+      return (await cmd.set(key, value, 'PX', ttlMs, 'NX')) === 'OK';
+    },
+    async compareAndDelete(key, expectedValue) {
+      await ensureConnected();
+      const deleted = await cmd.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1, key, expectedValue,
+      );
+      return Number(deleted) === 1;
     },
   };
 }

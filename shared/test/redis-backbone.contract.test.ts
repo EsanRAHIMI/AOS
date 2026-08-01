@@ -69,6 +69,17 @@ describe('RedisBackbone — working fake client', () => {
     expect(broker.get('myprefix:k')).toBe('v');
     expect(broker.get('k')).toBeNull();
   });
+
+  it('leases are exclusive and only their owner can release them', async () => {
+    const { makeClient } = createFakeRedisServer();
+    const a = new RedisBackbone({ url: 'fake://x', client: makeClient() });
+    const b = new RedisBackbone({ url: 'fake://x', client: makeClient() });
+    await expect(a.acquireLease('calendar', 'a', 60_000)).resolves.toBe(true);
+    await expect(b.acquireLease('calendar', 'b', 60_000)).resolves.toBe(false);
+    await expect(b.releaseLease('calendar', 'b')).resolves.toBe(false);
+    await expect(a.releaseLease('calendar', 'a')).resolves.toBe(true);
+    await expect(b.acquireLease('calendar', 'b', 60_000)).resolves.toBe(true);
+  });
 });
 
 describe('EventBroadcaster — local-only fan-out when Redis is disabled', () => {

@@ -257,6 +257,12 @@ export const INDEX_PLAN: IndexPlanEntry[] = [
     reason: 'PERFORMANCE: every agenda read is a time-range scan sorted by start — the hot path of the calendar page and the heartbeat.',
   },
   {
+    collection: COLLECTIONS.CALENDAR_EVENTS,
+    keys: { actorId: 1, account: 1, calendarId: 1, start: 1 },
+    options: { name: 'calendar_window_by_account' },
+    reason: 'PERFORMANCE: bounded reconciliation and account-safe agenda windows must not scan another calendar or a previous grant.',
+  },
+  {
     collection: COLLECTIONS.CALENDAR_TASKS,
     keys: { actorId: 1, taskListId: 1, taskId: 1 },
     options: { unique: true, name: 'actor_list_task_unique' },
@@ -273,6 +279,24 @@ export const INDEX_PLAN: IndexPlanEntry[] = [
     keys: { actorId: 1, calendarId: 1 },
     options: { unique: true, name: 'actor_calendar_unique' },
     reason: 'CONSTRAINT: one row per calendar in the owner list.',
+  },
+  {
+    collection: COLLECTIONS.CALENDARS,
+    keys: { actorId: 1, account: 1, enabled: 1 },
+    options: { name: 'enabled_calendars_by_account' },
+    reason: 'PERFORMANCE: every agenda and freshness read resolves enabled calendars for the current grant.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_NOTES,
+    keys: { actorId: 1, noteId: 1 },
+    options: { unique: true, name: 'actor_note_unique' },
+    reason: 'CONSTRAINT: note ids are immutable identities within an owner partition.',
+  },
+  {
+    collection: COLLECTIONS.CALENDAR_NOTES,
+    keys: { actorId: 1, eventId: 1, createdAt: 1 },
+    options: { name: 'event_notes_in_order' },
+    reason: 'PERFORMANCE: the day view fetches notes for its visible event ids in creation order.',
   },
 ];
 
