@@ -5,15 +5,16 @@
 | App name | file-asset-service |
 | Domain | assets.simorx.com |
 | Port | 4112 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/file-asset-service |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/file-asset-service... run build` |
-| Start command | `pnpm --filter @factory/file-asset-service run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` (monorepo root) |
+| Build Type | **Dockerfile** (not Nixpacks) |
+| Dockerfile path | `deployment/docker/Dockerfile.file-asset-service` |
+| Docker stage | `runtime` (if requested) |
 | Health check | /health |
 
 ## Environment
-Use `deployment/env/file-asset-service.env.example` (or the service's `.env.example`).
+Use the service's `.env.example`. `SERVICE_ID=file-asset-service` is already
+baked into the image; keep the same value in the runtime environment.
 
 ## Validation after deploy
 1. `https://assets.simorx.com/health` → `{ "status": "ok" }`

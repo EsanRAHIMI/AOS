@@ -1,0 +1,60 @@
+# Dokploy: browser-testing-agent
+#
+# Chromium is installed in a source-independent layer so normal code changes
+# reuse Docker's browser cache instead of downloading it on every deployment.
+#
+# Dokploy settings:
+#   Build Type:       Dockerfile
+#   Dockerfile path:  deployment/docker/Dockerfile.browser-testing-agent
+#   Root Directory:   /
+
+# syntax=docker/dockerfile:1
+
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@9.15.0 --activate
+
+COPY . .
+
+ENV SERVICE_ID=browser-testing-agent
+ENV NODE_ENV=production
+ENV NPM_CONFIG_PRODUCTION=false
+ENV NODE_OPTIONS=--max-old-space-size=4096
+
+RUN pnpm install --frozen-lockfile \
+  && chmod +x scripts/nixpacks-build.sh scripts/nixpacks-start.sh \
+  && bash scripts/nixpacks-build.sh
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Keep this version aligned with the resolved playwright-core version in the
+# lockfile. --with-deps installs Chromium and only its required system libs.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates tini \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@9.15.0 --activate \
+  && pnpm dlx playwright-core@1.61.1 install --with-deps chromium \
+  && groupadd --system --gid 1001 aos \
+  && useradd --system --uid 1001 --gid aos --create-home aos \
+  && chown -R aos:aos /ms-playwright
+
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV SERVICE_ID=browser-testing-agent
+
+COPY --from=build --chown=aos:aos /app /app
+
+USER aos
+
+EXPOSE 4116
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["bash", "scripts/nixpacks-start.sh"]

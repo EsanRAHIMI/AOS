@@ -758,9 +758,10 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/file-asset-service` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/file-asset-service... run build` |
-| Start | `pnpm --filter @factory/file-asset-service run start` |
+| Root directory | `/` |
+| Build Type | `Dockerfile` |
+| Dockerfile path | `deployment/docker/Dockerfile.file-asset-service` |
+| Docker stage | `runtime` |
 
 **Environment**
 
@@ -900,9 +901,10 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/browser-testing-agent` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/browser-testing-agent... run build` |
-| Start | `pnpm --filter @factory/browser-testing-agent run start` |
+| Root directory | `/` |
+| Build Type | `Dockerfile` |
+| Dockerfile path | `deployment/docker/Dockerfile.browser-testing-agent` |
+| Docker stage | `runtime` |
 
 **Environment**
 

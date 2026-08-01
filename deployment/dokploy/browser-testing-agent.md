@@ -5,15 +5,16 @@
 | App name | browser-testing-agent |
 | Domain | browser-testing.simorx.com |
 | Port | 4116 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/browser-testing-agent |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/browser-testing-agent... run build` |
-| Start command | `pnpm --filter @factory/browser-testing-agent run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` (monorepo root) |
+| Build Type | **Dockerfile** (not Nixpacks) |
+| Dockerfile path | `deployment/docker/Dockerfile.browser-testing-agent` |
+| Docker stage | `runtime` (if requested) |
 | Health check | /health |
 
 ## Notes
-- For real browsers, add `playwright-core` and run `npx playwright install chromium`
-  in the image build (otherwise it uses the HTTP fallback).
+- The image installs the lockfile-compatible Chromium build and its required
+  system libraries. Normal source changes reuse this Docker layer.
 - Optional S3 env (AWS_*) enables screenshot capture; absent ⇒ no-screenshot.
 - Only internal/owned targets are allowed by default.
 
