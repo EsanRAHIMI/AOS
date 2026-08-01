@@ -19,16 +19,26 @@ RUN apt-get update \
   && corepack enable \
   && corepack prepare pnpm@9.15.0 --activate
 
-COPY . .
-
 ENV SERVICE_ID=aos-agent-runtime
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NPM_CONFIG_PRODUCTION=false
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY shared/package.json shared/package.json
+COPY packages/service-kit/package.json packages/service-kit/package.json
+COPY services/aos-agent-runtime/package.json services/aos-agent-runtime/package.json
+
+RUN --mount=type=cache,id=pnpm-agent-runtime,target=/pnpm/store \
+  pnpm config set store-dir /pnpm/store \
+  && pnpm config set network-concurrency 4 \
+  && pnpm config set fetch-retries 5 \
+  && pnpm install --filter @factory/aos-agent-runtime... --frozen-lockfile
+
+COPY . .
+
 RUN echo "docker-build: SERVICE_ID=${SERVICE_ID}" \
-  && pnpm install --frozen-lockfile \
   && chmod +x scripts/nixpacks-build.sh scripts/nixpacks-start.sh \
   && bash scripts/nixpacks-build.sh
 
