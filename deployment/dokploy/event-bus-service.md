@@ -5,15 +5,16 @@
 | App name | event-bus-service |
 | Domain | events.simorx.com |
 | Port | 4111 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/event-bus-service |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/event-bus-service... run build` |
-| Start command | `pnpm --filter @factory/event-bus-service run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` (monorepo root) |
+| Build Type | **Dockerfile** (not Nixpacks) |
+| Docker File | `Dockerfile.event-bus-service` |
+| Docker stage | `runtime` (if requested) |
 | Health check | /health |
 
 ## Environment
-Use `deployment/env/event-bus-service.env.example` (or the service's `.env.example`).
+Use the service's `.env.example`. `SERVICE_ID=event-bus-service` is baked into
+the image; keep the same value in the runtime environment.
 
 ## Validation after deploy
 1. `https://events.simorx.com/health` → `{ "status": "ok" }`

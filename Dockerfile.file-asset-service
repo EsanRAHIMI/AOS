@@ -2,7 +2,7 @@
 #
 # Dokploy settings:
 #   Build Type:       Dockerfile
-#   Dockerfile path:  deployment/docker/Dockerfile.file-asset-service
+#   Docker File:      Dockerfile.file-asset-service
 #   Root Directory:   /
 
 # syntax=docker/dockerfile:1

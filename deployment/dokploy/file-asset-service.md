@@ -8,7 +8,7 @@
 | Repository | github.com/EsanRAHIMI/AOS |
 | Root directory | `/` (monorepo root) |
 | Build Type | **Dockerfile** (not Nixpacks) |
-| Dockerfile path | `deployment/docker/Dockerfile.file-asset-service` |
+| Docker File | `Dockerfile.file-asset-service` |
 | Docker stage | `runtime` (if requested) |
 | Health check | /health |
 

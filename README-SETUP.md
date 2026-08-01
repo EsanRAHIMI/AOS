@@ -151,9 +151,10 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/event-bus-service` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/event-bus-service... run build` |
-| Start | `pnpm --filter @factory/event-bus-service run start` |
+| Root directory | `/` |
+| Build Type | `Dockerfile` |
+| Docker File | `Dockerfile.event-bus-service` |
+| Docker stage | `runtime` |
 
 **Environment**
 
@@ -760,7 +761,7 @@ LOG_LEVEL=info
 |---|---|
 | Root directory | `/` |
 | Build Type | `Dockerfile` |
-| Dockerfile path | `deployment/docker/Dockerfile.file-asset-service` |
+| Docker File | `Dockerfile.file-asset-service` |
 | Docker stage | `runtime` |
 
 **Environment**
@@ -903,7 +904,7 @@ LOG_LEVEL=info
 |---|---|
 | Root directory | `/` |
 | Build Type | `Dockerfile` |
-| Dockerfile path | `deployment/docker/Dockerfile.browser-testing-agent` |
+| Docker File | `Dockerfile.browser-testing-agent` |
 | Docker stage | `runtime` |
 
 **Environment**
@@ -1072,7 +1073,7 @@ LOG_LEVEL=info
 |---|---|
 | Root directory | `/` (روت monorepo) |
 | Build Type | **Dockerfile** |
-| Dockerfile | `deployment/docker/Dockerfile.dashboard-web` |
+| Docker File | `Dockerfile.dashboard-web` |
 | Env الزامی (runtime) | `SERVICE_ID=dashboard-web` |
 
 > Nixpacks را برای این سرویس استفاده نکن — cold build فقط برای nixpkgs حدود ۸ دقیقه

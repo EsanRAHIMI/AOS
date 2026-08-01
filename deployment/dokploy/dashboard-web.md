@@ -8,11 +8,11 @@
 | Repository | github.com/EsanRAHIMI/AOS |
 | Root directory | `/` (monorepo root — الزامی) |
 | Build Type | **Dockerfile** (نه Nixpacks) |
-| Dockerfile path | `deployment/docker/Dockerfile.dashboard-web` |
+| Docker File | `Dockerfile.dashboard-web` |
 | Docker stage | `runtime` (اگر Dokploy پرسید) |
 | Health check | `/` یا `/login` |
 
-> مسیر بالا `SERVICE_ID=dashboard-web` را در خود image می‌پزد.
+> فایل بالا `SERVICE_ID=dashboard-web` را در خود image می‌پزد.
 > Envهای Dokploy معمولاً فقط هنگام **اجرا** تزریق می‌شوند، نه هنگام build —
 > برای همین Build Arg لازم نیست اگر از این Dockerfile اختصاصی استفاده کنی.
 

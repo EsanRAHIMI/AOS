@@ -6,8 +6,8 @@ SERVICE_ID="${SERVICE_ID:-}"
 if [[ -z "$SERVICE_ID" ]]; then
   echo "nixpacks-build: Missing SERVICE_ID during build."
   echo "Dokploy Env is runtime-only. Use Build Type=Dockerfile with:"
-  echo "  deployment/docker/Dockerfile.<service-id>"
-  echo "  e.g. deployment/docker/Dockerfile.aos-agent-runtime"
+  echo "  Dockerfile.<service-id> at the repository root"
+  echo "  e.g. Dockerfile.aos-agent-runtime"
   echo "Or set Docker Build Arg SERVICE_ID=<id>."
   exit 1
 fi

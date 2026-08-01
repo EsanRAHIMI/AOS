@@ -1,12 +1,10 @@
-# Dokploy: aos-agent-runtime
+# Dokploy: dashboard-web
 #
-# SERVICE_ID is baked at build-time — Dokploy Env is runtime-only, so Nixpacks
-# fails with: Missing SERVICE_ID — set it in Dokploy Environment Settings.
+# Thin entry so SERVICE_ID is baked at build-time.
+# Dokploy Env vars are runtime-only; without this (or a Build Arg) the root
+# Dockerfile used to fail with: SERVICE_ID build-arg/env is required.
 #
-# Dokploy settings:
-#   Build Type:       Dockerfile  (نه Nixpacks)
-#   Dockerfile path:  deployment/docker/Dockerfile.aos-agent-runtime
-#   Root Directory:   /
+# Dokploy Docker File: Dockerfile.dashboard-web
 
 # syntax=docker/dockerfile:1
 
@@ -21,7 +19,7 @@ RUN apt-get update \
 
 COPY . .
 
-ENV SERVICE_ID=aos-agent-runtime
+ENV SERVICE_ID=dashboard-web
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NPM_CONFIG_PRODUCTION=false
@@ -46,13 +44,12 @@ RUN apt-get update \
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
-ENV SERVICE_ID=aos-agent-runtime
+ENV SERVICE_ID=dashboard-web
 
 COPY --from=build --chown=aos:aos /app /app
 
 USER aos
 
-# Seven workers listen on their historical ports inside one process.
-EXPOSE 4103 4106 4107 4109 4110 4114 4115
+EXPOSE 4100
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bash", "scripts/nixpacks-start.sh"]

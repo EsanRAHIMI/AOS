@@ -21,7 +21,7 @@ Fix: switch this app to the baked Dockerfile below (same pattern as dashboard-we
 | Repository | `github.com/EsanRAHIMI/AOS` |
 | Root directory | `/` (monorepo root — الزامی) |
 | Build Type | **Dockerfile** (نه Nixpacks) |
-| Dockerfile path | `deployment/docker/Dockerfile.aos-agent-runtime` |
+| Docker File | `Dockerfile.aos-agent-runtime` |
 | Docker stage | `runtime` (اگر پرسید) |
 | Health check | `/health` on any worker port (e.g. 4103) |
 | **Exposed ports** | **4103, 4106, 4107, 4109, 4110, 4114, 4115** — all from one container |
