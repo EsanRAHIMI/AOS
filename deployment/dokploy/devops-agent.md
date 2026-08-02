@@ -8,14 +8,13 @@
 | Repository | github.com/EsanRAHIMI/AOS |
 | Root directory | `/` |
 | Build Type | **Dockerfile** |
-| Docker File | `Dockerfile` |
+| Docker File | `Dockerfile.devops-agent` |
 | Docker Context Path | `.` |
 | Docker Build Stage | `runtime` |
-| Build-time Argument | `SERVICE_ID=devops-agent` |
 | Health check | /health |
 
 ## Environment
-Use `deployment/env/devops-agent.env.example` (or the service's `.env.example`).
+Use the service's `.env.example`. No Build-time Argument is required.
 
 ## Validation after deploy
 1. `https://devops.simorx.com/health` → `{ "status": "ok" }`

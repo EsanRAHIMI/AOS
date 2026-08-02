@@ -457,9 +457,11 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/devops-agent` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/devops-agent... run build` |
-| Start | `pnpm --filter @factory/devops-agent run start` |
+| Root directory | `/` |
+| Build Type | `Dockerfile` |
+| Docker File | `Dockerfile.devops-agent` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
 
 **Environment**
 
