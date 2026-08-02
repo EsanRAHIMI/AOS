@@ -45,7 +45,8 @@ RUN --mount=type=cache,id=pnpm-generic,target=/pnpm/store \
   && pnpm config set fetch-retries 5 \
   && pnpm install --filter "@factory/${SERVICE_ID}..." --frozen-lockfile
 RUN chmod +x scripts/nixpacks-build.sh scripts/nixpacks-start.sh \
-  && bash scripts/nixpacks-build.sh
+  && bash scripts/nixpacks-build.sh \
+  && test -f "services/${SERVICE_ID}/dist/index.js"
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

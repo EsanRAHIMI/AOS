@@ -6,10 +6,12 @@ Independent Dokploy application (no Docker locally; Dokploy builds from GitHub).
 |---|---|
 | App name | code-operator-agent |
 | Domain | https://code.simorx.com |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/code-operator-agent |
-| Build command | pnpm install --frozen-lockfile && pnpm --filter @factory/code-operator-agent... build |
-| Start command | node services/code-operator-agent/dist/index.js |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` |
+| Build Type | **Dockerfile** |
+| Docker File | `Dockerfile.code-operator-agent` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
 | Health check | /health |
 | Internal port | 4122 |
 

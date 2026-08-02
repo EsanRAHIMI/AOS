@@ -5,15 +5,16 @@
 | App name | builder-agent |
 | Domain | builder.simorx.com |
 | Port | 4104 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/builder-agent |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/builder-agent... run build` |
-| Start command | `pnpm --filter @factory/builder-agent run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` |
+| Build Type | **Dockerfile** |
+| Docker File | `Dockerfile.builder-agent` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
 | Health check | /health |
 
 ## Environment
-Use `deployment/env/builder-agent.env.example` (or the service's `.env.example`).
+Use the service's `.env.example`. No Build-time Argument is required.
 
 ## Validation after deploy
 1. `https://builder.simorx.com/health` → `{ "status": "ok" }`

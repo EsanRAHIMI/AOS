@@ -409,9 +409,11 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/builder-agent` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/builder-agent... run build` |
-| Start | `pnpm --filter @factory/builder-agent run start` |
+| Root directory | `/` |
+| Build Type | `Dockerfile` |
+| Docker File | `Dockerfile.builder-agent` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
 
 **Environment**
 
@@ -1008,9 +1010,11 @@ LOG_LEVEL=info
 
 | فیلد | مقدار |
 |---|---|
-| Root directory | `services/code-operator-agent` |
-| Build | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/code-operator-agent... run build` |
-| Start | `pnpm --filter @factory/code-operator-agent run start` |
+| Root directory | `/` |
+| Build Type | `Dockerfile` |
+| Docker File | `Dockerfile.code-operator-agent` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
 
 **Volume:** یک volume پایدار روی `/workspace` mount کن و یک‌بار repo را clone کن
 (`git clone … /workspace/autonomous-os-kernel`). Agent فقط داخل همین checkout، روی شاخهٔ ایزوله کار می‌کند — هرگز روی دایرکتوری live production.
