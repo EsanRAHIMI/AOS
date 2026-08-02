@@ -5,11 +5,13 @@
 | App name | gateway-api |
 | Domain | api.simorx.com |
 | Port | 4101 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/gateway-api |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/gateway-api... run build` |
-| Start command | `pnpm --filter @factory/gateway-api run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` |
+| Build Type | **Dockerfile** |
+| Docker File | `Dockerfile` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
+| Build-time Argument | `SERVICE_ID=gateway-api` |
 | Health check | /health |
 
 ## Environment

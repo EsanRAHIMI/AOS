@@ -5,11 +5,13 @@
 | App name | service-registry |
 | Domain | registry.simorx.com |
 | Port | 4108 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/service-registry |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/service-registry... run build` |
-| Start command | `pnpm --filter @factory/service-registry run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` |
+| Build Type | **Dockerfile** |
+| Docker File | `Dockerfile` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
+| Build-time Argument | `SERVICE_ID=service-registry` |
 | Health check | /health |
 
 ## Environment

@@ -5,11 +5,13 @@
 | App name | orchestrator-agent |
 | Domain | orchestrator.simorx.com |
 | Port | 4102 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/orchestrator-agent |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/orchestrator-agent... run build` |
-| Start command | `pnpm --filter @factory/orchestrator-agent run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` |
+| Build Type | **Dockerfile** |
+| Docker File | `Dockerfile` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
+| Build-time Argument | `SERVICE_ID=orchestrator-agent` |
 | Health check | /health |
 
 ## Environment

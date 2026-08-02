@@ -5,11 +5,13 @@
 | App name | devops-agent |
 | Domain | devops.simorx.com |
 | Port | 4105 |
-| Repository | github.com/<owner>/autonomous-os-kernel |
-| Root directory | services/devops-agent |
-| Build context | repo root (pnpm workspace) |
-| Build command | `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @factory/devops-agent... run build` |
-| Start command | `pnpm --filter @factory/devops-agent run start` |
+| Repository | github.com/EsanRAHIMI/AOS |
+| Root directory | `/` |
+| Build Type | **Dockerfile** |
+| Docker File | `Dockerfile` |
+| Docker Context Path | `.` |
+| Docker Build Stage | `runtime` |
+| Build-time Argument | `SERVICE_ID=devops-agent` |
 | Health check | /health |
 
 ## Environment
