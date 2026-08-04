@@ -28,6 +28,22 @@ describe('provider selection', () => {
     expect(llmRouterFromEnv({} as NodeJS.ProcessEnv).activeProvider).toBe('mock');
     expect(llmRouterFromEnv({ OPENAI_API_KEY: 'k' } as unknown as NodeJS.ProcessEnv).activeProvider).toBe('openai');
   });
+  it('local OpenAI-compatible endpoint has highest priority and honors model tiers', () => {
+    const env = {
+      LLM_LOCAL_BASE_URL: 'http://127.0.0.1:11434/v1/',
+      LLM_LOCAL_MODEL: 'reasoning-local',
+      LLM_LOCAL_MODEL_FAST: 'fast-local',
+      ANTHROPIC_API_KEY: 'cloud-key',
+      OPENAI_API_KEY: 'cloud-key-2',
+    } as unknown as NodeJS.ProcessEnv;
+    expect(llmRouterFromEnv(env).activeProvider).toBe('local');
+    expect(llmStatusFromEnv(env)).toMatchObject({
+      configured: true,
+      mode: 'real',
+      provider: 'local',
+      defaultProvider: 'local',
+    });
+  });
 });
 
 describe('generateStructured — the validation invariant', () => {
@@ -83,7 +99,7 @@ describe('status + governance from env', () => {
   it('governance defaults are conservative and overridable', () => {
     const d = llmGovernanceFromEnv({} as NodeJS.ProcessEnv);
     expect(d).toMatchObject({ maxCostPerTaskUsd: 0.5, dailyCostLimitUsd: 20, safeModeFallback: true });
-    expect(d.allowedProviders).toEqual(['anthropic', 'openai']);
+    expect(d.allowedProviders).toEqual(['local', 'anthropic', 'openai']);
     const o = llmGovernanceFromEnv({ LLM_SAFE_MODE_FALLBACK: 'false', LLM_DAILY_COST_LIMIT_USD: '5' } as unknown as NodeJS.ProcessEnv);
     expect(o.safeModeFallback).toBe(false);
     expect(o.dailyCostLimitUsd).toBe(5);

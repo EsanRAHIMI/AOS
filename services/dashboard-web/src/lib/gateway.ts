@@ -82,9 +82,9 @@ export const gateway = {
   jarvisSessions: () => call<Array<{ sessionId: string; title: string; turnCount: number; lastTurnAt: string | null; totalCostUsd: number }>>('/v1/jarvis/sessions'),
   jarvisSession: (id: string) => call<{ session: Record<string, unknown>; turns: Array<Record<string, unknown>> }>(`/v1/jarvis/sessions/${id}`),
   createJarvisSession: (title?: string) => call<{ sessionId: string }>('/v1/jarvis/sessions', { method: 'POST', body: JSON.stringify({ title: title ?? '' }) }),
-  jarvisTurn: (sessionId: string, text: string, transport: 'text' | 'voice' = 'text') =>
+  jarvisTurn: (sessionId: string, text: string, transport: 'text' | 'voice' = 'text', provider: 'auto' | 'local' | 'openai' | 'anthropic' = 'auto') =>
     call<{ turnId: string; runId: string | null; status: string; replyText: string; pendingApprovalId: string | null; reasoningMode: string }>(
-      `/v1/jarvis/sessions/${sessionId}/turns`, { method: 'POST', body: JSON.stringify({ text, transport }) }),
+      `/v1/jarvis/sessions/${sessionId}/turns`, { method: 'POST', body: JSON.stringify({ text, transport, provider }) }),
   /** Archive an unprompted announcement as a real turn (D-197). */
   jarvisAnnounce: (sessionId: string, body: { trigger: string; text: string; eventId?: string; calendarId?: string }) =>
     call<{ turnId: string }>(`/v1/jarvis/sessions/${sessionId}/announce`, { method: 'POST', body: JSON.stringify(body) }),
@@ -201,7 +201,7 @@ export const gateway = {
   reportSecurityEvent: (e: { eventType: string; actorId?: string; role?: string; result?: string; target?: string; detail?: string; riskLevel?: string }) =>
     call<unknown>('/v1/security/event', { method: 'POST', body: JSON.stringify(e) }),
   // Phase 13 — Real Intelligence Integration
-  llmCosts: () => call<{ status: { provider: string; mode: string }; totals: { today: number; allTime: number; calls: number; realCount: number; fallbackCount: number }; byProvider: Record<string, { calls: number; costUsd: number }>; byAgent: Record<string, { calls: number; costUsd: number }>; mostExpensiveTask: { taskId: string; costUsd: number } | null; recent: Array<Record<string, unknown>> }>('/v1/llm/costs'),
+  llmCosts: () => call<{ status: { provider: string; mode: string }; totals: { today: number; allTime: number; calls: number; realCount: number; fallbackCount: number; tokensIn: number; tokensOut: number; tokensTotal: number }; window: { maxRecords: number; limited: boolean }; byProvider: Record<string, { calls: number; costUsd: number; tokensIn: number; tokensOut: number; tokensTotal: number }>; byAgent: Record<string, { calls: number; costUsd: number; tokensIn: number; tokensOut: number; tokensTotal: number }>; mostExpensiveTask: { taskId: string; costUsd: number } | null; recent: Array<Record<string, unknown>> }>('/v1/llm/costs'),
   llmPrompts: () => call<unknown[]>('/v1/llm/prompts'),
   llmBudgetEvents: () => call<unknown[]>('/v1/llm/budget-events'),
   research: (taskId?: string) => call<unknown[]>(`/v1/research${taskId ? `?taskId=${taskId}` : ''}`),

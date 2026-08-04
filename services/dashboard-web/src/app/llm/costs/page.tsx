@@ -15,7 +15,7 @@ export default async function LlmCostsPage() {
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <MetricCard label="Cost today" value={`$${(t?.today ?? 0).toFixed(4)}`} />
-        <MetricCard label="Cost all-time" value={`$${(t?.allTime ?? 0).toFixed(4)}`} hint={`${t?.calls ?? 0} calls`} />
+        <MetricCard label="Tracked cost" value={`$${(t?.allTime ?? 0).toFixed(4)}`} hint={`${t?.calls ?? 0} calls${costs?.window.limited ? ' · latest 1,000' : ''}`} />
         <MetricCard label="Fallback calls" value={t?.fallbackCount ?? 0} tone={(t?.fallbackCount ?? 0) > 0 ? 'warn' : 'ok'} />
         <MetricCard label="Most expensive task" value={costs?.mostExpensiveTask ? `$${costs.mostExpensiveTask.costUsd.toFixed(4)}` : '—'} hint={costs?.mostExpensiveTask?.taskId ?? ''} />
       </div>
@@ -26,7 +26,7 @@ export default async function LlmCostsPage() {
           {!costs || Object.keys(costs.byProvider).length === 0 ? <EmptyState icon="✦" title="No LLM calls yet" /> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {Object.entries(costs.byProvider).map(([p, v]) => (
-                <div key={p} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{p}</span><span className="m">{v.calls} calls · ${v.costUsd.toFixed(4)}</span></div>
+                <div key={p} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{p}</span><span className="m">{v.calls} calls · {v.tokensTotal.toLocaleString()} tokens · ${v.costUsd.toFixed(4)}</span></div>
               ))}
             </div>
           )}
@@ -41,6 +41,20 @@ export default async function LlmCostsPage() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="label" style={{ marginBottom: 10 }}>Recent model calls</div>
+        {!costs || costs.recent.length === 0 ? <EmptyState icon="✦" title="No LLM calls yet" /> : (
+          <div className="table-wrap"><table><thead><tr><th>Time</th><th>Provider</th><th>Model</th><th>Input</th><th>Output</th><th>Cost</th><th>Metering</th></tr></thead><tbody>
+            {costs.recent.map((r, i) => <tr key={String(r.recordId ?? i)}>
+              <td>{timeAgo(String(r.createdAt))}</td><td>{String(r.provider)}</td><td className="m">{String(r.model)}</td>
+              <td>{Number(r.tokensIn ?? 0).toLocaleString()}</td><td>{Number(r.tokensOut ?? 0).toLocaleString()}</td>
+              <td className="m">${Number(r.costUsd ?? 0).toFixed(6)}</td>
+              <td>{String(r.usageSource ?? 'unavailable')} / {String(r.pricingSource ?? 'none')}</td>
+            </tr>)}
+          </tbody></table></div>
+        )}
       </div>
 
       <div className="card">

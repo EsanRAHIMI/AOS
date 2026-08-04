@@ -31,7 +31,7 @@ import {
   createJarvisSession, getJarvisSession, listJarvisSessions, listSessionTurns, recordAnnouncement,
   getAgentLoopRun, listAgentLoopSteps, cancelAgentLoop,
   listMemories, correctMemory, pinMemory, deleteMemory,
-  modelRegistryFromEnv, probeModelProvider,
+  availableModelProviders, modelRegistryFromEnv, probeModelProvider, type ModelProviderSelection,
   researchCoverageStatus,
   buildOwnerBriefing, listSelfDevRuns, listRoles,
   buildPersonalStateSnapshot, applyOnboardingAnswers, ONBOARDING_QUESTIONS,
@@ -80,7 +80,11 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
     return { actorId: auth.primaryUserId ?? declaredRole(req), scope: 'user', tenantId: auth.activeTenantId ?? null };
   };
 
-  const turnDeps = () => ({ registry, publish, isSafeMode, env: process.env });
+  const turnDeps = (modelRegistry?: ReturnType<typeof modelRegistryFromEnv>) => ({ registry, publish, isSafeMode, env: process.env, modelRegistry });
+  const providerSelection = (value: unknown): ModelProviderSelection | null =>
+    value === undefined || value === 'auto' ? 'auto'
+      : value === 'local' || value === 'openai' || value === 'anthropic' ? value
+        : null;
 
   /* ------------------------------ sessions ------------------------------ */
 
@@ -129,18 +133,20 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
 
   /* -------------------------------- turns ------------------------------- */
 
-  app.post<{ Params: { id: string }; Body: { text?: string; transport?: 'text' | 'voice' } }>(
+  app.post<{ Params: { id: string }; Body: { text?: string; transport?: 'text' | 'voice'; provider?: ModelProviderSelection } }>(
     '/v1/jarvis/sessions/:id/turns',
     async (req, reply) => {
       if (!guard(req)) return deny(reply);
       const text = String(req.body?.text ?? '').trim();
       if (text.length < 2) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'text is required'));
       const actor = actorFor(req);
+      const selected = providerSelection(req.body?.provider);
+      if (!selected) return reply.code(400).send(failure(ERROR_CODES.VALIDATION, 'provider must be auto|local|openai|anthropic'));
       const wantStream = String((req.query as Record<string, unknown>)?.stream ?? '') === '1';
 
       if (!wantStream) {
         try {
-          const result = await runJarvisTurn(actor, req.params.id, text, turnDeps(), req.body?.transport ?? 'text');
+          const result = await runJarvisTurn(actor, req.params.id, text, turnDeps(), req.body?.transport ?? 'text', selected);
           return success({
             turnId: result.turn.turnId, runId: result.runId, status: result.status,
             replyText: result.replyText, pendingApprovalId: result.pendingApprovalId,
@@ -164,7 +170,7 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
       };
       send('turn.accepted', { sessionId: req.params.id });
 
-      const turnPromise = runJarvisTurn(actor, req.params.id, text, turnDeps(), req.body?.transport ?? 'text');
+      const turnPromise = runJarvisTurn(actor, req.params.id, text, turnDeps(), req.body?.transport ?? 'text', selected);
       let finished = false;
       let lastStepCount = 0;
       void turnPromise.then(() => { finished = true; }).catch(() => { finished = true; });
@@ -239,12 +245,15 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
       const actor = actorFor(req);
       if (run.scope === 'user' && run.createdBy !== actor.actorId) return deny(reply);
       const role = declaredRole(req);
+      const resumeSelection: ModelProviderSelection = run.provider === 'openai-compatible-local'
+        ? 'local' : run.provider === 'openai-compatible' ? 'openai' : run.provider === 'anthropic' ? 'anthropic' : 'auto';
+      const resumeRegistry = modelRegistryFromEnv(process.env, resumeSelection);
       try {
         const out = await resumeJarvisApproval(actor, {
           runId, approvalId: req.params.id,
           decision: action === 'approve' ? 'approved' : 'rejected',
           decidedBy: role, reason: req.body?.reason,
-        }, turnDeps());
+        }, turnDeps(resumeRegistry));
         return success(out);
       } catch (e) {
         return reply.code(409).send(failure(ERROR_CODES.CONFLICT, e instanceof Error ? e.message : 'resume failed'));
@@ -373,6 +382,7 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
     const probe = probeWanted ? await probeModelProvider(reg) : null;
     return success({
       provider: reg.provider,
+      availableProviders: availableModelProviders(process.env),
       isLocal: reg.isLocal,
       models: reg.provider === 'none' ? null : reg.models,
       degraded: reg.provider === 'none',

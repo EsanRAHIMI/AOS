@@ -141,7 +141,7 @@ export const LlmTraceSchema = z.object({
   taskId: z.string().nullable().default(null),
   taskType: z.string(),
   promptVersion: z.string().default('v0'),
-  provider: z.enum(['anthropic', 'openai', 'mock']),
+  provider: z.enum(['local', 'anthropic', 'openai', 'mock']),
   model: z.string(),
   system: z.string().default(''),
   prompt: z.string(),
@@ -159,6 +159,8 @@ export const LlmTraceSchema = z.object({
   tokensIn: z.number().default(0),
   tokensOut: z.number().default(0),
   costUsd: z.number().default(0),
+  usageSource: z.enum(['provider', 'estimated']).default('estimated'),
+  pricingSource: z.enum(['configured', 'built_in', 'none']).default('none'),
   createdAt: IsoDate,
 });
 export type LlmTrace = z.infer<typeof LlmTraceSchema>;

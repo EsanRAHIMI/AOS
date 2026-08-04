@@ -41,6 +41,7 @@ import {
 } from './registry.js';
 import type { ChatToolCall, ChatToolDef, ToolCallingProvider } from '../llm/toolcalling.js';
 import { humanModelError } from '../llm/resilience.js';
+import type { LlmCostRecord } from '../schemas/intelligence.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
 
@@ -81,6 +82,14 @@ const runs = () => collection<AgentLoopRun>(COLLECTIONS.AGENT_LOOP_RUNS);
 const stepsCol = () => collection<AgentLoopStep>(COLLECTIONS.AGENT_LOOP_STEPS);
 const invocations = () => collection<ToolInvocation>(COLLECTIONS.TOOL_INVOCATIONS);
 const checkpoints = () => collection<ApprovalCheckpoint>(COLLECTIONS.AGENT_APPROVAL_CHECKPOINTS);
+const costRecords = () => collection<LlmCostRecord>(COLLECTIONS.LLM_COST_RECORDS);
+
+function costProvider(name: string): LlmCostRecord['provider'] {
+  if (name === 'openai-compatible-local') return 'local';
+  if (name === 'openai-compatible') return 'openai';
+  if (name === 'anthropic') return 'anthropic';
+  return 'mock';
+}
 
 /** Fence untrusted external content so it is DATA, never instructions.
  *  The fence text is part of the prompt-injection defense (mandate §G.13). */
@@ -292,6 +301,7 @@ async function continueLoop(run: AgentLoopRun, opts: AgentLoopOptions): Promise<
     // ---- model turn ----
     let text = '';
     let toolCalls: ChatToolCall[] = [];
+    let usage = { tokensIn: 0, tokensOut: 0, tokensCached: 0, tokensReasoning: 0, tokensTotal: 0, costUsd: 0 };
     try {
       const res = await opts.provider.chat({
         system: opts.systemPrompt,
@@ -305,6 +315,21 @@ async function continueLoop(run: AgentLoopRun, opts: AgentLoopOptions): Promise<
       run.tokensIn += res.tokensIn;
       run.tokensOut += res.tokensOut;
       run.costUsd += res.costUsd;
+      usage = {
+        tokensIn: res.tokensIn,
+        tokensOut: res.tokensOut,
+        tokensCached: res.tokensCached ?? 0,
+        tokensReasoning: res.tokensReasoning ?? 0,
+        tokensTotal: res.tokensTotal ?? res.tokensIn + res.tokensOut,
+        costUsd: res.costUsd,
+      };
+      await costRecords().insertOne({
+        recordId: genId('cost'), taskId: run.taskId, agentId: run.role, taskType: 'agent_loop_model_turn',
+        provider: costProvider(res.provider), model: res.model,
+        ...usage,
+        usageSource: res.usageSource ?? 'unavailable', pricingSource: res.pricingSource ?? 'none',
+        usedFallback: false, traceId: null, runId: run.runId, createdAt: nowIso(),
+      });
     } catch (e) {
       /* D-211 — the run record keeps the structured provider error (status +
        * a truncated body) for diagnosis, but that is NOT what the owner sees.
@@ -326,7 +351,7 @@ async function continueLoop(run: AgentLoopRun, opts: AgentLoopOptions): Promise<
 
     run.steps += 1;
     run.messages.push({ role: 'assistant', content: text, toolCalls, toolCallId: '', toolName: '' });
-    await recordStep(run, { kind: 'model_turn', summary: toolCalls.length ? `requested ${toolCalls.map((c) => c.toolName).join(', ')}` : text.slice(0, 300), toolName: '', toolInvocationId: '', tokensIn: 0, tokensOut: 0, costUsd: 0, ok: true, detail: '' }, opts.publish);
+    await recordStep(run, { kind: 'model_turn', summary: toolCalls.length ? `requested ${toolCalls.map((c) => c.toolName).join(', ')}` : text.slice(0, 300), toolName: '', toolInvocationId: '', tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, costUsd: usage.costUsd, ok: true, detail: '' }, opts.publish);
     await persistRun(run);
 
     if (toolCalls.length === 0) {

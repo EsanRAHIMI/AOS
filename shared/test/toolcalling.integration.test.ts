@@ -16,6 +16,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { z } from 'zod';
+import { LlmRouter } from '../src/llm/index.js';
 import { OpenAICompatibleToolsProvider, AnthropicToolsProvider, modelRegistryFromEnv } from '../src/llm/toolcalling.js';
 import type { LoopMessage } from '../src/agentcore/schemas.js';
 
@@ -34,11 +36,17 @@ beforeAll(async () => {
       const hasToolResult = msgs.some((m) => m.role === 'tool');
       // Real OpenAI wire shape: if a tool is offered and we haven't observed a
       // tool result yet, request the tool; otherwise return a final message.
-      const message = (!hasToolResult && tools.length)
+      const message = lastRequest.model === 'structured-test'
+        ? { role: 'assistant', content: '{"answer":"local","score":1}', tool_calls: [] }
+        : (!hasToolResult && tools.length)
         ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_0', type: 'function', function: { name: tools[0].function?.name, arguments: '{"q":"x"}' } }] }
         : { role: 'assistant', content: 'final answer from the real HTTP server', tool_calls: [] };
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message }], usage: { prompt_tokens: 11, completion_tokens: 7 } }));
+      res.end(JSON.stringify({ choices: [{ message }], usage: {
+        prompt_tokens: 11, completion_tokens: 7, total_tokens: 18,
+        prompt_tokens_details: { cached_tokens: 3 },
+        completion_tokens_details: { reasoning_tokens: 2 },
+      } }));
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
@@ -51,6 +59,21 @@ afterAll(() => server.close());
 const um = (text: string): LoopMessage => ({ role: 'user', content: text, toolCalls: [], toolCallId: '', toolName: '' });
 
 describe('OpenAI-compatible provider — real HTTP wire (Ollama/vLLM shape)', () => {
+  it('drives legacy structured generation through the same local-first wire', async () => {
+    const router = new LlmRouter({ localBaseUrl: baseUrl, localApiKey: 'local-secret', localModel: 'structured-test' });
+    const result = await router.generateStructured(
+      z.object({ answer: z.string(), score: z.number() }),
+      {
+        agentId: 'integration-test', taskType: 'structured_wire', prompt: 'return the structure',
+        fallback: () => ({ answer: 'fallback', score: 0 }),
+      },
+    );
+
+    expect(result.data).toEqual({ answer: 'local', score: 1 });
+    expect(result.trace).toMatchObject({ provider: 'local', model: 'structured-test', usedFallback: false, costUsd: 0 });
+    expect(lastRequest!.model).toBe('structured-test');
+  });
+
   it('serializes tool schemas and parses a tool_call from a real server response', async () => {
     const provider = new OpenAICompatibleToolsProvider(baseUrl, 'local', true);
     const res = await provider.chat({
@@ -62,6 +85,7 @@ describe('OpenAI-compatible provider — real HTTP wire (Ollama/vLLM shape)', ()
     expect(res.toolCalls[0]!.toolName).toBe('memory_search');
     expect(res.toolCalls[0]!.args).toEqual({ q: 'x' });
     expect(res.costUsd).toBe(0); // local → free, honestly
+    expect(res).toMatchObject({ tokensIn: 11, tokensOut: 7, tokensCached: 3, tokensReasoning: 2, tokensTotal: 18, usageSource: 'provider' });
     // The server actually received OpenAI-shaped tools.
     expect((lastRequest!.tools as unknown[]).length).toBe(1);
     expect(JSON.stringify(lastRequest!.tools)).toContain('memory_search');
@@ -98,6 +122,26 @@ describe('model registry resolution (independence, no hardcoded IDs)', () => {
     const reg = modelRegistryFromEnv({ ANTHROPIC_API_KEY: 'k', LLM_MODEL_REASONING: 'claude-x', LLM_MODEL_FAST: 'haiku-x' } as unknown as NodeJS.ProcessEnv);
     expect(reg.models.reasoning).toBe('claude-x');
     expect(reg.models.fast).toBe('haiku-x');
+  });
+  it('explicit OpenAI selection never silently routes to configured local inference', () => {
+    const env = {
+      LLM_LOCAL_BASE_URL: 'http://127.0.0.1:11434/v1', LLM_LOCAL_MODEL: 'local-model',
+      OPENAI_API_KEY: 'sk-test', LLM_OPENAI_MODEL: 'cloud-model',
+    } as unknown as NodeJS.ProcessEnv;
+    const cloud = modelRegistryFromEnv(env, 'openai');
+    expect(cloud).toMatchObject({ provider: 'openai-compatible', isLocal: false });
+    expect(cloud.models.standard).toBe('cloud-model');
+    expect(modelRegistryFromEnv(env, 'local')).toMatchObject({ provider: 'openai-compatible', isLocal: true });
+  });
+  it('explicit unavailable provider fails closed instead of falling back', () => {
+    const reg = modelRegistryFromEnv({ LLM_LOCAL_BASE_URL: 'http://local/v1' } as NodeJS.ProcessEnv, 'openai');
+    expect(reg.provider).toBe('none');
+  });
+  it('LLM_PROVIDER_MODE sets the service-wide default', () => {
+    const reg = modelRegistryFromEnv({
+      LLM_PROVIDER_MODE: 'openai', OPENAI_API_KEY: 'sk-test', LLM_LOCAL_BASE_URL: 'http://local/v1',
+    } as NodeJS.ProcessEnv);
+    expect(reg).toMatchObject({ provider: 'openai-compatible', isLocal: false });
   });
 
   // OPTIONAL real-endpoint gate: when LLM_VERIFY_BASE_URL is set (a real

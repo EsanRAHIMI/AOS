@@ -18,6 +18,7 @@ import { fetchWithRetry } from './resilience.js';
 /* ----------------------------- model registry --------------------------- */
 
 export type ModelTier = 'reasoning' | 'standard' | 'fast';
+export type ModelProviderSelection = 'auto' | 'local' | 'openai' | 'anthropic';
 
 export interface ModelRegistry {
   provider: 'anthropic' | 'openai-compatible' | 'none';
@@ -43,29 +44,57 @@ const DEFAULT_MODELS: Record<string, Record<ModelTier, string>> = {
  *  4. none → degraded mode (visible, honest; personal/deterministic tools
  *     still work — mandate: missing cloud keys must not disable core usage).
  */
-export function modelRegistryFromEnv(env: NodeJS.ProcessEnv = process.env): ModelRegistry {
-  const tierOverrides = (base: Record<ModelTier, string>): Record<ModelTier, string> => ({
-    reasoning: env.LLM_MODEL_REASONING || base.reasoning,
-    standard: env.LLM_MODEL_STANDARD || base.standard,
-    fast: env.LLM_MODEL_FAST || base.fast,
+export function modelRegistryFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  selection?: ModelProviderSelection,
+): ModelRegistry {
+  const configuredSelection = env.LLM_PROVIDER_MODE;
+  const selected: ModelProviderSelection = selection
+    ?? (configuredSelection === 'local' || configuredSelection === 'openai' || configuredSelection === 'anthropic'
+      ? configuredSelection
+      : 'auto');
+  const tierOverrides = (base: Record<ModelTier, string>, prefix: 'LOCAL' | 'OPENAI' | 'ANTHROPIC'): Record<ModelTier, string> => ({
+    reasoning: env[`LLM_${prefix}_MODEL_REASONING`] || env.LLM_MODEL_REASONING || base.reasoning,
+    standard: env[`LLM_${prefix}_MODEL_STANDARD`] || env.LLM_MODEL_STANDARD || base.standard,
+    fast: env[`LLM_${prefix}_MODEL_FAST`] || env.LLM_MODEL_FAST || base.fast,
   });
-  if (env.LLM_LOCAL_BASE_URL) {
+  const local = (): ModelRegistry | null => {
+    if (!env.LLM_LOCAL_BASE_URL) return null;
     const local = env.LLM_LOCAL_MODEL || 'llama3.1';
     return {
       provider: 'openai-compatible',
       baseUrl: env.LLM_LOCAL_BASE_URL.replace(/\/$/, ''),
       apiKey: env.LLM_LOCAL_API_KEY || 'local',
-      models: tierOverrides({ reasoning: local, standard: local, fast: env.LLM_LOCAL_MODEL_FAST || local }),
+      models: tierOverrides({ reasoning: local, standard: local, fast: env.LLM_LOCAL_MODEL_FAST || local }, 'LOCAL'),
       isLocal: true,
     };
-  }
-  if (env.ANTHROPIC_API_KEY) {
-    return { provider: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: env.ANTHROPIC_API_KEY, models: tierOverrides(DEFAULT_MODELS.anthropic as Record<ModelTier, string>), isLocal: false };
-  }
-  if (env.OPENAI_API_KEY) {
-    return { provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', apiKey: env.OPENAI_API_KEY, models: tierOverrides(DEFAULT_MODELS['openai-compatible'] as Record<ModelTier, string>), isLocal: false };
-  }
+  };
+  const openai = (): ModelRegistry | null => env.OPENAI_API_KEY ? {
+    provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', apiKey: env.OPENAI_API_KEY,
+    models: tierOverrides({
+      reasoning: env.LLM_OPENAI_MODEL || DEFAULT_MODELS['openai-compatible']!.reasoning,
+      standard: env.LLM_OPENAI_MODEL || DEFAULT_MODELS['openai-compatible']!.standard,
+      fast: env.LLM_OPENAI_MODEL_FAST || DEFAULT_MODELS['openai-compatible']!.fast,
+    }, 'OPENAI'), isLocal: false,
+  } : null;
+  const anthropic = (): ModelRegistry | null => env.ANTHROPIC_API_KEY ? {
+    provider: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: env.ANTHROPIC_API_KEY,
+    models: tierOverrides(DEFAULT_MODELS.anthropic as Record<ModelTier, string>, 'ANTHROPIC'), isLocal: false,
+  } : null;
+  if (selected === 'local') return local() ?? emptyRegistry();
+  if (selected === 'openai') return openai() ?? emptyRegistry();
+  if (selected === 'anthropic') return anthropic() ?? emptyRegistry();
+  const automatic = local() ?? anthropic() ?? openai();
+  if (automatic) return automatic;
+  return emptyRegistry();
+}
+
+function emptyRegistry(): ModelRegistry {
   return { provider: 'none', baseUrl: '', apiKey: '', models: { reasoning: '', standard: '', fast: '' }, isLocal: false };
+}
+
+export function availableModelProviders(env: NodeJS.ProcessEnv = process.env): Record<Exclude<ModelProviderSelection, 'auto'>, boolean> {
+  return { local: Boolean(env.LLM_LOCAL_BASE_URL), openai: Boolean(env.OPENAI_API_KEY), anthropic: Boolean(env.ANTHROPIC_API_KEY) };
 }
 
 /* ------------------------------- interface ------------------------------ */
@@ -101,6 +130,12 @@ export interface ChatResult {
   costUsd: number;
   model: string;
   provider: string;
+  /** Provider-reported usage detail; zero when the provider omits the field. */
+  tokensCached?: number;
+  tokensReasoning?: number;
+  tokensTotal?: number;
+  usageSource?: 'provider' | 'unavailable';
+  pricingSource?: 'configured' | 'built_in' | 'none';
 }
 
 export interface ToolCallingProvider {
@@ -117,11 +152,22 @@ const PRICES: Record<string, [number, number]> = {
   'gpt-4.1': [2, 8],
   'gpt-4.1-mini': [0.4, 1.6],
 };
+export function estimateCost(
+  model: string, tokensIn: number, tokensOut: number, isLocal: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): { costUsd: number; pricingSource: 'configured' | 'built_in' | 'none' } {
+  if (isLocal) return { costUsd: 0, pricingSource: 'none' };
+  let configured: Record<string, [number, number]> = {};
+  try { configured = JSON.parse(env.LLM_PRICE_OVERRIDES_JSON || '{}') as Record<string, [number, number]>; } catch { /* readiness reports invalid JSON separately */ }
+  const p = configured[model] ?? PRICES[model];
+  if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return { costUsd: 0, pricingSource: 'none' };
+  return {
+    costUsd: (tokensIn * p[0] + tokensOut * p[1]) / 1_000_000,
+    pricingSource: configured[model] ? 'configured' : 'built_in',
+  };
+}
 export function estimateCostUsd(model: string, tokensIn: number, tokensOut: number, isLocal: boolean): number {
-  if (isLocal) return 0;
-  const p = PRICES[model];
-  if (!p) return 0;
-  return (tokensIn * p[0] + tokensOut * p[1]) / 1_000_000;
+  return estimateCost(model, tokensIn, tokensOut, isLocal).costUsd;
 }
 
 /* --------------------------- anthropic native --------------------------- */
@@ -174,7 +220,7 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
      * the owner-facing message from raw provider JSON into a sentence. */
     const body = (await res.json()) as {
       content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
     };
     const text = body.content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
     const toolCalls: ChatToolCall[] = body.content
@@ -182,7 +228,13 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
       .map((c) => ({ callId: c.id ?? '', toolName: c.name ?? '', args: c.input ?? {} }));
     const tokensIn = body.usage?.input_tokens ?? 0;
     const tokensOut = body.usage?.output_tokens ?? 0;
-    return { text, toolCalls, tokensIn, tokensOut, costUsd: estimateCostUsd(req.model, tokensIn, tokensOut, this.isLocal), model: req.model, provider: this.name };
+    const pricing = estimateCost(req.model, tokensIn, tokensOut, this.isLocal);
+    return {
+      text, toolCalls, tokensIn, tokensOut, ...pricing, model: req.model, provider: this.name,
+      tokensCached: body.usage?.cache_read_input_tokens ?? 0,
+      tokensTotal: tokensIn + tokensOut,
+      usageSource: body.usage ? 'provider' : 'unavailable',
+    };
   }
 }
 
@@ -234,7 +286,13 @@ export class OpenAICompatibleToolsProvider implements ToolCallingProvider {
     }, { name: this.name, signal: req.signal ?? null });
     const body = (await res.json()) as {
       choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        completion_tokens_details?: { reasoning_tokens?: number };
+      };
     };
     const msg = body.choices?.[0]?.message;
     const toolCalls: ChatToolCall[] = (msg?.tool_calls ?? []).map((c, i) => {
@@ -244,7 +302,14 @@ export class OpenAICompatibleToolsProvider implements ToolCallingProvider {
     });
     const tokensIn = body.usage?.prompt_tokens ?? 0;
     const tokensOut = body.usage?.completion_tokens ?? 0;
-    return { text: msg?.content ?? '', toolCalls, tokensIn, tokensOut, costUsd: estimateCostUsd(req.model, tokensIn, tokensOut, this.isLocal), model: req.model, provider: this.name };
+    const pricing = estimateCost(req.model, tokensIn, tokensOut, this.isLocal);
+    return {
+      text: msg?.content ?? '', toolCalls, tokensIn, tokensOut, ...pricing, model: req.model, provider: this.name,
+      tokensCached: body.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      tokensReasoning: body.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+      tokensTotal: body.usage?.total_tokens ?? tokensIn + tokensOut,
+      usageSource: body.usage ? 'provider' : 'unavailable',
+    };
   }
 }
 

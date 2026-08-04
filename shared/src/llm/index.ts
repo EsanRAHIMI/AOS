@@ -1,7 +1,8 @@
 /**
  * LLM Router — shared reasoning infrastructure for agents.
  *
- * Provider abstraction (Anthropic / OpenAI / deterministic Mock), model
+ * Provider abstraction (local OpenAI-compatible / Anthropic / OpenAI /
+ * deterministic Mock), model
  * selection by task type, retry, cost/token tracking, and — most importantly —
  * **schema-validated structured output**. Agents reason through
  * `generateStructured(schema, { fallback })`: the validated result is the only
@@ -13,7 +14,7 @@ import type { ZodType } from 'zod';
 import { genId, nowIso } from '../utils/index.js';
 import type { LlmTrace } from '../schemas/capability.js';
 
-export type ProviderName = 'anthropic' | 'openai' | 'mock';
+export type ProviderName = 'local' | 'anthropic' | 'openai' | 'mock';
 
 export interface LlmCompletionRequest {
   system: string;
@@ -29,6 +30,7 @@ export interface LlmCompletionResult {
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
+  usageSource: 'provider' | 'estimated';
 }
 
 export interface LlmProvider {
@@ -68,15 +70,21 @@ export class AnthropicProvider implements LlmProvider {
     const text = body.content?.map((c) => c.text ?? '').join('') ?? '';
     const tokensIn = body.usage?.input_tokens ?? approxTokens(req.system + req.prompt);
     const tokensOut = body.usage?.output_tokens ?? approxTokens(text);
-    return { text, model: req.model, provider: this.name, tokensIn, tokensOut, costUsd: estimateCost(req.model, tokensIn, tokensOut) };
+    return { text, model: req.model, provider: this.name, tokensIn, tokensOut, costUsd: estimateCost(req.model, tokensIn, tokensOut), usageSource: body.usage ? 'provider' : 'estimated' };
   }
 }
 
 export class OpenAIProvider implements LlmProvider {
-  readonly name = 'openai' as const;
-  constructor(private readonly apiKey: string) {}
+  readonly name: 'local' | 'openai';
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseUrl = 'https://api.openai.com/v1',
+    private readonly isLocal = false,
+  ) {
+    this.name = isLocal ? 'local' : 'openai';
+  }
   async complete(req: LlmCompletionRequest): Promise<LlmCompletionResult> {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({
@@ -88,12 +96,20 @@ export class OpenAIProvider implements LlmProvider {
         ],
       }),
     });
-    if (!res.ok) throw new Error(`openai ${res.status}`);
+    if (!res.ok) throw new Error(`${this.name} ${res.status}`);
     const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     const text = body.choices?.[0]?.message?.content ?? '';
     const tokensIn = body.usage?.prompt_tokens ?? approxTokens(req.system + req.prompt);
     const tokensOut = body.usage?.completion_tokens ?? approxTokens(text);
-    return { text, model: req.model, provider: this.name, tokensIn, tokensOut, costUsd: estimateCost(req.model, tokensIn, tokensOut) };
+    return {
+      text,
+      model: req.model,
+      provider: this.name,
+      tokensIn,
+      tokensOut,
+      costUsd: this.isLocal ? 0 : estimateCost(req.model, tokensIn, tokensOut),
+      usageSource: body.usage ? 'provider' : 'estimated',
+    };
   }
 }
 
@@ -101,11 +117,15 @@ export class OpenAIProvider implements LlmProvider {
 export class MockProvider implements LlmProvider {
   readonly name = 'mock' as const;
   async complete(req: LlmCompletionRequest): Promise<LlmCompletionResult> {
-    return { text: '', model: req.model, provider: this.name, tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    return { text: '', model: req.model, provider: this.name, tokensIn: 0, tokensOut: 0, costUsd: 0, usageSource: 'estimated' };
   }
 }
 
 export interface LlmRouterConfig {
+  localBaseUrl?: string;
+  localApiKey?: string;
+  localModel?: string;
+  localFastModel?: string;
   anthropicApiKey?: string;
   openaiApiKey?: string;
   defaultProvider?: 'anthropic' | 'openai';
@@ -116,6 +136,8 @@ const MODELS = {
   anthropic: { default: 'claude-sonnet-4-6', fast: 'claude-haiku-4-5' },
   openai: { default: 'gpt-4.1', fast: 'gpt-4.1-mini' },
 } as const;
+
+const DEFAULT_LOCAL_MODEL = 'llama3.1';
 
 export interface GenerateStructuredOpts<T> {
   agentId: string;
@@ -164,17 +186,26 @@ function extractJson(text: string): unknown {
 export class LlmRouter {
   private readonly provider: LlmProvider;
   private readonly providerName: ProviderName;
+  private readonly models: { default: string; fast: string };
 
   constructor(cfg: LlmRouterConfig) {
     const wantOpenAi = cfg.defaultProvider === 'openai';
-    if (wantOpenAi && cfg.openaiApiKey) {
+    if (cfg.localBaseUrl) {
+      this.provider = new OpenAIProvider(cfg.localApiKey || 'local', cfg.localBaseUrl, true);
+      const model = cfg.localModel || DEFAULT_LOCAL_MODEL;
+      this.models = { default: model, fast: cfg.localFastModel || model };
+    } else if (wantOpenAi && cfg.openaiApiKey) {
       this.provider = new OpenAIProvider(cfg.openaiApiKey);
+      this.models = MODELS.openai;
     } else if (cfg.anthropicApiKey) {
       this.provider = new AnthropicProvider(cfg.anthropicApiKey);
+      this.models = MODELS.anthropic;
     } else if (cfg.openaiApiKey) {
       this.provider = new OpenAIProvider(cfg.openaiApiKey);
+      this.models = MODELS.openai;
     } else {
       this.provider = new MockProvider();
+      this.models = { default: 'mock', fast: 'mock' };
     }
     this.providerName = this.provider.name;
   }
@@ -195,9 +226,7 @@ export class LlmRouter {
   }
 
   private modelFor(fast?: boolean): string {
-    if (this.providerName === 'openai') return fast ? MODELS.openai.fast : MODELS.openai.default;
-    if (this.providerName === 'anthropic') return fast ? MODELS.anthropic.fast : MODELS.anthropic.default;
-    return 'mock';
+    return fast ? this.models.fast : this.models.default;
   }
 
   /**
@@ -215,6 +244,7 @@ export class LlmRouter {
     let costUsd = 0;
     let data: T | null = null;
     let usedFallback = false;
+    let usageSource: 'provider' | 'estimated' = 'estimated';
     // Phase AG.3 — the specific reason the last attempt didn't produce
     // validated data. Previously this was thrown away in a bare `catch {}`,
     // so a real provider error (bad key, rate limit, 5xx, truncated/invalid
@@ -239,6 +269,7 @@ export class LlmRouter {
           tokensIn += res.tokensIn;
           tokensOut += res.tokensOut;
           costUsd += res.costUsd;
+          usageSource = res.usageSource;
           const parsed = schema.safeParse(extractJson(res.text));
           if (parsed.success) { data = parsed.data; lastError = null; }
           else {
@@ -283,6 +314,8 @@ export class LlmRouter {
       tokensIn,
       tokensOut,
       costUsd,
+      usageSource,
+      pricingSource: this.providerName === 'local' || this.providerName === 'mock' ? 'none' : 'built_in',
       createdAt: nowIso(),
     };
     return { data, trace };
@@ -291,10 +324,18 @@ export class LlmRouter {
 
 /** Build a router from standard env (LLM_* / *_API_KEY). */
 export function llmRouterFromEnv(env: NodeJS.ProcessEnv = process.env): LlmRouter {
+  const mode = env.LLM_PROVIDER_MODE;
+  const allowLocal = mode !== 'openai' && mode !== 'anthropic';
+  const allowOpenAi = mode !== 'local' && mode !== 'anthropic';
+  const allowAnthropic = mode !== 'local' && mode !== 'openai';
   return new LlmRouter({
-    anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
-    openaiApiKey: env.OPENAI_API_KEY || undefined,
-    defaultProvider: (env.LLM_DEFAULT_PROVIDER as 'anthropic' | 'openai') || 'anthropic',
+    localBaseUrl: allowLocal ? env.LLM_LOCAL_BASE_URL || undefined : undefined,
+    localApiKey: env.LLM_LOCAL_API_KEY || undefined,
+    localModel: env.LLM_MODEL_STANDARD || env.LLM_LOCAL_MODEL || undefined,
+    localFastModel: env.LLM_MODEL_FAST || env.LLM_LOCAL_MODEL_FAST || undefined,
+    anthropicApiKey: allowAnthropic ? env.ANTHROPIC_API_KEY || undefined : undefined,
+    openaiApiKey: allowOpenAi ? env.OPENAI_API_KEY || undefined : undefined,
+    defaultProvider: mode === 'openai' ? 'openai' : (env.LLM_DEFAULT_PROVIDER as 'anthropic' | 'openai') || 'anthropic',
   });
 }
 
@@ -313,7 +354,7 @@ export function llmStatusFromEnv(env: NodeJS.ProcessEnv = process.env): LlmStatu
     provider: router.activeProvider,
     configured,
     mode: configured ? 'real' : 'fallback',
-    defaultProvider: env.LLM_DEFAULT_PROVIDER || 'anthropic',
+    defaultProvider: router.activeProvider === 'local' ? 'local' : (env.LLM_DEFAULT_PROVIDER || 'anthropic'),
   };
 }
 
@@ -332,7 +373,7 @@ export interface LlmGovernanceConfig {
 
 export function llmGovernanceFromEnv(env: NodeJS.ProcessEnv = process.env): LlmGovernanceConfig {
   return {
-    allowedProviders: (env.LLM_ALLOWED_PROVIDERS || 'anthropic,openai').split(',').map((s) => s.trim()).filter(Boolean),
+    allowedProviders: (env.LLM_ALLOWED_PROVIDERS || 'local,anthropic,openai').split(',').map((s) => s.trim()).filter(Boolean),
     maxCostPerTaskUsd: Number(env.LLM_MAX_COST_PER_TASK_USD ?? 0.5),
     maxTokensPerTask: Number(env.LLM_MAX_TOKENS_PER_TASK ?? 120000),
     dailyCostLimitUsd: Number(env.LLM_DAILY_COST_LIMIT_USD ?? 20),
@@ -351,7 +392,13 @@ export function buildLlmCostRecord(trace: LlmTrace): LlmCostRecord {
     model: trace.model,
     tokensIn: trace.tokensIn,
     tokensOut: trace.tokensOut,
+    tokensCached: 0,
+    tokensReasoning: 0,
+    tokensTotal: trace.tokensIn + trace.tokensOut,
     costUsd: trace.costUsd,
+    usageSource: trace.usageSource,
+    pricingSource: trace.pricingSource,
+    runId: null,
     usedFallback: trace.usedFallback,
     traceId: trace.traceId,
     createdAt: nowIso(),

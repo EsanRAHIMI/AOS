@@ -77,8 +77,9 @@ export async function sendTurnAction(
   sessionId: string,
   text: string,
   transport: 'text' | 'voice' = 'text',
+  provider: 'auto' | 'local' | 'openai' | 'anthropic' = 'auto',
 ): Promise<JarvisTurnResult | null> {
-  return gateway.jarvisTurn(sessionId, text, transport);
+  return gateway.jarvisTurn(sessionId, text, transport, provider);
 }
 
 export async function decideApprovalAction(approvalId: string, runId: string, action: 'approve' | 'reject', reason?: string): Promise<{ status: string; replyText: string; pendingApprovalId: string | null } | null> {

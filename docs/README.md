@@ -2,6 +2,12 @@
 
 Start here when understanding or extending AOS.
 
+The active outcome-driven production program is
+`production-evolution-plan.md`.
+
+Model release quality and operational commands are defined in
+`model-evaluation-gate.md`.
+
 ## Current System Truth
 
 - `vision.md` — long-term role-aware AI Government platform vision.

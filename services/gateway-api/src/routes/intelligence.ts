@@ -32,22 +32,34 @@ export function registerIntelligenceRoutes(app: FastifyInstance, deps: GatewayDe
         if (!guard(req)) return deny(reply);
         const records = await llmCostRecords.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(1000).toArray();
         const todayPrefix = new Date().toISOString().slice(0, 10);
-        const byProvider: Record<string, { calls: number; costUsd: number }> = {};
-        const byAgent: Record<string, { calls: number; costUsd: number }> = {};
+        type UsageTotals = { calls: number; costUsd: number; tokensIn: number; tokensOut: number; tokensTotal: number };
+        const blank = (): UsageTotals => ({ calls: 0, costUsd: 0, tokensIn: 0, tokensOut: 0, tokensTotal: 0 });
+        const add = (target: UsageTotals, record: typeof records[number]) => {
+          target.calls++;
+          target.costUsd += record.costUsd;
+          target.tokensIn += record.tokensIn;
+          target.tokensOut += record.tokensOut;
+          target.tokensTotal += record.tokensTotal ?? record.tokensIn + record.tokensOut;
+        };
+        const byProvider: Record<string, UsageTotals> = {};
+        const byAgent: Record<string, UsageTotals> = {};
         const byTask: Record<string, number> = {};
         let totalToday = 0, totalAll = 0, fallbackCount = 0, realCount = 0;
+        const usage = blank();
         for (const r of records) {
           totalAll += r.costUsd;
           if (String(r.createdAt).slice(0, 10) === todayPrefix) totalToday += r.costUsd;
-          (byProvider[r.provider] ??= { calls: 0, costUsd: 0 }).calls++; byProvider[r.provider]!.costUsd += r.costUsd;
-          (byAgent[r.agentId] ??= { calls: 0, costUsd: 0 }).calls++; byAgent[r.agentId]!.costUsd += r.costUsd;
+          add(usage, r);
+          add((byProvider[r.provider] ??= blank()), r);
+          add((byAgent[r.agentId] ??= blank()), r);
           if (r.taskId) byTask[r.taskId] = (byTask[r.taskId] ?? 0) + r.costUsd;
           if (r.usedFallback) fallbackCount++; else realCount++;
         }
         const mostExpensiveTask = Object.entries(byTask).sort((a, b) => b[1] - a[1])[0] ?? null;
         return success({
           status: llmStatusFromEnv(),
-          totals: { today: Number(totalToday.toFixed(4)), allTime: Number(totalAll.toFixed(4)), calls: records.length, realCount, fallbackCount },
+          totals: { today: Number(totalToday.toFixed(6)), allTime: Number(totalAll.toFixed(6)), calls: records.length, realCount, fallbackCount, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, tokensTotal: usage.tokensTotal },
+          window: { maxRecords: 1000, limited: records.length === 1000 },
           byProvider, byAgent,
           mostExpensiveTask: mostExpensiveTask ? { taskId: mostExpensiveTask[0], costUsd: Number(mostExpensiveTask[1].toFixed(4)) } : null,
           recent: records.slice(0, 50),

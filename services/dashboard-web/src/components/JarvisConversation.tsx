@@ -28,8 +28,8 @@ import { bidiProps } from '@/lib/rtl';
 import { useVoice } from '@/lib/useVoice';
 import { publishJarvisPresence } from '@/lib/jarvisPresence';
 import {
-  subscribe, getSnapshot, submit, loadHistory, setSpeaker,
-  type EngineSnapshot,
+  subscribe, getSnapshot, submit, loadHistory, setSpeaker, setProviderMode,
+  type EngineSnapshot, type ProviderMode,
 } from '@/lib/jarvisEngine';
 
 export type ConversationState = 'idle' | 'thinking' | 'acting' | 'waiting_approval' | 'error';
@@ -69,6 +69,10 @@ export function JarvisConversation({
   /* The engine is the single source of truth; this is the only subscription. */
   useEffect(() => subscribe(setSnap), []);
   useEffect(() => { void loadHistory(); }, []);
+  useEffect(() => {
+    const saved = window.localStorage.getItem('aos.jarvis.provider');
+    if (saved === 'auto' || saved === 'local' || saved === 'openai' || saved === 'anthropic') setProviderMode(saved);
+  }, []);
 
   const { msgs, steps, busy, state, pending } = snap;
 
@@ -190,6 +194,18 @@ export function JarvisConversation({
       )}
 
       <form className="jconv-form" onSubmit={onSubmit}>
+        <select
+          className="jconv-provider"
+          value={snap.providerMode}
+          onChange={(event) => setProviderMode(event.target.value as ProviderMode)}
+          aria-label="مدل هوش مصنوعی"
+          title="انتخاب مدل هوش مصنوعی"
+        >
+          <option value="auto">خودکار</option>
+          <option value="local">Local</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
         {v.supported && (
           <button
             type="button"

@@ -86,3 +86,5 @@ export function buildEvaluation(input: BuildEvaluationInput): Evaluation {
     createdAt: nowIso(),
   };
 }
+
+export * from './model-gate.js';

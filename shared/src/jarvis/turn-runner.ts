@@ -14,7 +14,7 @@
  */
 import type { AgentToolRegistry } from '../agentcore/registry.js';
 import { startAgentLoop, resumeAgentLoopAfterApproval, type AgentLoopOptions } from '../agentcore/loop.js';
-import type { ToolCallingProvider } from '../llm/toolcalling.js';
+import type { ModelProviderSelection, ToolCallingProvider } from '../llm/toolcalling.js';
 import { modelRegistryFromEnv, toolCallingProviderFor, type ModelRegistry } from '../llm/toolcalling.js';
 import { buildMemoryContext, recordMemory } from '../memory2/index.js';
 import { buildMissionContext } from '../missions/index.js';
@@ -267,12 +267,13 @@ export async function runJarvisTurn(
   userText: string,
   deps: JarvisTurnDeps,
   transport: 'text' | 'voice' = 'text',
+  providerSelection: ModelProviderSelection = 'auto',
 ): Promise<JarvisTurnResult> {
   const env = deps.env ?? process.env;
   const turn = await beginTurn(actor, sessionId, userText, transport);
   await deps.publish?.({ type: EVENT_TYPES.JARVIS_TURN_STARTED, taskId: null, payload: { sessionId, turnId: turn.turnId, message: userText.slice(0, 120) } });
 
-  const reg = deps.modelRegistry ?? modelRegistryFromEnv(env);
+  const reg = deps.modelRegistry ?? modelRegistryFromEnv(env, providerSelection);
   const provider = deps.provider !== undefined ? deps.provider : toolCallingProviderFor(reg);
   const reasoningMode: 'native' | 'structured' | 'none' = provider
     ? ((env.LLM_TOOLCALL_MODE === 'structured' ? 'structured' : 'native'))

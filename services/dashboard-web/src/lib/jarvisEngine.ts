@@ -39,6 +39,7 @@
 import { listSessionsAction, createSessionAction, getSessionAction, sendTurnAction } from '@/app/jarvis/actions';
 
 export type EngineState = 'idle' | 'thinking' | 'acting' | 'waiting_approval' | 'error';
+export type ProviderMode = 'auto' | 'local' | 'openai' | 'anthropic';
 
 export interface EngineMsg {
   /** Stable id so a re-render never re-keys the list. */
@@ -61,6 +62,7 @@ export interface EngineSnapshot {
   queued: number;
   /** Set when the last turn failed in a way worth showing once. */
   lastError: string;
+  providerMode: ProviderMode;
 }
 
 export interface SubmitOptions {
@@ -76,7 +78,7 @@ export interface SubmitOptions {
 
 let snapshot: EngineSnapshot = {
   sessionId: null, msgs: [], steps: [], busy: false,
-  state: 'idle', pending: null, queued: 0, lastError: '',
+  state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'auto',
 };
 
 const listeners = new Set<(s: EngineSnapshot) => void>();
@@ -96,6 +98,11 @@ export function subscribe(fn: (s: EngineSnapshot) => void): () => void {
 
 export function getSnapshot(): EngineSnapshot {
   return snapshot;
+}
+
+export function setProviderMode(providerMode: ProviderMode): void {
+  if (typeof window !== 'undefined') window.localStorage.setItem('aos.jarvis.provider', providerMode);
+  emit({ providerMode });
 }
 
 /**
@@ -181,6 +188,7 @@ interface QueuedCommand {
   text: string;
   transport: 'text' | 'voice';
   contextNote?: string;
+  provider: ProviderMode;
 }
 
 const queue: QueuedCommand[] = [];
@@ -220,7 +228,7 @@ export function submit(raw: string, opts: SubmitOptions = {}): boolean {
   if (queue.length >= QUEUE_MAX) return false;
 
   lastAccepted = { text, at: now };
-  const cmd: QueuedCommand = { text, transport: opts.transport ?? 'text', contextNote: opts.contextNote };
+  const cmd: QueuedCommand = { text, transport: opts.transport ?? 'text', contextNote: opts.contextNote, provider: snapshot.providerMode };
   queuedAt.set(cmd, now);
   queue.push(cmd);
   emit({ queued: queue.length });
@@ -280,7 +288,7 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
     const res = await fetch(`/api/jarvis-stream?sessionId=${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: prompt, transport: cmd.transport }),
+      body: JSON.stringify({ text: prompt, transport: cmd.transport, provider: cmd.provider }),
     });
     if (!res.ok || !res.body) throw new Error('stream unavailable');
 
@@ -325,7 +333,7 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
   } catch {
     // Non-streaming fallback: the answer still arrives, just without steps.
     try {
-      const r = await sendTurnAction(sessionId, prompt, cmd.transport);
+      const r = await sendTurnAction(sessionId, prompt, cmd.transport, cmd.provider);
       const reply = r?.replyText ?? 'پاسخی دریافت نشد.';
       emit({
         msgs: [...snapshot.msgs, { id: msgId(), who: 'jarvis', text: reply, spoken: cmd.transport === 'voice' }],
@@ -369,7 +377,7 @@ export async function decideApproval(
 
 /** Test seam — resets module state between cases. Never called by the app. */
 export function __resetEngineForTests(): void {
-  snapshot = { sessionId: null, msgs: [], steps: [], busy: false, state: 'idle', pending: null, queued: 0, lastError: '' };
+  snapshot = { sessionId: null, msgs: [], steps: [], busy: false, state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'auto' };
   listeners.clear();
   queue.length = 0;
   running = false;
