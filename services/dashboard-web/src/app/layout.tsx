@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { Sidebar } from '@/components/Sidebar';
 import { MobileTopBar, MobileTabBar } from '@/components/MobileChrome';
 import { SafeModeBanner } from '@/components/SafeModeBanner';
@@ -28,20 +29,41 @@ function isPublicPath(pathname: string): boolean {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
-  const pathname = (await headers()).get('x-factory-pathname') ?? '';
+  const hdrs = await headers();
+  const pathname = hdrs.get('x-factory-pathname') ?? '';
+  const apex = hdrs.get('x-jarvis-apex') === '1';
 
   // Cookie present but invalid/expired — send back to login (Node verifies the signature).
   if (!session && pathname && !isPublicPath(pathname)) {
-    redirect(`/login?next=${encodeURIComponent(pathname)}`);
+    redirect(`/login?next=${encodeURIComponent(pathname || '/')}`);
   }
 
   // Unauthenticated (e.g. /login): bare shell, no nav chrome.
   if (!session) {
     return (
       <html lang="en">
-        <body>
+        <body className={apex ? 'jarvis-apex' : undefined}>
           <RtlAutoDir />
           {children}
+        </body>
+      </html>
+    );
+  }
+
+  // Public Jarvis home on simorx.com — stage only, no control-room chrome.
+  // Control room remains at factory.simorx.com.
+  if (apex) {
+    return (
+      <html lang="en">
+        <body className="jarvis-apex">
+          <RtlAutoDir />
+          <main className="main main--apex">
+            {children}
+          </main>
+          <JarvisRudder role={session.role} />
+          <p className="apex-factory-link" dir="rtl">
+            <Link href="https://factory.simorx.com/">اتاق کنترل Factory</Link>
+          </p>
         </body>
       </html>
     );

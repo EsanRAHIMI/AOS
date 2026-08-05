@@ -45,7 +45,7 @@ export function DomainRoom({
       <PageHeader
         title={zone.title}
         subtitle={zone.headline}
-        crumbs={[['/universe', 'Command Universe'], [zone.href, zone.title]]}
+        crumbs={[['/', 'Command Universe'], [zone.href, zone.title]]}
         actions={<JarvisOpenButton command={zone.jarvisCommand} />}
       />
 

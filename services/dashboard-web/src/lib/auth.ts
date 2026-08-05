@@ -7,6 +7,7 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { scryptSync, timingSafeEqual } from 'node:crypto';
 import { SESSION_COOKIE, signSession, verifySession, sessionSecret, type SessionPayload, type SessionRole } from './session';
+import { dashboardCookieDomain } from './hosts';
 
 interface ConfiguredUser {
   email: string;
@@ -103,18 +104,28 @@ export async function createSessionCookie(email: string, role: SessionRole, gate
   if (gatewaySessionToken) payload.gatewaySessionToken = gatewaySessionToken;
   const token = await signSession(payload, sessionSecret());
   const jar = await cookies();
+  const domain = dashboardCookieDomain();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_TTL_SECONDS,
+    ...(domain ? { domain } : {}),
   });
 }
 
 export async function clearSessionCookie(): Promise<void> {
   const jar = await cookies();
-  jar.delete(SESSION_COOKIE);
+  const domain = dashboardCookieDomain();
+  jar.set(SESSION_COOKIE, '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 0,
+    ...(domain ? { domain } : {}),
+  });
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
