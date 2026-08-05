@@ -10,6 +10,7 @@ import { JarvisRudder } from '@/components/JarvisRudder';
 import { RtlAutoDir } from '@/components/RtlAutoDir';
 import { getSession } from '@/lib/auth';
 import { gateway } from '@/lib/gateway';
+import { isJarvisApexHost, requestPublicHost } from '@/lib/hosts';
 
 export const metadata: Metadata = {
   title: 'Factory · Autonomous OS Control Room',
@@ -31,7 +32,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const session = await getSession();
   const hdrs = await headers();
   const pathname = hdrs.get('x-factory-pathname') ?? '';
-  const apex = hdrs.get('x-jarvis-apex') === '1';
+  // Prefer middleware flag; fall back to live host headers (Cloudflare/Traefik).
+  const apex = hdrs.get('x-jarvis-apex') === '1' || isJarvisApexHost(requestPublicHost(hdrs));
 
   // Cookie present but invalid/expired — send back to login (Node verifies the signature).
   if (!session && pathname && !isPublicPath(pathname)) {

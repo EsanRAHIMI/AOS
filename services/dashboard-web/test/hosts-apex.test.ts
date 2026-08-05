@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isJarvisApexHost, jarvisApexHosts, dashboardCookieDomain, normalizeHost } from '../src/lib/hosts';
+import { isJarvisApexHost, jarvisApexHosts, dashboardCookieDomain, normalizeHost, requestPublicHost } from '../src/lib/hosts';
 
 describe('hosts — Jarvis apex vs factory control room', () => {
   it('treats simorx.com and www as Jarvis apex by default', () => {
@@ -13,8 +13,17 @@ describe('hosts — Jarvis apex vs factory control room', () => {
     expect(normalizeHost('simorx.com:443')).toBe('simorx.com');
   });
 
+  it('prefers x-forwarded-host over Host (Dokploy/Cloudflare)', () => {
+    const headers = new Headers({
+      host: 'factory.simorx.com',
+      'x-forwarded-host': 'simorx.com',
+    });
+    expect(requestPublicHost(headers)).toBe('simorx.com');
+    expect(isJarvisApexHost(requestPublicHost(headers))).toBe(true);
+  });
+
   it('honours JARVIS_PUBLIC_HOSTS override', () => {
-    const env = { JARVIS_PUBLIC_HOSTS: 'assistant.example.com' } as NodeJS.ProcessEnv;
+    const env = { JARVIS_PUBLIC_HOSTS: 'assistant.example.com', ROOT_DOMAIN: 'example.com' } as NodeJS.ProcessEnv;
     expect(jarvisApexHosts(env)).toEqual(['assistant.example.com']);
     expect(isJarvisApexHost('assistant.example.com', env)).toBe(true);
     expect(isJarvisApexHost('simorx.com', env)).toBe(false);

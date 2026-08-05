@@ -46,15 +46,21 @@ Nixpacks روی cold build حدود ۸+ دقیقه فقط برای unpack کرد
 ## Validation after deploy
 
 1. در Dokploy برای `dashboard-web` دامنهٔ دوم اضافه کنید:
+   - **Service Name:** همان سرویس `dashboard-web` / compose service (حتماً انتخاب شود)
    - Host: `simorx.com` (و در صورت نیاز `www.simorx.com`)
-   - Container Port: همان پورت داشبورد (معمولاً `3000` داخل container / `4100` سرویس)
+   - Path: `/`
+   - **Container Port:** همان پورتی که process داخل کانتینر listen می‌کند — در این پروژه معمولاً **`4100`** (نه 3000)
    - HTTPS: on
-   - سپس **Redeploy**
+   - سپس **Redeploy** (فقط افزودن Domain کافی نیست؛ image باید کد middleware/apex را داشته باشد)
 2. DNS: رکورد A/AAAA یا CNAME برای `@` و `www` به همان سرور Dokploy.
-3. `https://simorx.com/` بعد از لاگین باید استیج Jarvis را نشان دهد (URL روی `/` بماند).
-4. `https://factory.simorx.com/` همچنان Command Universe / اتاق کنترل بماند.
-5. `https://simorx.com/jarvis` باید به `https://simorx.com/` ریدایرکت شود.
-6. لاگین مشترک: با `DASHBOARD_COOKIE_DOMAIN=.simorx.com` سشن بین apex و factory یکی است.
+3. Env پیشنهادی:
+   ```bash
+   DASHBOARD_COOKIE_DOMAIN=.simorx.com
+   JARVIS_PUBLIC_HOSTS=simorx.com,www.simorx.com
+   ROOT_DOMAIN=simorx.com
+   ```
+4. `https://simorx.com/` بعد از لاگین باید استیج Jarvis را نشان دهد (نه Command Universe).
+5. `https://factory.simorx.com/` همچنان اتاق کنترل بماند.
 
 ## Validation checklist
 

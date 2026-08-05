@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE } from '@/lib/session';
-import { isJarvisApexHost, normalizeHost } from '@/lib/hosts';
+import { isJarvisApexHost, requestPublicHost } from '@/lib/hosts';
 
 /** Routes reachable without a session cookie. */
 const PUBLIC_PATHS = [
@@ -22,7 +22,8 @@ const PUBLIC_PATHS = [
  */
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
-  const host = normalizeHost(req.headers.get('host'));
+  // Prefer x-forwarded-host: Dokploy/Cloudflare often rewrite Host.
+  const host = requestPublicHost(req.headers) || requestPublicHost(new Headers({ host: req.nextUrl.hostname }));
   const apex = isJarvisApexHost(host);
   const hasCookie = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
