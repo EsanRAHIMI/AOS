@@ -29,7 +29,7 @@ import { useEventAlerts } from '@/lib/useEventAlerts';
 import { archiveAlertAction } from '@/app/calendar/announce-action';
 import { submit as submitToJarvis } from '@/lib/jarvisEngine';
 
-const BRIEFING_REFRESH_MS = 120_000;
+const BRIEFING_REFRESH_MS = 300_000;
 
 const STATE_LABEL: Record<ConversationState, string> = {
   idle: 'آمادهٔ کار',

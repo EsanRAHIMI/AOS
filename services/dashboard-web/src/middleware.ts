@@ -46,11 +46,17 @@ export function middleware(req: NextRequest): NextResponse {
       || pathname.startsWith('/login')
       || pathname.startsWith('/api/')
       || pathname.startsWith('/_next/')
-      || pathname === '/favicon.ico';
+      || pathname === '/favicon.ico'
+      || pathname === '/icon'
+      || pathname === '/icon.svg'
+      || pathname.startsWith('/icon.')
+      || pathname === '/apple-icon'
+      || pathname.startsWith('/apple-icon');
     if (!apexOk) {
-      const factory = new URL(req.url);
-      factory.host = `factory.${process.env.ROOT_DOMAIN || 'simorx.com'}`;
-      factory.protocol = 'https:';
+      // Never leak the container listen port (:4100) into a public redirect —
+      // req.url behind Dokploy often carries the internal port.
+      const root = process.env.ROOT_DOMAIN || 'simorx.com';
+      const factory = new URL(`https://factory.${root}${pathname}${req.nextUrl.search}`);
       return NextResponse.redirect(factory);
     }
   }
@@ -74,5 +80,5 @@ export function middleware(req: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|icon$).*)'],
 };

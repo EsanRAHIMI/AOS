@@ -32,7 +32,7 @@ import {
 import { loadBoardGraphAction } from './boardSources';
 import { bidiProps } from '@/lib/rtl';
 
-const REFRESH_MS = 12_000;
+const REFRESH_MS = 45_000;
 
 /* Zoom feel. WHEEL_GAIN is per pixel of wheel delta (a mouse notch is ~100px);
  * TRACKPAD_GAIN applies to ctrl+wheel, which is how a trackpad pinch arrives —
@@ -169,20 +169,16 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
         }
       }
     };
-    void pull();
+    // Defer the first Server Action so HTML/SSE connect aren't competing
+    // with a heavy board graph POST on cold paint.
+    timer = setTimeout(() => { void pull(); }, 1200);
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, []);
 
-  /* ---------------- live exchanges from the owner stream ------------------ */
-  // The 12s poll can only see change after the fact. The persistent owner SSE
-  // stream (CIN-2) pushes real proactive events the moment the kernel raises
-  // them, so those fire their packets immediately, on the exact edges the
-  // event travelled.
+  /* ---------------- live exchanges from the shared owner stream ----------- */
+  // useHappenings already holds ONE EventSource on /api/owner-stream. Opening
+  // a second one here doubled the gateway snapshot work on every Jarvis load.
   useEffect(() => {
-    let stopped = false;
-    let es: EventSource | null = null;
-    let retry = 3000;
-
     const fire = (fromId: string) => {
       const links = graphRef.current.links;
       let sent = false;
@@ -194,19 +190,11 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
       }
       if (sent) setLastExchange(Date.now());
     };
-
-    const connect = () => {
-      if (stopped) return;
-      es = new EventSource('/api/owner-stream');
-      es.addEventListener('proactive', () => { retry = 3000; fire('proactive'); });
-      es.addEventListener('ping', () => { retry = 3000; });
-      es.onerror = () => {
-        es?.close();
-        if (!stopped) setTimeout(connect, retry = Math.min(retry * 2, 30000));
-      };
+    const onStream = (ev: Event) => {
+      if ((ev as CustomEvent<{ type?: string }>).detail?.type === 'proactive') fire('proactive');
     };
-    connect();
-    return () => { stopped = true; es?.close(); };
+    window.addEventListener('aos:owner-stream', onStream as EventListener);
+    return () => window.removeEventListener('aos:owner-stream', onStream as EventListener);
   }, []);
 
   /* --------------------- visible cards + placements ---------------------- */

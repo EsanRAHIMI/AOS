@@ -144,9 +144,10 @@ export default function JarvisCoreHUD() {
   }, []);
 
   useEffect(() => {
-    void refreshTelemetry();
-    const id = setInterval(() => { void refreshTelemetry(); }, 8000);
-    return () => clearInterval(id);
+    // Same deferral as the board graph: don't compete with first paint / SSE.
+    const boot = setTimeout(() => { void refreshTelemetry(); }, 1500);
+    const id = setInterval(() => { void refreshTelemetry(); }, 45_000);
+    return () => { clearTimeout(boot); clearInterval(id); };
   }, [refreshTelemetry]);
 
   // Demo-driven focus cycle — paused while mic, busy, or voice turn is live.

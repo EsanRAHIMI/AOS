@@ -185,11 +185,11 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Presence snapshot: last pulse + currently open proactive events.
-    const [last, open, recent] = await Promise.all([
+    // Presence first — UI can leave "connecting…" without waiting on the
+    // happenings backlog (often 20KB+ and several Mongo fan-outs).
+    const [last, open] = await Promise.all([
       lastHeartbeat(actor),
       listProactiveEvents(actor, { limit: 20 }),
-      listHappenings(actor, { limit: 60 }),
     ]);
     send('presence', {
       at: new Date().toISOString(),
@@ -198,11 +198,15 @@ export function registerStreamRoutes(app: FastifyInstance, deps: GatewayDeps): v
     });
     for (const e of [...open].reverse()) send('proactive', e);
 
-    /* D-208 — the backlog arrives as ONE frame, not 60 `happening` events.
-     * Streaming them individually would make the stage animate the last hour
-     * of history at the owner on every reconnect; a snapshot renders settled
-     * and only genuinely new cards get the surface-and-dock animation. */
-    send('happenings.snapshot', { items: recent });
+    /* D-208 — backlog as ONE frame. Cap kept small so reconnects stay cheap:
+     * the stage is a live surface, not an archive. Detail strings are trimmed
+     * in the payload path via listHappenings; limit 24 ≈ few KB, not 25KB. */
+    const recent = await listHappenings(actor, { limit: 24 });
+    const slim = recent.map((h) => ({
+      ...h,
+      detail: h.detail.length > 160 ? `${h.detail.slice(0, 157)}…` : h.detail,
+    }));
+    send('happenings.snapshot', { items: slim });
     let happeningCursor = recent[0]?.at ?? new Date().toISOString();
     // Ids already sent, so a row whose `at` ties the cursor is never repeated.
     // Bounded to the snapshot window — anything older cannot come back.

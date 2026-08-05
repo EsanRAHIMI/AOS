@@ -138,10 +138,9 @@ function ReadinessPanel() {
   useEffect(() => {
     let alive = true;
     const load = () => { void readinessAction().then((g) => { if (alive) setGaps(g); }).catch(() => { /* keep last known */ }); };
-    load();
-    // Slow poll: these change when the owner does something, not on a clock.
-    const t = setInterval(load, 60_000);
-    return () => { alive = false; clearInterval(t); };
+    const boot = setTimeout(load, 2000);
+    const t = setInterval(load, 120_000);
+    return () => { alive = false; clearTimeout(boot); clearInterval(t); };
   }, []);
 
   if (!gaps.length) return null;

@@ -110,6 +110,17 @@ export function useHappenings(): HappeningsState {
       if (stopped) return;
       es = new EventSource('/api/owner-stream');
 
+      // Presence proves the socket is alive — leave "connecting…" immediately.
+      // Snapshot may arrive a beat later with the backlog.
+      es.addEventListener('presence', () => {
+        setLive(true);
+        setLoaded(true);
+        retryMs = 2000;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('aos:owner-stream', { detail: { type: 'presence' } }));
+        }
+      });
+
       es.addEventListener('happenings.snapshot', (e) => {
         retryMs = 2000;
         setLive(true);
@@ -124,8 +135,12 @@ export function useHappenings(): HappeningsState {
         try { ingest([JSON.parse((e as MessageEvent).data) as Happening], true); } catch { /* ignore */ }
       });
 
-      // `presence` proves the socket is alive even before any happening exists.
-      es.addEventListener('presence', () => { setLive(true); retryMs = 2000; });
+      es.addEventListener('proactive', () => {
+        retryMs = 2000;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('aos:owner-stream', { detail: { type: 'proactive' } }));
+        }
+      });
 
       const reconnect = () => {
         es?.close();
