@@ -143,6 +143,17 @@ describe('model registry resolution (independence, no hardcoded IDs)', () => {
     } as NodeJS.ProcessEnv);
     expect(reg).toMatchObject({ provider: 'openai-compatible', isLocal: false });
   });
+  it('auto prefers OpenAI when LLM_DEFAULT_PROVIDER=openai even if local is configured', () => {
+    const reg = modelRegistryFromEnv({
+      LLM_DEFAULT_PROVIDER: 'openai',
+      OPENAI_API_KEY: 'sk-test',
+      LLM_OPENAI_MODEL: 'gpt-4.1',
+      LLM_LOCAL_BASE_URL: 'http://127.0.0.1:11434/v1',
+      LLM_LOCAL_MODEL: 'qwen3:4b-instruct',
+    } as unknown as NodeJS.ProcessEnv);
+    expect(reg).toMatchObject({ provider: 'openai-compatible', isLocal: false });
+    expect(reg.models.standard).toBe('gpt-4.1');
+  });
 
   // OPTIONAL real-endpoint gate: when LLM_VERIFY_BASE_URL is set (a real
   // Ollama/vLLM), prove the provider works against IT. Skips otherwise —

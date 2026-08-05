@@ -4,10 +4,11 @@ Jarvis accepts a provider policy on every turn: `auto`, `local`, `openai`, or
 `anthropic`. The dashboard selector persists only the policy name in the
 browser. API keys remain server-side.
 
-`auto` resolves in this order: local OpenAI-compatible endpoint, Anthropic,
-OpenAI, then honest degraded mode. An explicit selection is fail-closed: an
-unconfigured OpenAI selection will not silently spend on or switch to another
-provider.
+`auto` resolves from `LLM_DEFAULT_PROVIDER` (product default: `openai`), then
+the other cloud key, then the local OpenAI-compatible endpoint, then honest
+degraded mode. An explicit selection is fail-closed: an unconfigured OpenAI
+selection will not silently spend on or switch to another provider. Local
+Ollama remains available by choosing `local` in the Jarvis selector.
 
 For service-wide jobs that do not originate in Jarvis, set
 `LLM_PROVIDER_MODE`. Provider-specific model variables prevent a local model

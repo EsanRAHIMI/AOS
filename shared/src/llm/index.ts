@@ -203,19 +203,24 @@ export class LlmRouter {
 
   constructor(cfg: LlmRouterConfig) {
     const wantOpenAi = cfg.defaultProvider === 'openai';
-    if (cfg.localBaseUrl) {
-      this.provider = new OpenAIProvider(cfg.localApiKey || 'local', cfg.localBaseUrl, true);
-      const model = cfg.localModel || DEFAULT_LOCAL_MODEL;
-      this.models = { default: model, fast: cfg.localFastModel || model };
-    } else if (wantOpenAi && cfg.openaiApiKey) {
+    // Prefer the configured default cloud provider. Local is a fallback when
+    // no cloud key is present — never an automatic override of OpenAI/Anthropic.
+    if (wantOpenAi && cfg.openaiApiKey) {
       this.provider = new OpenAIProvider(cfg.openaiApiKey);
       this.models = MODELS.openai;
-    } else if (cfg.anthropicApiKey) {
+    } else if (!wantOpenAi && cfg.anthropicApiKey) {
       this.provider = new AnthropicProvider(cfg.anthropicApiKey);
       this.models = MODELS.anthropic;
     } else if (cfg.openaiApiKey) {
       this.provider = new OpenAIProvider(cfg.openaiApiKey);
       this.models = MODELS.openai;
+    } else if (cfg.anthropicApiKey) {
+      this.provider = new AnthropicProvider(cfg.anthropicApiKey);
+      this.models = MODELS.anthropic;
+    } else if (cfg.localBaseUrl) {
+      this.provider = new OpenAIProvider(cfg.localApiKey || 'local', cfg.localBaseUrl, true);
+      const model = cfg.localModel || DEFAULT_LOCAL_MODEL;
+      this.models = { default: model, fast: cfg.localFastModel || model };
     } else {
       this.provider = new MockProvider();
       this.models = { default: 'mock', fast: 'mock' };
@@ -341,6 +346,11 @@ export function llmRouterFromEnv(env: NodeJS.ProcessEnv = process.env): LlmRoute
   const allowLocal = mode !== 'openai' && mode !== 'anthropic';
   const allowOpenAi = mode !== 'local' && mode !== 'anthropic';
   const allowAnthropic = mode !== 'local' && mode !== 'openai';
+  const defaultProvider = (
+    mode === 'openai' || mode === 'anthropic'
+      ? mode
+      : (env.LLM_DEFAULT_PROVIDER as 'anthropic' | 'openai') || 'openai'
+  );
   return new LlmRouter({
     localBaseUrl: allowLocal ? env.LLM_LOCAL_BASE_URL || undefined : undefined,
     localApiKey: env.LLM_LOCAL_API_KEY || undefined,
@@ -348,7 +358,7 @@ export function llmRouterFromEnv(env: NodeJS.ProcessEnv = process.env): LlmRoute
     localFastModel: env.LLM_MODEL_FAST || env.LLM_LOCAL_MODEL_FAST || undefined,
     anthropicApiKey: allowAnthropic ? env.ANTHROPIC_API_KEY || undefined : undefined,
     openaiApiKey: allowOpenAi ? env.OPENAI_API_KEY || undefined : undefined,
-    defaultProvider: mode === 'openai' ? 'openai' : (env.LLM_DEFAULT_PROVIDER as 'anthropic' | 'openai') || 'anthropic',
+    defaultProvider,
   });
 }
 
@@ -367,7 +377,7 @@ export function llmStatusFromEnv(env: NodeJS.ProcessEnv = process.env): LlmStatu
     provider: router.activeProvider,
     configured,
     mode: configured ? 'real' : 'fallback',
-    defaultProvider: router.activeProvider === 'local' ? 'local' : (env.LLM_DEFAULT_PROVIDER || 'anthropic'),
+    defaultProvider: router.activeProvider === 'local' ? 'local' : (env.LLM_DEFAULT_PROVIDER || 'openai'),
   };
 }
 

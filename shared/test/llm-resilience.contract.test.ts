@@ -164,7 +164,9 @@ describe('the retry loop', () => {
       throw err;
     });
     vi.stubGlobal('fetch', fetchMock);
-    await expect(fetchWithRetry('https://x/y', {}, { name: 'local', sleep, timeoutMs: 5_000 }))
+    await expect(fetchWithRetry('https://x/y', {}, {
+      name: 'local', sleep, timeoutMs: 5_000, fetchImpl: fetchMock as unknown as typeof fetch,
+    }))
       .rejects.toMatchObject({ name: 'TimeoutError' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();

@@ -71,7 +71,10 @@ export function JarvisConversation({
   useEffect(() => { void loadHistory(); }, []);
   useEffect(() => {
     const saved = window.localStorage.getItem('aos.jarvis.provider');
-    if (saved === 'auto' || saved === 'local' || saved === 'openai' || saved === 'anthropic') setProviderMode(saved);
+    // Product default is OpenAI. Older sessions stored `auto`, which used to
+    // prefer a slow/unreachable local endpoint and made Jarvis look broken.
+    if (saved === 'auto' || !saved) setProviderMode('openai');
+    else if (saved === 'local' || saved === 'openai' || saved === 'anthropic') setProviderMode(saved);
   }, []);
 
   const { msgs, steps, busy, state, pending } = snap;
@@ -233,9 +236,9 @@ export function JarvisConversation({
           aria-label="مدل هوش مصنوعی"
           title="انتخاب مدل هوش مصنوعی"
         >
+          <option value="openai">OpenAI</option>
           <option value="auto">خودکار</option>
           <option value="local">Local</option>
-          <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
         </select>
       </form>

@@ -86,7 +86,16 @@ export function modelRegistryFromEnv(
   if (selected === 'local') return local() ?? emptyRegistry();
   if (selected === 'openai') return openai() ?? emptyRegistry();
   if (selected === 'anthropic') return anthropic() ?? emptyRegistry();
-  const automatic = local() ?? anthropic() ?? openai();
+
+  // `auto` respects LLM_DEFAULT_PROVIDER (product default: openai). Local
+  // remains available explicitly or as the last fallback when no cloud key
+  // is configured — never the silent override of a working OpenAI default.
+  const prefer = (env.LLM_DEFAULT_PROVIDER || 'openai').toLowerCase();
+  const automatic = prefer === 'anthropic'
+    ? (anthropic() ?? openai() ?? local())
+    : prefer === 'local'
+      ? (local() ?? openai() ?? anthropic())
+      : (openai() ?? anthropic() ?? local());
   if (automatic) return automatic;
   return emptyRegistry();
 }

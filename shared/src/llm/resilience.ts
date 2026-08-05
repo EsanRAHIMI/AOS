@@ -41,7 +41,7 @@
  * working on the first call.
  */
 
-import { Agent, type Dispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 /** How many attempts in total (1 original + N retries) when the caller does not override. */
 export const MAX_ATTEMPTS = 4;
@@ -98,16 +98,17 @@ export function isRetryable(status: number): boolean {
  */
 export function isTimeoutError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
-  const e = err as { name?: string; code?: string; cause?: { code?: string; name?: string }; message?: string };
+  const e = err as { name?: string; code?: string; cause?: unknown; message?: string };
   if (e.name === 'AbortError' || e.name === 'TimeoutError') return true;
-  const code = e.code ?? e.cause?.code;
+  const code = e.code ?? (e.cause as { code?: string } | undefined)?.code;
   if (
     code === 'UND_ERR_HEADERS_TIMEOUT'
     || code === 'UND_ERR_BODY_TIMEOUT'
     || code === 'UND_ERR_CONNECT_TIMEOUT'
     || code === 'ABORT_ERR'
   ) return true;
-  const msg = `${e.message ?? ''} ${e.cause?.name ?? ''}`;
+  if (e.cause && e.cause !== err && isTimeoutError(e.cause)) return true;
+  const msg = `${e.message ?? ''} ${(e.cause as { name?: string } | undefined)?.name ?? ''}`;
   return /headers?\s*timeout|body\s*timeout|connect\s*timeout|the operation was aborted/i.test(msg);
 }
 
@@ -256,7 +257,11 @@ export async function fetchWithRetry(
   opts: FetchWithRetryOpts,
 ): Promise<Response> {
   const sleep = opts.sleep ?? defaultSleep;
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  // Node's built-in `fetch` rejects Agents from the npm `undici` package
+  // ("invalid onRequestStart method"). When we need a custom headersTimeout
+  // we must call undici's own fetch with that Agent.
+  const fetchImpl = opts.fetchImpl
+    ?? (opts.timeoutMs ? (undiciFetch as unknown as typeof fetch) : fetch);
   const maxAttempts = Math.max(1, opts.maxAttempts ?? MAX_ATTEMPTS);
   let last: RetryableError | null = null;
 

@@ -78,7 +78,7 @@ export interface SubmitOptions {
 
 let snapshot: EngineSnapshot = {
   sessionId: null, msgs: [], steps: [], busy: false,
-  state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'auto',
+  state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'openai',
 };
 
 const listeners = new Set<(s: EngineSnapshot) => void>();
@@ -377,7 +377,7 @@ export async function decideApproval(
 
 /** Test seam — resets module state between cases. Never called by the app. */
 export function __resetEngineForTests(): void {
-  snapshot = { sessionId: null, msgs: [], steps: [], busy: false, state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'auto' };
+  snapshot = { sessionId: null, msgs: [], steps: [], busy: false, state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'openai' };
   listeners.clear();
   queue.length = 0;
   running = false;
