@@ -40,6 +40,13 @@ fail fast with a readable error. Real secrets are never committed.
 |---|---|
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | real LLM/realtime providers |
 | `LLM_DEFAULT_PROVIDER` | default provider selection |
+| `LLM_LOCAL_BASE_URL`, `LLM_LOCAL_MODEL` | OpenAI-compatible local endpoint (Ollama `/v1`) |
+| `LLM_LOCAL_HTTP_TIMEOUT_MS` | local per-request HTTP timeout (default `600000`; must exceed cold inference) |
+| `LLM_HTTP_TIMEOUT_MS` | cloud per-request HTTP timeout (default `120000`) |
+| `LLM_LOCAL_HTTP_MAX_ATTEMPTS` | local attempts (default `1` — never stampede a single Ollama slot) |
+| `LLM_HTTP_MAX_ATTEMPTS` | cloud attempts with exponential backoff on 429/5xx (default `4`) |
+| `LLM_LOCAL_MAX_CONCURRENT` | in-flight local LLM calls (default `1`; match `OLLAMA_NUM_PARALLEL`) |
+| `LLM_LOCAL_TURN_TIMEOUT_MS` | Jarvis/agent-loop wall clock when provider is local (default `600000`) |
 | `LLM_MAX_COST_PER_TASK_USD` | per-task budget gate |
 | `LLM_SAFE_MODE_FALLBACK` | force deterministic fallback |
 | `VOICE_*` | realtime voice model/session settings |

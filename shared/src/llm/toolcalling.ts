@@ -14,6 +14,8 @@
 import type { LoopMessage } from '../agentcore/schemas.js';
 // D-211 — a 429 is flow control, not a failure. See llm/resilience.ts.
 import { fetchWithRetry } from './resilience.js';
+import { llmHttpConfigFromEnv } from './config.js';
+import { withLocalLlmSlot } from './concurrency.js';
 
 /* ----------------------------- model registry --------------------------- */
 
@@ -201,10 +203,10 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
   constructor(private readonly apiKey: string, private readonly isLocal = false) {}
 
   async chat(req: ChatRequest): Promise<ChatResult> {
+    const http = llmHttpConfigFromEnv();
     const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
-      signal: req.signal ?? null,
       body: JSON.stringify({
         model: req.model,
         max_tokens: req.maxTokens ?? 2048,
@@ -213,7 +215,12 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
         messages: toAnthropicMessages(req.messages),
         tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })),
       }),
-    }, { name: 'anthropic', signal: req.signal ?? null });
+    }, {
+      name: 'anthropic',
+      signal: req.signal ?? null,
+      timeoutMs: http.cloudTimeoutMs,
+      maxAttempts: http.cloudMaxAttempts,
+    });
     /* No `!res.ok` check: `fetchWithRetry` only returns a successful response.
      * A 429 is now waited out rather than reported, and a terminal failure
      * arrives as a RetryableError carrying the status — which is what turns
@@ -270,46 +277,63 @@ export class OpenAICompatibleToolsProvider implements ToolCallingProvider {
   }
 
   async chat(req: ChatRequest): Promise<ChatResult> {
-    const res = await fetchWithRetry(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
-      signal: req.signal ?? null,
-      body: JSON.stringify({
-        model: req.model,
-        max_tokens: req.maxTokens ?? 2048,
-        temperature: req.temperature ?? 0.2,
-        messages: toOpenAiMessages(req.system, req.messages),
-        tools: req.tools.length
-          ? req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } }))
-          : undefined,
-      }),
-    }, { name: this.name, signal: req.signal ?? null });
-    const body = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        prompt_tokens_details?: { cached_tokens?: number };
-        completion_tokens_details?: { reasoning_tokens?: number };
+    const http = llmHttpConfigFromEnv();
+    const timeoutMs = this.isLocal ? http.localTimeoutMs : http.cloudTimeoutMs;
+    const maxAttempts = this.isLocal ? http.localMaxAttempts : http.cloudMaxAttempts;
+
+    const run = async (): Promise<ChatResult> => {
+      const res = await fetchWithRetry(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
+        body: JSON.stringify({
+          model: req.model,
+          max_tokens: req.maxTokens ?? 2048,
+          temperature: req.temperature ?? 0.2,
+          messages: toOpenAiMessages(req.system, req.messages),
+          tools: req.tools.length
+            ? req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } }))
+            : undefined,
+        }),
+      }, {
+        name: this.name,
+        signal: req.signal ?? null,
+        timeoutMs,
+        maxAttempts,
+      });
+      const body = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }>;
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          prompt_tokens_details?: { cached_tokens?: number };
+          completion_tokens_details?: { reasoning_tokens?: number };
+        };
+      };
+      const msg = body.choices?.[0]?.message;
+      const toolCalls: ChatToolCall[] = (msg?.tool_calls ?? []).map((c, i) => {
+        let args: Record<string, unknown> = {};
+        try { args = JSON.parse(c.function?.arguments || '{}') as Record<string, unknown>; } catch { args = {}; }
+        return { callId: c.id ?? `call_${i}`, toolName: c.function?.name ?? '', args };
+      });
+      const tokensIn = body.usage?.prompt_tokens ?? 0;
+      const tokensOut = body.usage?.completion_tokens ?? 0;
+      const pricing = estimateCost(req.model, tokensIn, tokensOut, this.isLocal);
+      return {
+        text: msg?.content ?? '', toolCalls, tokensIn, tokensOut, ...pricing, model: req.model, provider: this.name,
+        tokensCached: body.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+        tokensReasoning: body.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+        tokensTotal: body.usage?.total_tokens ?? tokensIn + tokensOut,
+        usageSource: body.usage ? 'provider' : 'unavailable',
       };
     };
-    const msg = body.choices?.[0]?.message;
-    const toolCalls: ChatToolCall[] = (msg?.tool_calls ?? []).map((c, i) => {
-      let args: Record<string, unknown> = {};
-      try { args = JSON.parse(c.function?.arguments || '{}') as Record<string, unknown>; } catch { args = {}; }
-      return { callId: c.id ?? `call_${i}`, toolName: c.function?.name ?? '', args };
-    });
-    const tokensIn = body.usage?.prompt_tokens ?? 0;
-    const tokensOut = body.usage?.completion_tokens ?? 0;
-    const pricing = estimateCost(req.model, tokensIn, tokensOut, this.isLocal);
-    return {
-      text: msg?.content ?? '', toolCalls, tokensIn, tokensOut, ...pricing, model: req.model, provider: this.name,
-      tokensCached: body.usage?.prompt_tokens_details?.cached_tokens ?? 0,
-      tokensReasoning: body.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
-      tokensTotal: body.usage?.total_tokens ?? tokensIn + tokensOut,
-      usageSource: body.usage ? 'provider' : 'unavailable',
-    };
+
+    // Serialise local calls so a timed-out client cannot pile a second
+    // request onto Ollama's single parallel slot while the first still runs.
+    if (this.isLocal) {
+      return withLocalLlmSlot(http.localMaxConcurrent, run, req.signal ?? null);
+    }
+    return run();
   }
 }
 

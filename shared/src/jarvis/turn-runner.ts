@@ -16,6 +16,7 @@ import type { AgentToolRegistry } from '../agentcore/registry.js';
 import { startAgentLoop, resumeAgentLoopAfterApproval, type AgentLoopOptions } from '../agentcore/loop.js';
 import type { ModelProviderSelection, ToolCallingProvider } from '../llm/toolcalling.js';
 import { modelRegistryFromEnv, toolCallingProviderFor, type ModelRegistry } from '../llm/toolcalling.js';
+import { llmHttpConfigFromEnv } from '../llm/config.js';
 import { buildMemoryContext, recordMemory } from '../memory2/index.js';
 import { buildMissionContext } from '../missions/index.js';
 import { researchCoverageStatus } from '../research/providers.js';
@@ -311,7 +312,9 @@ export async function runJarvisTurn(
     model: reg.models.standard,
     reasoningMode,
     maxSteps: deps.maxSteps ?? 8,
-    timeoutMs: deps.timeoutMs ?? 120000,
+    // Local Ollama inference (cold 4B on CPU) routinely exceeds two minutes;
+    // keep cloud turns at the historical 120s default.
+    timeoutMs: deps.timeoutMs ?? (reg.isLocal ? llmHttpConfigFromEnv().localTurnTimeoutMs : 120000),
     maxCostUsd: deps.maxCostUsd ?? 0.5,
     sessionId,
     turnId: turn.turnId,

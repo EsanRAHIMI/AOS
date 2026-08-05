@@ -194,18 +194,6 @@ export function JarvisConversation({
       )}
 
       <form className="jconv-form" onSubmit={onSubmit}>
-        <select
-          className="jconv-provider"
-          value={snap.providerMode}
-          onChange={(event) => setProviderMode(event.target.value as ProviderMode)}
-          aria-label="مدل هوش مصنوعی"
-          title="انتخاب مدل هوش مصنوعی"
-        >
-          <option value="auto">خودکار</option>
-          <option value="local">Local</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-        </select>
         {v.supported && (
           <button
             type="button"
@@ -237,6 +225,19 @@ export function JarvisConversation({
         ) : (
           <button type="submit" className="jconv-send" disabled={!input.trim()} aria-label="ارسال">↵</button>
         )}
+
+        <select
+          className="jconv-provider"
+          value={snap.providerMode}
+          onChange={(event) => setProviderMode(event.target.value as ProviderMode)}
+          aria-label="مدل هوش مصنوعی"
+          title="انتخاب مدل هوش مصنوعی"
+        >
+          <option value="auto">خودکار</option>
+          <option value="local">Local</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
       </form>
 
       <p className="jconv-foot" aria-live="polite">

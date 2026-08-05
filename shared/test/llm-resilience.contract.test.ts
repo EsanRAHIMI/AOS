@@ -153,6 +153,56 @@ describe('the retry loop', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does NOT retry a client timeout — the upstream may still be serving the first call', async () => {
+    // This is the Ollama stampede: undici HeadersTimeout after 5m looked like a
+    // network error, so we retried into OLLAMA_NUM_PARALLEL=1 while the first
+    // inference was still running. Timeouts must be terminal.
+    const fetchMock = vi.fn(async () => {
+      const err = new Error('Headers Timeout Error');
+      err.name = 'TimeoutError';
+      (err as { code?: string }).code = 'UND_ERR_HEADERS_TIMEOUT';
+      throw err;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchWithRetry('https://x/y', {}, { name: 'local', sleep, timeoutMs: 5_000 }))
+      .rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('honours maxAttempts=1 so local providers never auto-replay a prompt', async () => {
+    const fetchMock = vi.fn(async () => new Response('busy', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchWithRetry('https://x/y', {}, { name: 'local', sleep, maxAttempts: 1 }))
+      .rejects.toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('uses exponential backoff of ~2s, ~4s, ~8s when the provider gives no hint', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls += 1;
+      return calls < 4
+        ? new Response('busy', { status: 503 })
+        : new Response('{}', { status: 200 });
+    }));
+    await fetchWithRetry('https://x/y', {}, {
+      name: 'test',
+      sleep: async (ms) => { waits.push(ms); },
+      maxAttempts: 4,
+    });
+    expect(waits).toHaveLength(3);
+    expect(waits[0]).toBeGreaterThanOrEqual(2_000);
+    expect(waits[0]).toBeLessThan(2_400);
+    expect(waits[1]).toBeGreaterThanOrEqual(4_000);
+    expect(waits[1]).toBeLessThan(4_400);
+    expect(waits[2]).toBeGreaterThanOrEqual(8_000);
+    expect(waits[2]).toBeLessThan(8_400);
+    vi.unstubAllGlobals();
+  });
+
   it('abandons a backoff the moment the owner cancels', async () => {
     // Waiting out a rate limit for a request nobody wants any more serves
     // no one — cancellation outranks retrying.

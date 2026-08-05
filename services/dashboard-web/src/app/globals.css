@@ -1254,21 +1254,23 @@ button { font: inherit; }
 }
 .jconv-approval .btn { padding: 4px 12px; font-size: 11.5px; }
 
-.jconv-form { display: flex; gap: 9px; padding: 12px 16px; border-top: 1px solid var(--border); }
+.jconv-form { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-top: 1px solid var(--border); }
 .jconv-provider {
-  flex: none; width: 92px; min-width: 0; padding: 0 9px; border-radius: var(--r-sm); font-size: 11px;
+  flex: none; width: 92px; height: 40px; min-width: 0; padding: 0 9px; border-radius: var(--r-sm); font-size: 11px;
   border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.045); color: var(--text);
 }
 .jconv-provider:focus { outline: none; border-color: rgba(110, 168, 255, 0.55); }
 .jconv-form input {
-  flex: 1; min-width: 0; padding: 11px 14px; border-radius: var(--r-pill); font-size: 13px;
+  flex: 1; min-width: 0; height: 40px; padding: 0 14px; border-radius: var(--r-pill); font-size: 13px;
   border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.045);
   color: var(--text); unicode-bidi: plaintext; text-align: start;
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 .jconv-form input:focus { outline: none; border-color: rgba(110, 168, 255, 0.55); background: rgba(110, 168, 255, 0.07); }
 .jconv-send {
-  flex: none; width: 40px; border-radius: var(--r-pill); cursor: pointer; font-size: 15px;
+  flex: none; box-sizing: border-box; width: 40px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-pill); cursor: pointer; font-size: 15px; line-height: 1;
   border: 1px solid rgba(110, 168, 255, 0.4); background: rgba(110, 168, 255, 0.16); color: var(--text);
 }
 .jconv-send:disabled { opacity: 0.4; cursor: default; }
@@ -1338,13 +1340,14 @@ button { font: inherit; }
 }
 
 .jrud-head {
-  display: flex; align-items: center; gap: 10px; padding: 14px 18px 12px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 14px 18px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08); font-size: 13px;
 }
 .jrud-state { color: var(--muted); font-size: 11px; margin-inline-start: auto; }
 .jrud-role { font-size: 10px; color: var(--muted-2); padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid rgba(255, 255, 255, 0.1); }
 .jrud-x {
-  width: 26px; height: 26px; border-radius: 50%; cursor: pointer; line-height: 1;
+  box-sizing: border-box; width: 28px; height: 28px; flex: none; border-radius: 50%; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1;
   border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.05);
   color: var(--muted); font-size: 16px;
 }
@@ -1371,7 +1374,9 @@ button { font: inherit; }
 
 /* Microphone — voice is available on every surface now, not just /jarvis. */
 .jconv-mic {
-  flex: none; width: 40px; border-radius: var(--r-pill); cursor: pointer; font-size: 13px;
+  flex: none; box-sizing: border-box; width: 40px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-pill); cursor: pointer; font-size: 13px; line-height: 1;
   border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.05);
   color: var(--muted); transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
@@ -1385,12 +1390,56 @@ button { font: inherit; }
 .jconv-send--stop { border-color: rgba(255, 107, 129, 0.45); background: rgba(255, 107, 129, 0.18); }
 
 @media (max-width: 720px) {
-  .jconv-form { flex-wrap: wrap; }
-  .jconv-provider { order: 3; width: 100%; height: 32px; }
+  /* Composer: one stable action row + provider underneath. Avoids wrapped
+     mic/send squashing next to a full-width select. */
+  .jconv-form {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 10px 12px 12px;
+  }
+  .jconv-provider {
+    flex: 1 1 100%; order: 10; width: 100%; height: 36px; font-size: 12px;
+  }
+  .jconv-mic,
+  .jconv-send {
+    flex: 0 0 44px; width: 44px; height: 44px; font-size: 16px;
+  }
+  .jconv-form input {
+    flex: 1 1 0; min-width: 0; height: 44px; font-size: 16px; /* 16px blocks iOS focus-zoom */
+  }
+  .jconv-foot { padding: 0 12px 10px; }
+
+  /* Header: title row + controls row, no horizontal overflow. */
+  .jrud-head {
+    gap: 8px; padding: 12px 14px 10px;
+  }
+  .jrud-head > strong { font-size: 14px; }
+  .jrud-state {
+    margin-inline-start: 0; flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .jrud-role { display: none; }
+  .jrud-x { margin-inline-start: auto; }
+  .jrud-watchbox,
+  .jrud-ambientbox {
+    flex: 1 1 100%; margin-inline-start: 0; max-width: 100%;
+  }
+  .jrud-watchbtn { font-size: 11px; padding: 6px 10px; }
+  .jrud-watchlead { max-width: 100%; }
+  .jrud-ambientnote { font-size: 10px; line-height: 1.45; }
+
+  .jrud-bar { padding: 14px 16px; gap: 10px; }
+  .jrud-kbd { display: none; } /* desktop shortcut; clutter on phones */
+
   .jrud { padding: 0 10px calc(10px + 64px + env(safe-area-inset-bottom, 0px)); }
-  .jrud-glass { border-radius: 22px; }
-  .jrud--open .jrud-glass { max-height: 80vh; }
-  .jconv--rudder .jconv-scroll { max-height: 56vh; }
+  .jrud-glass { border-radius: 22px; width: 100%; }
+  .jrud--open .jrud-glass { max-height: min(78vh, 720px); }
+  .jconv--rudder .jconv-scroll { max-height: min(48vh, 420px); }
+  .jconv--rudder .jconv-form { padding: 10px 12px 12px; }
+
+  .jrud-alert {
+    inset-inline: 10px;
+    bottom: calc(78px + 64px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* ==========================================================================

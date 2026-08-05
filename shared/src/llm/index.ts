@@ -13,6 +13,9 @@
 import type { ZodType } from 'zod';
 import { genId, nowIso } from '../utils/index.js';
 import type { LlmTrace } from '../schemas/capability.js';
+import { fetchWithRetry } from './resilience.js';
+import { llmHttpConfigFromEnv } from './config.js';
+import { withLocalLlmSlot } from './concurrency.js';
 
 export type ProviderName = 'local' | 'anthropic' | 'openai' | 'mock';
 
@@ -84,32 +87,42 @@ export class OpenAIProvider implements LlmProvider {
     this.name = isLocal ? 'local' : 'openai';
   }
   async complete(req: LlmCompletionRequest): Promise<LlmCompletionResult> {
-    const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({
+    const http = llmHttpConfigFromEnv();
+    const timeoutMs = this.isLocal ? http.localTimeoutMs : http.cloudTimeoutMs;
+    const maxAttempts = this.isLocal ? http.localMaxAttempts : http.cloudMaxAttempts;
+    const run = async (): Promise<LlmCompletionResult> => {
+      const res = await fetchWithRetry(`${this.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
+        body: JSON.stringify({
+          model: req.model,
+          max_tokens: req.maxTokens ?? 1024,
+          messages: [
+            { role: 'system', content: req.system },
+            { role: 'user', content: req.prompt },
+          ],
+        }),
+      }, {
+        name: this.name,
+        timeoutMs,
+        maxAttempts,
+      });
+      const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+      const text = body.choices?.[0]?.message?.content ?? '';
+      const tokensIn = body.usage?.prompt_tokens ?? approxTokens(req.system + req.prompt);
+      const tokensOut = body.usage?.completion_tokens ?? approxTokens(text);
+      return {
+        text,
         model: req.model,
-        max_tokens: req.maxTokens ?? 1024,
-        messages: [
-          { role: 'system', content: req.system },
-          { role: 'user', content: req.prompt },
-        ],
-      }),
-    });
-    if (!res.ok) throw new Error(`${this.name} ${res.status}`);
-    const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
-    const text = body.choices?.[0]?.message?.content ?? '';
-    const tokensIn = body.usage?.prompt_tokens ?? approxTokens(req.system + req.prompt);
-    const tokensOut = body.usage?.completion_tokens ?? approxTokens(text);
-    return {
-      text,
-      model: req.model,
-      provider: this.name,
-      tokensIn,
-      tokensOut,
-      costUsd: this.isLocal ? 0 : estimateCost(req.model, tokensIn, tokensOut),
-      usageSource: body.usage ? 'provider' : 'estimated',
+        provider: this.name,
+        tokensIn,
+        tokensOut,
+        costUsd: this.isLocal ? 0 : estimateCost(req.model, tokensIn, tokensOut),
+        usageSource: body.usage ? 'provider' : 'estimated',
+      };
     };
+    if (this.isLocal) return withLocalLlmSlot(http.localMaxConcurrent, run);
+    return run();
   }
 }
 
@@ -413,3 +426,5 @@ export { promptFor, listPrompts, agentPrompts, type VersionedPrompt, type AgentP
 
 // D-211 — retry/backoff and owner-readable provider errors.
 export * from './resilience.js';
+export * from './config.js';
+export * from './concurrency.js';
