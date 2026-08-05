@@ -5,19 +5,10 @@ AD–AF.4.4, the **Living Command Universe home**: a persistent, realtime
 personal-and-system command surface, not just an admin panel.
 
 ## Home surface (`/`)
-The homepage is the Jarvis Command Universe: a persistent Presence Bar +
-Focus Row (wired to `GET /v1/jarvis/briefing`), nine Command Universe domain
-zones each with a real domain-specific visual renderer (`BodyMap`,
-`FinanceFlow`, `HouseholdMap`, `VentureBoard`, `SkillLanes`,
-`OpportunityRadar`, `SystemPulse`, `PresenceBadges`, `PriorityStack` — see
-`src/lib/domainCanvas.ts`), a domain action layer (accept/reject/ingest
-controls per zone card), an Active Operations panel and a grouped, one-
-card-per-operation Live Activity feed (both backed by the persistent
-`GET /v1/operator/live-state` snapshot so they survive refresh/navigation),
-and a docked, persistent Operator Console (Jarvis) summonable from any page.
-See `docs/living-command-universe-vision.md` for the product diagnosis that
-motivated this, and `docs/phase-log.md` (Phase AF.1–AF.4.4) for what was
-actually built.
+The product root is the **Jarvis presence stage** (`JarvisCoreHUD`). After sign-in,
+`https://factory.simorx.com/` opens Jarvis. Legacy `/jarvis` permanently redirects
+here. The Living Command Universe (Presence Bar, Focus Row, nine domain zones,
+operator live-state) now lives at `/universe`.
 
 ## Personal layer (`/me/*`)
 `/me` (Personal Command Center) plus `/me/{reality,goals,projects,systems,

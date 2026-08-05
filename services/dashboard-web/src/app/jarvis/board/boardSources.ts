@@ -237,7 +237,7 @@ export async function loadBoardGraphAction(): Promise<BoardGraph> {
       title: 'حافظه', subtitle: 'واقعیت‌ها، ترجیحات و درس‌ها',
       metrics: [{ k: 'records', v: String(memories.length) }],
       activity: recencyActivity(newest, 30 * 60_000),
-      updatedAt: newest || null, href: '/jarvis', accent: ACCENT.memory,
+      updatedAt: newest || null, href: '/', accent: ACCENT.memory,
       emptyHint: 'حافظه خالی است',
     });
     link('memory', 'self', 'data', 0.85, 0.25, 'knows');

@@ -262,7 +262,7 @@ export default async function CalendarPage({ searchParams }: {
       <p className="cal-foot">
         جارویس به همین داده‌ها دسترسی دارد. در تقویم <strong>AOS</strong> آزادانه می‌نویسد؛
         نوشتن در تقویم شخصی شما، حذف، و دعوت مهمان تأیید شما را می‌خواهد.
-        {' '}<Link href="/jarvis">از جارویس بخواهید</Link>
+        {' '}<Link href="/">از جارویس بخواهید</Link>
       </p>
     </div>
   );

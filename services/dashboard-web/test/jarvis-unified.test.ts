@@ -8,8 +8,9 @@
  * the wrong file is worse than no guard, because it reports safety.
  *
  * There were three implementations: the dock (other pages), `JarvisWorkspace`
- * (dead) and `JarvisCoreHUD` (`/jarvis`, and the only one with voice). Hence
- * the symptom: voice on one page, history and structure on the others.
+ * (dead) and `JarvisCoreHUD` (home `/`, and the only one with the stage
+ * canvas). Hence the symptom: voice on one page, history and structure on
+ * the others. `/jarvis` now redirects to `/`.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
@@ -21,6 +22,7 @@ const read = (p: string) => readFileSync(join(root, p), 'utf8');
 const conversation = read('components/JarvisConversation.tsx');
 const rudder = read('components/JarvisRudder.tsx');
 const layout = read('app/layout.tsx');
+const homePage = read('app/page.tsx');
 const jarvisPage = read('app/jarvis/page.tsx');
 const coreHud = read('app/jarvis/JarvisCoreHUD.tsx');
 /* D-211 — the turn pipeline moved OUT of the view into module state. The
@@ -49,12 +51,11 @@ describe('one assistant, everywhere', () => {
     expect(rudder).toContain('<JarvisConversation');
   });
 
-  it('/jarvis reaches the shared conversation through the rudder, not its own chat', () => {
-    // Start from the ROUTE — the mistake last time was auditing a file the
-    // route never rendered.
-    expect(jarvisPage).toContain('JarvisCoreHUD');
+  it('home `/` is the Jarvis stage; legacy `/jarvis` redirects there', () => {
+    expect(homePage).toContain('JarvisCoreHUD');
+    expect(jarvisPage).toContain("redirect('/')");
     for (const forbidden of ['sendTurnAction', 'createSessionAction', '/api/jarvis-stream', 'SpeechRecognition']) {
-      expect(coreHud, `/jarvis must not run its own ${forbidden}`).not.toContain(forbidden);
+      expect(coreHud, `Jarvis stage must not run its own ${forbidden}`).not.toContain(forbidden);
     }
     // It keeps its visual layer, driven by the shared presence.
     expect(coreHud).toContain('subscribeJarvisPresence');

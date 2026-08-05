@@ -4,9 +4,9 @@ import { usePathname } from 'next/navigation';
 
 /** Top status bar + bottom tab bar shown only on mobile/tablet widths. */
 const TABS: Array<[string, string, string]> = [
-  ['/', 'Home', '◎'],
+  ['/', 'Jarvis', '◎'],
+  ['/universe', 'Universe', '◈'],
   ['/tasks', 'Tasks', '◇'],
-  ['/services', 'Services', '⬡'],
   ['/approvals', 'Approvals', '✓'],
   ['/learning', 'Learning', '✦'],
 ];

@@ -5,7 +5,7 @@ import { logoutAction } from '@/app/login/actions';
 
 /** Grouped navigation for the glass control-room sidebar. */
 const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
-  { title: 'Get started', items: [['/', 'Overview'], ['/start', 'Start guide'], ['/voice', 'Voice Operator'], ['/calendar', 'Calendar & Tasks'], ['/system-map', 'System map'], ['/readiness', 'Readiness']] },
+  { title: 'Get started', items: [['/', 'Jarvis'], ['/universe', 'Command Universe'], ['/start', 'Start guide'], ['/voice', 'Voice Operator'], ['/calendar', 'Calendar & Tasks'], ['/system-map', 'System map'], ['/readiness', 'Readiness']] },
   { title: 'Operate', items: [['/tasks', 'Tasks'], ['/start/actions', 'Action templates'], ['/agents', 'Agents'], ['/services', 'Services'], ['/approvals', 'Approvals'], ['/infrastructure', 'Infrastructure']] },
   { title: 'Build', items: [['/capabilities', 'Capabilities'], ['/gaps', 'Missing Capabilities'], ['/expansion-proposals', 'Expansions'], ['/evaluations', 'Evaluations'], ['/skills', 'Skills']] },
   { title: 'Reality', items: [['/validations', 'Validations'], ['/github', 'GitHub'], ['/evidence/explorer', 'Proof & Evidence'], ['/deployment/checklists', 'Checklists'], ['/activations', 'Live Activation']] },
@@ -15,7 +15,7 @@ const GROUPS: Array<{ title: string; items: Array<[string, string]> }> = [
   { title: 'Intelligence', items: [['/llm', 'Real Intelligence'], ['/llm/costs', 'AI Costs & Budget'], ['/llm/prompts', 'Agent Prompts'], ['/llm-traces', 'AI Reasoning Traces'], ['/research', 'Research'], ['/reviews', 'Reviews'], ['/qa', 'QA'], ['/reports/center', 'Reports Center']] },
   { title: 'Secure', items: [['/security', 'Security'], ['/security/events', 'Security Events'], ['/security/env', 'Env Health'], ['/security/rate-limits', 'Rate Limits'], ['/security/safe-mode', 'Safe Mode']] },
   { title: 'Learn', items: [['/learning', 'Learning'], ['/learning-runs', 'Learning Runs'], ['/reliability', 'Reliability'], ['/patterns', 'Patterns'], ['/system-recommendations', 'Recommendations'], ['/improvement-workflows', 'Workflows'], ['/impact-assessments', 'Impact'], ['/memory-maintenance', 'Memory Maint.'], ['/learning/schedules', 'Schedules']] },
-  { title: 'Universe', items: [['/', 'Command Universe'], ['/operations', 'Engine Room']] },
+  { title: 'Universe', items: [['/universe', 'Command Universe'], ['/operations', 'Engine Room']] },
   { title: 'CIN', items: [['/cin', 'Network'], ['/cin/entities', 'Entities'], ['/loop', 'Living Loop']] },
   { title: 'Personal', items: [['/me', 'Command Center'], ['/me/profile', 'My Profile'], ['/me/briefing', 'Briefings'], ['/me/strategy', 'Strategy'], ['/me/opportunities', 'Opportunities'], ['/me/resume', 'Resume']] },
   { title: 'Identity', items: [['/settings/identity', 'Identity & Scope'], ['/settings/tenants', 'Tenants'], ['/settings/consents', 'Consents'], ['/settings/connectors', 'Connectors'], ['/settings/access-log', 'Access log']] },

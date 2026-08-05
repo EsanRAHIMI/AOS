@@ -32,7 +32,7 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Operations — Kernel Control"
-        subtitle="The kernel operations deep-dive: start, monitor, approve, verify and understand real operations. The Command Universe (home) is the world view; this is the engine room."
+        subtitle="The kernel operations deep-dive: start, monitor, approve, verify and understand real operations. The Command Universe (/universe) is the world view; this is the engine room."
         actions={<Link href="/start" className="btn btn-ghost">New here? Start guide</Link>}
       />
 

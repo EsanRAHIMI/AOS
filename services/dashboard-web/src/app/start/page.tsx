@@ -48,7 +48,7 @@ export default async function StartPage() {
       <div className="card" style={{ marginTop: 16 }}>
         <div className="label" style={{ marginBottom: 8 }}>Jump to</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Link href="/" className="chip">Overview</Link>
+          <Link href="/universe" className="chip">Command Universe</Link>
           <Link href="/readiness" className="chip">Readiness</Link>
           <Link href="/tasks" className="chip">Tasks</Link>
           <Link href="/evidence/explorer" className="chip">Evidence</Link>
