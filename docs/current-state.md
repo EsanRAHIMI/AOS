@@ -101,6 +101,36 @@ _Last updated: 2026-07-31 · covers commits `ad8aa69` (D-177) → D-211 (turn en
 > owner's conversation. **Suites after D-211: shared 544 pass / 6 skipped,
 > gateway 254 pass, dashboard 212 pass; all typecheck clean.**
 
+> **D-212/213/214 (2026-08-06) — the turn stopped feeling slow.**
+> Three findings, all invisible to the existing suites because none of them
+> made anything fail.
+> **D-212:** the context packet led with `nowContext`, the one line guaranteed
+> to change every turn, so nothing behind it was ever cacheable — identity,
+> memory, missions and ~30 tool schemas were resent at full price on every
+> step. Reordered stable→volatile (clock last, beside the goal); ordering
+> extracted to a pure `composeTurnContext` with a contract test, since the
+> property is invisible from outside. One Anthropic `cache_control`
+> breakpoint on the system block. Also fixed: `LLM_DEFAULT_PROVIDER=local`
+> meant two different things in `llmRouterFromEnv` and
+> `modelRegistryFromEnv`, and `llm-router.contract.test.ts` still asserted a
+> priority the code reversed in `1022b64`. New: `pnpm models:list` asks the
+> providers which model ids are real (a stale id 404s; it does not degrade).
+> **D-213:** there was no streaming anywhere — no `stream: true` in the repo,
+> and the SSE route polled a promise it learned nothing from, then flushed
+> steps AFTER the turn finished. `ToolCallingProvider.chatStream()` (optional;
+> providers without it are unchanged) + `AgentLoopOptions.onDelta`, with
+> `run.started` emitted before the first model call. Wire-proved against a
+> REAL socket in 9-byte writes so records and multi-byte Persian split across
+> reads. `stream_options.include_usage` — without it a streamed turn records 0
+> tokens and `maxCostUsd` silently stops binding.
+> **D-214:** `cancelAgentLoop` and its route already existed and were
+> unreachable, because `runId` never reached the browser. Now wired;
+> `cancelActive()` clears the queue *and* cancels the run, and a stop pressed
+> before `run.started` arrives is held rather than dropped.
+> **Suites after D-214: shared 605 pass / 6 skipped, gateway 254 pass,
+> dashboard 230 pass; all three typecheck clean; scope boundary clean.**
+> Plan and rationale: `docs/jarvis-upgrade-spec.md` (items 3, 1, 7 of 9 done).
+
 > **STATUS BANNER (read this):** **PRODUCT_VERIFIED = 0.** Nothing has been
 > completed through the real dashboard browser with a real model yet. The build
 > sandbox has **no reachable LLM** and **cannot launch a browser** (both
