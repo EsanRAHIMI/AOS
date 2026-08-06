@@ -2,6 +2,51 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-08-06 — the stop button that already existed everywhere but the screen (D-214)
+
+`cancelAgentLoop` was written, tested, and read by the loop between every pair
+of steps. The gateway route `POST /v1/jarvis/runs/:runId/cancel` existed, with
+its ownership check. None of it was reachable, for one reason: `runId` did not
+leave the server until the turn was over, so the browser never held the
+identifier the cancel needed. The mechanism was complete and unusable, which
+is why this waited on D-213 rather than shipping alongside it.
+
+**Both halves or neither.** `cancelActive()` clears the queue AND cancels the
+run. Cancelling only the run lets the next queued command start immediately, so
+the spinner carries straight on and the button visibly did nothing; clearing
+only the queue leaves the current turn running to completion. Either half alone
+is a broken button. The queue is dropped synchronously, before the network
+call — a stop has to feel instant, and no round-trip is needed to know the
+owner no longer wants what they queued.
+
+**The race the test found.** There is a real window between "a turn is in
+flight" and "we know its id", and it is exactly when an owner reaches for the
+button, because it is when nothing appears to be happening yet. A stop pressed
+there was dropped. The intent is now remembered and applied the moment
+`run.started` arrives — and cleared when a turn ends, so a spent stop is not
+inherited by the next command.
+
+**The duplicate guard is reset on stop.** Repeating a command inside the 6s
+window is normally a double delivery. Immediately after an explicit stop it is
+the owner correcting themselves, and swallowing that retry would be the second
+thing in a row that ignored them.
+
+**Cancellation lands at a step boundary, not mid-step.** A tool already
+dispatched finishes and is still recorded. It has real side effects; pretending
+otherwise would make the ledger lie about what happened.
+
+### What was deliberately NOT done
+
+The plan said to wire voice onset to `cancelActive`. Two findings changed that.
+First, barge-in already exists: `useVoice` stops speech the moment the owner
+starts talking ("the owner talking always wins over the assistant talking"),
+and `useAmbientVoice` carries an `onBargeIn` path. Second — and this is the
+reason it stays that way — cancelling a running turn because the owner started
+a new sentence would contradict D-211, which made the input deliberately
+non-blocking so a second command QUEUES rather than interrupts. Speaking while
+Jarvis works is not a request to throw the work away. Interrupting the voice is
+barge-in; interrupting the turn is a button the owner presses on purpose.
+
 ## 2026-08-06 — the packet was ordered so that nothing could be cached (D-212)
 
 Both providers cache on a literal prefix: everything up to the first byte that

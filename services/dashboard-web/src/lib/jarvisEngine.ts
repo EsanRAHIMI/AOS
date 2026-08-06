@@ -36,7 +36,7 @@
  * constraint. One at a time, queued, is not a limitation — it is the only
  * ordering that has a defined meaning.
  */
-import { listSessionsAction, createSessionAction, getSessionAction, sendTurnAction } from '@/app/jarvis/actions';
+import { listSessionsAction, createSessionAction, getSessionAction, sendTurnAction, cancelRunAction } from '@/app/jarvis/actions';
 
 export type EngineState = 'idle' | 'thinking' | 'acting' | 'waiting_approval' | 'error';
 export type ProviderMode = 'auto' | 'local' | 'openai' | 'anthropic';
@@ -332,9 +332,17 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
         switch (ev) {
           /* D-213 — the run id arrives before the model is even called, which
            * is what makes a stop button possible mid-turn. */
-          case 'loop.run.started':
-            emit({ activeRunId: String(data.runId ?? '') || null });
+          case 'loop.run.started': {
+            const id = String(data.runId ?? '') || null;
+            emit({ activeRunId: id });
+            // A stop pressed before the run identified itself is honoured here,
+            // not lost — see `cancelRequested`.
+            if (id && cancelRequested) {
+              cancelRequested = false;
+              void cancelRunAction(id).catch(() => undefined);
+            }
             break;
+          }
 
           case 'loop.text':
             streamed += String(data.text ?? '');
@@ -417,8 +425,62 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
       });
     }
   } finally {
+    // A stop that arrived for a turn which then finished on its own is spent,
+    // not inherited by whatever the owner asks next.
+    cancelRequested = false;
     emit({ busy: false, steps: [], streamingText: '', activeRunId: null });
   }
+}
+
+/* ========================================================================== *
+ * Stopping
+ * ========================================================================== */
+
+/**
+ * Stop what Jarvis is doing, now (D-214).
+ *
+ * BOTH halves are required, and this is the part that is easy to get wrong.
+ * Cancelling only the run lets the next queued command start immediately, so
+ * from the owner's side the stop button visibly did nothing — the spinner
+ * carries straight on. Clearing only the queue leaves the current turn running
+ * to completion. Either half alone reads as a broken button.
+ *
+ * The queue is dropped SYNCHRONOUSLY, before the network call: a stop must
+ * feel instant, and the server round-trip is not needed to know that the owner
+ * no longer wants what they had queued.
+ *
+ * Cancellation lands at the loop's next step boundary, not mid-step. A tool
+ * already dispatched still finishes and is still recorded — it has real side
+ * effects and pretending otherwise would make the ledger lie.
+ */
+/**
+ * Set when a stop arrives before the run has identified itself.
+ *
+ * There is a real window — roughly the time it takes the gateway to persist
+ * the run and flush the first frame — in which a turn is visibly in flight but
+ * `activeRunId` is still null. A stop pressed inside that window used to be
+ * dropped on the floor, and the window is exactly when an owner reaches for
+ * the button, because that is when nothing appears to be happening yet.
+ *
+ * So the INTENT is remembered and applied the moment the id arrives.
+ */
+let cancelRequested = false;
+
+export function cancelActive(): boolean {
+  const runId = snapshot.activeRunId;
+  const hadQueue = queue.length > 0;
+  const wasBusy = snapshot.busy;
+  queue.length = 0;
+  /* Also clear the duplicate guard: after an explicit stop, repeating the
+   * command is the owner correcting themselves, not a double delivery. */
+  lastAccepted = { text: '', at: 0 };
+  emit({ queued: 0 });
+  if (runId) {
+    void cancelRunAction(runId).catch(() => undefined);
+  } else if (wasBusy) {
+    cancelRequested = true;
+  }
+  return Boolean(runId) || wasBusy || hadQueue;
 }
 
 /* ========================================================================== *
@@ -453,4 +515,5 @@ export function __resetEngineForTests(): void {
   sessionPromise = null;
   historyLoaded = false;
   speakFn = null;
+  cancelRequested = false;
 }

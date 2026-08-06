@@ -28,7 +28,7 @@ import { bidiProps } from '@/lib/rtl';
 import { useVoice } from '@/lib/useVoice';
 import { publishJarvisPresence } from '@/lib/jarvisPresence';
 import {
-  subscribe, getSnapshot, submit, loadHistory, setSpeaker, setProviderMode,
+  subscribe, getSnapshot, submit, loadHistory, setSpeaker, setProviderMode, cancelActive,
   type EngineSnapshot, type ProviderMode,
 } from '@/lib/jarvisEngine';
 
@@ -234,8 +234,19 @@ export function JarvisConversation({
           {...bidiProps(v.listening ? v.interim : input)}
         />
 
+        {/* One stop control, three things it can stop, in the order the owner
+          * most likely means: the voice reading aloud, then the turn itself.
+          * Sending is only offered when there is nothing to interrupt. */}
         {v.speaking ? (
           <button type="button" className="jconv-send jconv-send--stop" onClick={v.stopSpeaking} aria-label="توقف صدا">◼</button>
+        ) : busy || snap.queued > 0 ? (
+          <button
+            type="button"
+            className="jconv-send jconv-send--stop"
+            onClick={() => { v.stopSpeaking(); cancelActive(); }}
+            aria-label="توقف"
+            title="توقف کاری که در حال انجام است"
+          >◼</button>
         ) : (
           <button type="submit" className="jconv-send" disabled={!input.trim()} aria-label="ارسال">↵</button>
         )}

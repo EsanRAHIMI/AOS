@@ -92,6 +92,8 @@ export const gateway = {
     call<{ status: string; replyText: string; pendingApprovalId: string | null }>(
       `/v1/jarvis/loop-approvals/${approvalId}/decision`, { method: 'POST', body: JSON.stringify({ action, runId, reason }) }),
   jarvisRun: (runId: string) => call<{ run: Record<string, unknown>; steps: Array<Record<string, unknown>> }>(`/v1/jarvis/runs/${runId}`),
+  /** Ask a running turn to stop at its next step boundary (D-214). */
+  jarvisCancelRun: (runId: string) => call<{ cancelRequested: boolean }>(`/v1/jarvis/runs/${runId}/cancel`, { method: 'POST', body: '{}' }),
   jarvisTools: () => call<{ total: number; available: number; tools: Array<Record<string, unknown>> }>('/v1/jarvis/tools'),
   jarvisMemories: () => call<Array<Record<string, unknown>>>('/v1/jarvis/memories'),
   jarvisMemoryCorrect: (id: string, newContent: string) => call<Record<string, unknown>>(`/v1/jarvis/memories/${id}/correct`, { method: 'POST', body: JSON.stringify({ newContent }) }),

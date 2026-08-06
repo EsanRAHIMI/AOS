@@ -86,6 +86,11 @@ export async function decideApprovalAction(approvalId: string, runId: string, ac
   return gateway.jarvisApprovalDecision(approvalId, runId, action, reason);
 }
 
+/** Stop a turn the owner no longer wants (D-214). */
+export async function cancelRunAction(runId: string): Promise<boolean> {
+  return (await gateway.jarvisCancelRun(runId))?.cancelRequested ?? false;
+}
+
 export async function intelligenceStatusAction() {
   return gateway.jarvisIntelligenceStatus();
 }

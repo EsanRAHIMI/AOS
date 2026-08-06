@@ -20,17 +20,19 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
-  submit, subscribe, getSnapshot, setSpeaker, __resetEngineForTests,
+  submit, subscribe, getSnapshot, setSpeaker, cancelActive, __resetEngineForTests,
 } from '../src/lib/jarvisEngine';
 
 /* The engine talks to server actions and a streaming route. Both are mocked
  * at the module boundary: this file is about ordering and identity, not
  * transport. */
+const cancelled: string[] = [];
 vi.mock('@/app/jarvis/actions', () => ({
   listSessionsAction: vi.fn(async () => [{ sessionId: 'sess_1' }]),
   createSessionAction: vi.fn(async () => 'sess_1'),
   getSessionAction: vi.fn(async () => ({ session: null, turns: [] })),
   sendTurnAction: vi.fn(async (_s: string, text: string) => ({ replyText: `reply:${text}` })),
+  cancelRunAction: vi.fn(async (runId: string) => { cancelled.push(runId); return true; }),
 }));
 
 /** Resolves when the engine has drained everything it accepted. */
@@ -316,5 +318,100 @@ describe('streaming a reply', () => {
     await settle();
 
     expect(getSnapshot().msgs.filter((m) => m.who === 'jarvis').at(-1)?.steps).toEqual(['personal_state: read']);
+  });
+});
+
+/* ========================================================================== *
+ * D-214 — stopping
+ * ========================================================================== */
+
+describe('cancelActive', () => {
+  beforeEach(() => { cancelled.length = 0; });
+
+  it('drops the queue AND cancels the run — either half alone is a broken button', async () => {
+    stubStream([
+      ['loop.run.started', { kind: 'run.started', runId: 'arun_stop' }],
+      ['loop.text', { kind: 'text', text: 'thinking' }],
+      ['turn.final', { replyText: 'done', status: 'completed' }],
+    ]);
+
+    submit('اولی');
+    submit('دومی');
+    submit('سومی');
+    // Two behind the one in flight.
+    expect(getSnapshot().queued).toBe(2);
+
+    expect(cancelActive()).toBe(true);
+
+    /* Queue cleared synchronously: a stop has to feel instant, and no server
+     * round-trip is needed to know the owner no longer wants what they
+     * queued. Cancelling only the run would let the next command start
+     * immediately and the spinner would visibly carry on. */
+    expect(getSnapshot().queued).toBe(0);
+    await settle();
+    expect(cancelled).toEqual(['arun_stop']);
+  });
+
+  it('honours a stop pressed before the run has identified itself', async () => {
+    /* There is a real window between "a turn is in flight" and "we know its
+     * id", and it is precisely when an owner reaches for the button — because
+     * that is when nothing appears to be happening yet. The intent used to be
+     * dropped on the floor. */
+    stubStream([
+      ['loop.run.started', { kind: 'run.started', runId: 'arun_late' }],
+      ['turn.final', { replyText: 'done', status: 'completed' }],
+    ]);
+    submit('زود متوقفش کن');
+    // Synchronously — the id cannot possibly have arrived yet.
+    expect(getSnapshot().activeRunId).toBeNull();
+    expect(cancelActive()).toBe(true);
+
+    await settle();
+    expect(cancelled).toEqual(['arun_late']);
+  });
+
+  it('does not carry a spent stop over to the next command', async () => {
+    stubStream([['turn.final', { replyText: 'ok', status: 'completed' }]]);
+    submit('اولی');
+    cancelActive();               // no run id ever arrives in this stream
+    await settle();
+
+    stubStream([
+      ['loop.run.started', { kind: 'run.started', runId: 'arun_next' }],
+      ['turn.final', { replyText: 'ok', status: 'completed' }],
+    ]);
+    submit('دومی — این نباید لغو شود');
+    await settle();
+    expect(cancelled).not.toContain('arun_next');
+  });
+
+  it('lets the owner immediately repeat the command they just stopped', async () => {
+    stubStream([['turn.final', { replyText: 'ok', status: 'completed' }]]);
+    expect(submit('همان جمله')).toBe(true);
+    cancelActive();
+    /* Normally a repeat inside the duplicate window is a double delivery. After
+     * an explicit stop it is the owner correcting themselves, so the guard is
+     * reset — otherwise the retry is silently swallowed. */
+    expect(submit('همان جمله')).toBe(true);
+    await settle();
+  });
+
+  it('reports nothing to stop when idle, without calling the gateway', () => {
+    expect(cancelActive()).toBe(false);
+    expect(cancelled).toEqual([]);
+  });
+
+  it('a queued command cancelled before it ran never reaches the server', async () => {
+    stubStream([
+      ['loop.run.started', { kind: 'run.started', runId: 'arun_x' }],
+      ['turn.final', { replyText: 'first only', status: 'completed' }],
+    ]);
+    submit('اجرا شود');
+    submit('هرگز اجرا نشود');
+    cancelActive();
+    await settle();
+
+    const said = getSnapshot().msgs.filter((m) => m.who === 'you').map((m) => m.text);
+    expect(said).toEqual(['اجرا شود']);
   });
 });
