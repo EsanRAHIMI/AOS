@@ -90,10 +90,12 @@ export function JarvisConversation({
     wasBusy.current = busy;
   }, [busy, snap.sessionId, onTurnComplete]);
 
+  /* Follows the streaming text too, otherwise a long answer writes itself off
+   * the bottom of the panel while the owner watches the middle of it. */
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs, steps]);
+  }, [msgs, steps, snap.streamingText]);
 
   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
 
@@ -176,13 +178,22 @@ export function JarvisConversation({
           <article className="jconv-msg jconv-msg--jarvis">
             <div className="jconv-avatar jconv-avatar--live" aria-hidden>J</div>
             <div className="jconv-body">
-              {steps.length > 0 ? (
+              {/* Steps and the answer are not alternatives (D-213): a turn that
+                * calls a tool and then writes about it shows both, in the order
+                * they happened. */}
+              {steps.length > 0 && (
                 <ul className="jconv-steps jconv-steps--live">
                   {steps.map((s, k) => <li key={k} {...bidiProps(s)}>{s}</li>)}
                 </ul>
-              ) : (
-                <span className="jconv-typing" aria-label="در حال کار"><i /><i /><i /></span>
               )}
+              {snap.streamingText ? (
+                <div className="jconv-streaming">
+                  <RichText text={snap.streamingText} />
+                  <span className="jconv-caret" aria-hidden />
+                </div>
+              ) : steps.length === 0 ? (
+                <span className="jconv-typing" aria-label="در حال کار"><i /><i /><i /></span>
+              ) : null}
             </div>
           </article>
         )}

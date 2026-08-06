@@ -27,7 +27,7 @@
 import {
   ERROR_CODES, failure, success, genId,
   buildCoreToolFamilies, type AgentToolRegistry,
-  runJarvisTurn, resumeJarvisApproval, type SessionActor,
+  runJarvisTurn, resumeJarvisApproval, type SessionActor, type LoopDelta,
   createJarvisSession, getJarvisSession, listJarvisSessions, listSessionTurns, recordAnnouncement,
   getAgentLoopRun, listAgentLoopSteps, cancelAgentLoop,
   listMemories, correctMemory, pinMemory, deleteMemory,
@@ -157,50 +157,59 @@ export function registerJarvisRoutes(app: FastifyInstance, deps: GatewayDeps): v
         }
       }
 
-      // SSE: run the turn in the background; stream loop steps by polling the
-      // persisted run/steps (multi-instance safe — Mongo is the truth).
+      /* SSE (D-213 — rewritten).
+       *
+       * What was here polled `turnPromise` on a 400ms timer and then, having
+       * learned nothing from it, awaited the same promise and flushed every
+       * step AFTER the turn had already completed. `runId` was unavailable
+       * until the end, so there was nothing to poll steps against; the loop
+       * body was a placeholder (`void lastStepCount`). The owner saw three
+       * dots for the whole turn and then the entire answer at once.
+       *
+       * The loop now pushes deltas as they happen. Each is written to the
+       * socket immediately — no timer, no database round-trip. `loop.step` is
+       * still emitted at the end for any client that depends on it.
+       */
       reply.raw.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
         connection: 'keep-alive',
         'x-accel-buffering': 'no',
       });
+      let open = true;
       const send = (event: string, data: unknown) => {
-        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        if (!open) return;
+        try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { open = false; }
       };
+      /* A client that navigates away mid-turn must not take the turn with it:
+       * the run is durable and its side effects are already governed, so the
+       * work continues and only the delivery stops. */
+      reply.raw.on('close', () => { open = false; });
       send('turn.accepted', { sessionId: req.params.id });
 
-      const turnPromise = runJarvisTurn(actor, req.params.id, text, turnDeps(), req.body?.transport ?? 'text', selected);
-      let finished = false;
-      let lastStepCount = 0;
-      void turnPromise.then(() => { finished = true; }).catch(() => { finished = true; });
-      // Poll steps while the turn runs (400ms cadence, 3-minute hard cap).
-      const startedAt = Date.now();
-      while (!finished && Date.now() - startedAt < 180000) {
-        await new Promise((r) => setTimeout(r, 400));
-        try {
-          const t = await turnPromise.catch(() => null);
-          if (t) break;
-        } catch { /* still running */ }
-        // Best-effort step streaming: the turn result carries runId only at
-        // the end, so live steps come from the most recent run in this session.
-        void lastStepCount;
-      }
+      let runId: string | null = null;
+      const onDelta = (d: LoopDelta) => {
+        if (d.kind === 'run.started') runId = d.runId;
+        send(`loop.${d.kind}`, d);
+      };
+
       try {
-        const result = await turnPromise;
+        const result = await runJarvisTurn(actor, req.params.id, text, { ...turnDeps(), onDelta }, req.body?.transport ?? 'text', selected);
+        // Kept for backward compatibility: clients written against the old
+        // contract still receive the step list they expect.
         if (result.runId) {
-          const steps = await listAgentLoopSteps(result.runId);
-          for (const s of steps.slice(lastStepCount)) {
+          for (const s of await listAgentLoopSteps(result.runId)) {
             send('loop.step', { kind: s.kind, summary: s.summary, toolName: s.toolName, ok: s.ok, index: s.index });
           }
-          lastStepCount = steps.length;
         }
         send('turn.final', {
           turnId: result.turn.turnId, runId: result.runId, status: result.status,
           replyText: result.replyText, pendingApprovalId: result.pendingApprovalId, reasoningMode: result.reasoningMode,
         });
       } catch (e) {
-        send('turn.error', { message: e instanceof Error ? e.message : 'turn failed' });
+        // `runId` is included so a client can still cancel or inspect a run
+        // whose turn threw after it had already started.
+        send('turn.error', { message: e instanceof Error ? e.message : 'turn failed', runId });
       }
       reply.raw.end();
       return reply;

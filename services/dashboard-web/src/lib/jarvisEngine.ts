@@ -63,6 +63,16 @@ export interface EngineSnapshot {
   /** Set when the last turn failed in a way worth showing once. */
   lastError: string;
   providerMode: ProviderMode;
+  /**
+   * The reply as it is being written (D-213). Empty when nothing is streaming.
+   *
+   * Never appended to `msgs`: the authoritative text arrives with `turn.final`
+   * and REPLACES this. Keeping the two apart is what stops a dropped frame or
+   * a reconnect from leaving half a sentence in the transcript forever.
+   */
+  streamingText: string;
+  /** Run currently in flight — the id a cancel needs. Null when idle. */
+  activeRunId: string | null;
 }
 
 export interface SubmitOptions {
@@ -76,10 +86,13 @@ export interface SubmitOptions {
  * Store
  * ========================================================================== */
 
-let snapshot: EngineSnapshot = {
+const EMPTY: EngineSnapshot = {
   sessionId: null, msgs: [], steps: [], busy: false,
   state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'openai',
+  streamingText: '', activeRunId: null,
 };
+
+let snapshot: EngineSnapshot = { ...EMPTY };
 
 const listeners = new Set<(s: EngineSnapshot) => void>();
 /** Speech is a side effect the engine requests; the view owns the voice. */
@@ -283,6 +296,11 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
 
   const prompt = cmd.contextNote ? `${cmd.text}\n\n[context] ${cmd.contextNote}` : cmd.text;
   const collected: string[] = [];
+  /* Steps seen live, keyed by callId, so the end of a tool call updates the
+   * line its start created instead of adding a second one. */
+  const liveSteps = new Map<string, string>();
+  const renderSteps = (): string[] => [...collected, ...liveSteps.values()];
+  let streamed = '';
 
   try {
     const res = await fetch(`/api/jarvis-stream?sessionId=${encodeURIComponent(sessionId)}`, {
@@ -311,17 +329,67 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
         let data: Record<string, unknown>;
         try { data = JSON.parse(dm[1]) as Record<string, unknown>; } catch { continue; }
 
-        if (ev === 'loop.step') {
-          const summary = String(data.summary ?? data.toolName ?? '');
-          if (summary) { collected.push(summary); emit({ steps: [...collected], state: 'acting' }); }
+        switch (ev) {
+          /* D-213 — the run id arrives before the model is even called, which
+           * is what makes a stop button possible mid-turn. */
+          case 'loop.run.started':
+            emit({ activeRunId: String(data.runId ?? '') || null });
+            break;
+
+          case 'loop.text':
+            streamed += String(data.text ?? '');
+            emit({ streamingText: streamed, state: 'thinking' });
+            break;
+
+          case 'loop.tool.start':
+            liveSteps.set(String(data.callId ?? ''), `${String(data.toolName ?? 'ابزار')}…`);
+            emit({ steps: renderSteps(), state: 'acting' });
+            break;
+
+          case 'loop.tool.end': {
+            const name = String(data.toolName ?? 'ابزار');
+            const ok = data.ok !== false;
+            liveSteps.set(String(data.callId ?? ''), `${ok ? '✓' : '✗'} ${name}`);
+            emit({ steps: renderSteps(), state: 'acting' });
+            break;
+          }
+
+          /* Still sent, after the turn, for backward compatibility. Ignored
+           * whenever live steps already told the story — replaying them would
+           * duplicate every line the owner just watched appear. */
+          case 'loop.step': {
+            if (liveSteps.size > 0) break;
+            const summary = String(data.summary ?? data.toolName ?? '');
+            if (summary) { collected.push(summary); emit({ steps: renderSteps(), state: 'acting' }); }
+            break;
+          }
+
+          case 'turn.final':
+            final = data as FinalTurn;
+            break;
+
+          default:
+            break;
         }
-        if (ev === 'turn.final') final = data as FinalTurn;
       }
     }
 
-    const reply = String(final?.replyText ?? '…');
+    /* The streamed text is a preview; `turn.final.replyText` is the record —
+     * it is what was persisted to the turn, and it is what a reload will show.
+     * REPLACE, never append: the two are the same sentence, and concatenating
+     * them is how a streaming UI ends up saying everything twice.
+     *
+     * The fallback order matters. If the final frame never arrived (a dropped
+     * connection at the last moment) the streamed text is still the best thing
+     * the owner can be shown — better than the ellipsis that used to appear. */
+    const reply = String(final?.replyText || streamed || '…');
     emit({
-      msgs: [...snapshot.msgs, { id: msgId(), who: 'jarvis', text: reply, steps: [...collected], spoken: cmd.transport === 'voice' }],
+      msgs: [...snapshot.msgs, { id: msgId(), who: 'jarvis', text: reply, steps: renderSteps(), spoken: cmd.transport === 'voice' }],
+      /* Cleared in the SAME emit that appends the message. Leaving it to the
+       * `finally` below published one frame in which the settled reply and its
+       * own preview both existed — the answer rendered twice, then collapsed.
+       * One state change, one frame, no flicker. */
+      streamingText: '',
       pending: final?.pendingApprovalId && final.runId
         ? { approvalId: final.pendingApprovalId, runId: final.runId }
         : null,
@@ -349,7 +417,7 @@ async function runTurn(cmd: QueuedCommand): Promise<void> {
       });
     }
   } finally {
-    emit({ busy: false, steps: [] });
+    emit({ busy: false, steps: [], streamingText: '', activeRunId: null });
   }
 }
 
@@ -377,7 +445,7 @@ export async function decideApproval(
 
 /** Test seam — resets module state between cases. Never called by the app. */
 export function __resetEngineForTests(): void {
-  snapshot = { sessionId: null, msgs: [], steps: [], busy: false, state: 'idle', pending: null, queued: 0, lastError: '', providerMode: 'openai' };
+  snapshot = { ...EMPTY };
   listeners.clear();
   queue.length = 0;
   running = false;

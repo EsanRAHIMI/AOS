@@ -149,9 +149,73 @@ export interface ChatResult {
   pricingSource?: 'configured' | 'built_in' | 'none';
 }
 
+/**
+ * A fragment of a model turn, delivered while it is still being produced (D-213).
+ *
+ * Deliberately narrow: text as it is written, and the moment a tool call has
+ * been named. Nothing here is authoritative — the completed `ChatResult` is,
+ * and it is returned unchanged. A client that misses every delta still gets a
+ * correct answer, one that is merely slower to appear. That asymmetry is the
+ * point: streaming may never become a second source of truth about what the
+ * model said.
+ */
+export type ChatDelta =
+  | { kind: 'text'; text: string }
+  /** The model has committed to a tool and a name; arguments may still be arriving. */
+  | { kind: 'tool.start'; toolName: string; callId: string };
+
 export interface ToolCallingProvider {
   readonly name: string;
   chat(req: ChatRequest): Promise<ChatResult>;
+  /**
+   * Same request, same result, emitted progressively.
+   *
+   * OPTIONAL BY DESIGN. `MockProvider`, a self-hosted endpoint with no SSE
+   * support, and any provider added later all keep working untouched; the loop
+   * checks for the method and falls back to `chat`. Making it required would
+   * have forced every implementation to fake a stream, which is how a
+   * "streaming" system ends up delivering one chunk at the end — the exact
+   * failure this replaces.
+   */
+  chatStream?(req: ChatRequest, onDelta: (d: ChatDelta) => void): Promise<ChatResult>;
+}
+
+/* ------------------------------ SSE reading ----------------------------- */
+
+/**
+ * Yield the `data:` payloads of an SSE response, in order.
+ *
+ * Written by hand rather than pulled in: the whole of the format we need is
+ * "lines starting with `data: `, records separated by a blank line", and the
+ * one thing that actually matters is that a JSON object split across two TCP
+ * reads is reassembled rather than dropped. `decoder.decode(v, {stream:true})`
+ * handles a multi-byte character split across the same boundary — which is not
+ * hypothetical for Persian text.
+ */
+async function* sseData(res: Response): AsyncGenerator<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return;
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Records are blank-line separated; keep the trailing partial in `buf`.
+      const records = buf.split(/\r?\n\r?\n/);
+      buf = records.pop() ?? '';
+      for (const record of records) {
+        for (const line of record.split(/\r?\n/)) {
+          if (line.startsWith('data:')) yield line.slice(5).trim();
+        }
+      }
+    }
+  } finally {
+    // A caller that stops early (abort, budget, cancel) must not leave the
+    // socket held open.
+    await reader.cancel().catch(() => undefined);
+  }
 }
 
 /* ------------------------------- pricing -------------------------------- */
@@ -229,11 +293,22 @@ export function anthropicSystemBlocks(system: string): Array<Record<string, unkn
 
 export class AnthropicToolsProvider implements ToolCallingProvider {
   readonly name = 'anthropic';
-  constructor(private readonly apiKey: string, private readonly isLocal = false) {}
+  /**
+   * `baseUrl` is overridable so this provider can be driven against a real
+   * local HTTP server in tests — the same wire-proof pattern the
+   * OpenAI-compatible provider already allowed. It also covers a corporate
+   * proxy or an Anthropic-compatible gateway, neither of which was reachable
+   * while the host was a constant.
+   */
+  constructor(
+    private readonly apiKey: string,
+    private readonly isLocal = false,
+    private readonly baseUrl = 'https://api.anthropic.com',
+  ) {}
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     const http = llmHttpConfigFromEnv();
-    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
+    const res = await fetchWithRetry(`${this.baseUrl}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
@@ -270,6 +345,75 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
       tokensCached: body.usage?.cache_read_input_tokens ?? 0,
       tokensTotal: tokensIn + tokensOut,
       usageSource: body.usage ? 'provider' : 'unavailable',
+    };
+  }
+
+  async chatStream(req: ChatRequest, onDelta: (d: ChatDelta) => void): Promise<ChatResult> {
+    const http = llmHttpConfigFromEnv();
+    const res = await fetchWithRetry(`${this.baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: req.model,
+        max_tokens: req.maxTokens ?? 2048,
+        temperature: req.temperature ?? 0.2,
+        system: anthropicSystemBlocks(req.system),
+        messages: toAnthropicMessages(req.messages),
+        tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })),
+        stream: true,
+      }),
+    }, { name: 'anthropic', signal: req.signal ?? null, timeoutMs: http.cloudTimeoutMs, maxAttempts: http.cloudMaxAttempts });
+
+    let text = '';
+    /* Blocks are addressed by index, and a tool block's arguments arrive as a
+     * string split at arbitrary points — `{"da`, `te":"tom`, `orrow"}`. Only
+     * the concatenation is valid JSON, so parsing happens at content_block_stop
+     * and never before. */
+    const blocks = new Map<number, { type: string; callId: string; toolName: string; json: string }>();
+    const toolCalls: ChatToolCall[] = [];
+    let tokensIn = 0, tokensOut = 0, tokensCached = 0;
+    let sawUsage = false;
+
+    for await (const payload of sseData(res)) {
+      let ev: Record<string, unknown>;
+      try { ev = JSON.parse(payload) as Record<string, unknown>; } catch { continue; }
+      const type = String(ev.type ?? '');
+
+      if (type === 'message_start') {
+        const u = (ev.message as { usage?: { input_tokens?: number; cache_read_input_tokens?: number } } | undefined)?.usage;
+        if (u) { tokensIn = u.input_tokens ?? 0; tokensCached = u.cache_read_input_tokens ?? 0; sawUsage = true; }
+      } else if (type === 'content_block_start') {
+        const idx = Number(ev.index ?? 0);
+        const cb = ev.content_block as { type?: string; id?: string; name?: string } | undefined;
+        blocks.set(idx, { type: cb?.type ?? 'text', callId: cb?.id ?? '', toolName: cb?.name ?? '', json: '' });
+        if (cb?.type === 'tool_use') onDelta({ kind: 'tool.start', toolName: cb.name ?? '', callId: cb.id ?? '' });
+      } else if (type === 'content_block_delta') {
+        const idx = Number(ev.index ?? 0);
+        const d = ev.delta as { type?: string; text?: string; partial_json?: string } | undefined;
+        if (d?.type === 'text_delta' && d.text) { text += d.text; onDelta({ kind: 'text', text: d.text }); }
+        if (d?.type === 'input_json_delta') {
+          const b = blocks.get(idx);
+          if (b) b.json += d.partial_json ?? '';
+        }
+      } else if (type === 'content_block_stop') {
+        const b = blocks.get(Number(ev.index ?? 0));
+        if (b?.type === 'tool_use') {
+          let args: Record<string, unknown> = {};
+          // An empty argument block is `{}` in intent but '' on the wire.
+          try { args = JSON.parse(b.json || '{}') as Record<string, unknown>; } catch { args = {}; }
+          toolCalls.push({ callId: b.callId, toolName: b.toolName, args });
+        }
+      } else if (type === 'message_delta') {
+        const u = ev.usage as { output_tokens?: number } | undefined;
+        if (u?.output_tokens != null) { tokensOut = u.output_tokens; sawUsage = true; }
+      }
+    }
+
+    const pricing = estimateCost(req.model, tokensIn, tokensOut, this.isLocal);
+    return {
+      text, toolCalls, tokensIn, tokensOut, ...pricing, model: req.model, provider: this.name,
+      tokensCached, tokensTotal: tokensIn + tokensOut,
+      usageSource: sawUsage ? 'provider' : 'unavailable',
     };
   }
 }
@@ -359,6 +503,100 @@ export class OpenAICompatibleToolsProvider implements ToolCallingProvider {
 
     // Serialise local calls so a timed-out client cannot pile a second
     // request onto Ollama's single parallel slot while the first still runs.
+    if (this.isLocal) {
+      return withLocalLlmSlot(http.localMaxConcurrent, run, req.signal ?? null);
+    }
+    return run();
+  }
+
+  async chatStream(req: ChatRequest, onDelta: (d: ChatDelta) => void): Promise<ChatResult> {
+    const http = llmHttpConfigFromEnv();
+    const timeoutMs = this.isLocal ? http.localTimeoutMs : http.cloudTimeoutMs;
+    const maxAttempts = this.isLocal ? http.localMaxAttempts : http.cloudMaxAttempts;
+
+    const run = async (): Promise<ChatResult> => {
+      const res = await fetchWithRetry(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
+        body: JSON.stringify({
+          model: req.model,
+          max_tokens: req.maxTokens ?? 2048,
+          temperature: req.temperature ?? 0.2,
+          messages: toOpenAiMessages(req.system, req.messages),
+          tools: req.tools.length
+            ? req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } }))
+            : undefined,
+          stream: true,
+          /* Without this the usage block is simply absent from a streamed
+           * response, every turn records 0 tokens, and `maxCostUsd` stops
+           * being enforceable. Ollama and vLLM ignore the field harmlessly. */
+          stream_options: { include_usage: true },
+        }),
+      }, { name: this.name, signal: req.signal ?? null, timeoutMs, maxAttempts });
+
+      let text = '';
+      /* Tool calls stream as fragments addressed by `index`. `id` and `name`
+       * appear once, on the first fragment; `arguments` is a string cut at
+       * arbitrary points and must be APPENDED. Assigning instead of appending
+       * is the classic bug here: the call ends up with only its last fragment,
+       * which parses as {} and silently drops every argument the owner gave. */
+      const partial = new Map<number, { callId: string; toolName: string; args: string; announced: boolean }>();
+      let tokensIn = 0, tokensOut = 0, tokensTotal = 0, tokensCached = 0, tokensReasoning = 0;
+      let sawUsage = false;
+
+      for await (const payload of sseData(res)) {
+        if (payload === '[DONE]') break;
+        let ev: {
+          choices?: Array<{ delta?: { content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; completion_tokens_details?: { reasoning_tokens?: number } };
+        };
+        try { ev = JSON.parse(payload) as typeof ev; } catch { continue; }
+
+        if (ev.usage) {
+          tokensIn = ev.usage.prompt_tokens ?? tokensIn;
+          tokensOut = ev.usage.completion_tokens ?? tokensOut;
+          tokensTotal = ev.usage.total_tokens ?? tokensTotal;
+          tokensCached = ev.usage.prompt_tokens_details?.cached_tokens ?? tokensCached;
+          tokensReasoning = ev.usage.completion_tokens_details?.reasoning_tokens ?? tokensReasoning;
+          sawUsage = true;
+        }
+
+        const delta = ev.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (delta.content) { text += delta.content; onDelta({ kind: 'text', text: delta.content }); }
+        for (const [i, tc] of (delta.tool_calls ?? []).entries()) {
+          const idx = tc.index ?? i;
+          const cur = partial.get(idx) ?? { callId: '', toolName: '', args: '', announced: false };
+          if (tc.id) cur.callId = tc.id;
+          if (tc.function?.name) cur.toolName = tc.function.name;
+          if (tc.function?.arguments) cur.args += tc.function.arguments;
+          // Announce once, as soon as there is a name worth announcing.
+          if (!cur.announced && cur.toolName) {
+            cur.announced = true;
+            onDelta({ kind: 'tool.start', toolName: cur.toolName, callId: cur.callId || `call_${idx}` });
+          }
+          partial.set(idx, cur);
+        }
+      }
+
+      const toolCalls: ChatToolCall[] = [...partial.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([idx, p]) => {
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(p.args || '{}') as Record<string, unknown>; } catch { args = {}; }
+          return { callId: p.callId || `call_${idx}`, toolName: p.toolName, args };
+        })
+        .filter((c) => c.toolName);
+
+      const pricing = estimateCost(req.model, tokensIn, tokensOut, this.isLocal);
+      return {
+        text, toolCalls, tokensIn, tokensOut, ...pricing, model: req.model, provider: this.name,
+        tokensCached, tokensReasoning,
+        tokensTotal: tokensTotal || tokensIn + tokensOut,
+        usageSource: sawUsage ? 'provider' : 'unavailable',
+      };
+    };
+
     if (this.isLocal) {
       return withLocalLlmSlot(http.localMaxConcurrent, run, req.signal ?? null);
     }

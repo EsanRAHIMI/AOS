@@ -39,11 +39,30 @@ import {
   type ToolExecutionContext,
   type ToolResult,
 } from './registry.js';
-import type { ChatToolCall, ChatToolDef, ToolCallingProvider } from '../llm/toolcalling.js';
+import type { ChatDelta, ChatToolCall, ChatToolDef, ToolCallingProvider } from '../llm/toolcalling.js';
 import { humanModelError } from '../llm/resilience.js';
 import type { LlmCostRecord } from '../schemas/intelligence.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
+
+/**
+ * What the loop can say about itself WHILE it is still running (D-213).
+ *
+ * Distinct from `publish`, which writes durable events to the bus for anyone
+ * to consume later. This is an in-process callback with one subscriber — the
+ * HTTP request that started the turn — and it exists for one reason: latency.
+ * The bus round-trip is Mongo-backed and polled; it is the right tool for
+ * "what happened", and the wrong one for "what is happening right now".
+ *
+ * Everything here is advisory. The authoritative record is still the run, its
+ * steps and its `finalText`; a delta that never arrives costs the owner a
+ * progress indicator, never an answer.
+ */
+export type LoopDelta =
+  | ChatDelta
+  /** Emitted before the first model call — the id a cancel needs. */
+  | { kind: 'run.started'; runId: string }
+  | { kind: 'tool.end'; toolName: string; callId: string; ok: boolean; summary: string };
 
 export interface AgentLoopOptions {
   role: string;
@@ -69,6 +88,8 @@ export interface AgentLoopOptions {
   taskId?: string | null;
   publish?: Publish;
   isSafeMode?: () => Promise<boolean>;
+  /** Live progress for the caller that is waiting. Never affects the outcome. */
+  onDelta?: (d: LoopDelta) => void;
 }
 
 export interface AgentLoopOutcome {
@@ -231,7 +252,22 @@ async function executeGoverned(
 
 /* ------------------------------ main loop ------------------------------- */
 
+/**
+ * Wrap the progress callback so it cannot end the turn.
+ *
+ * `onDelta` is supplied by whoever is holding the socket, and a socket can go
+ * away at any moment — a client navigating mid-turn, a write to a closed
+ * stream. Without this, that exception unwound the loop and destroyed durable,
+ * already-governed work for the sake of a progress indicator. Progress
+ * reporting is the least important thing happening here and must fail like it.
+ */
+function safeDelta(onDelta?: (d: LoopDelta) => void): ((d: LoopDelta) => void) | undefined {
+  if (!onDelta) return undefined;
+  return (d: LoopDelta) => { try { onDelta(d); } catch { /* the listener's problem, never the run's */ } };
+}
+
 export async function startAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopOutcome> {
+  opts = { ...opts, onDelta: safeDelta(opts.onDelta) };
   const now = nowIso();
   const run: AgentLoopRun = AgentLoopRunSchema.parse({
     runId: genId('arun'),
@@ -260,6 +296,12 @@ export async function startAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopO
     visibility: opts.actor.scope === 'user' ? 'private' : 'public',
   });
   await persistRun(run);
+  /* The runId goes out FIRST, before any model call (D-213). Everything the
+   * caller might want to do to a running turn — show progress against it,
+   * cancel it — needs this id, and it used to be unobtainable until the turn
+   * had already finished. That single gap is why the previous "streaming"
+   * endpoint could only poll a promise and flush its steps at the end. */
+  opts.onDelta?.({ kind: 'run.started', runId: run.runId });
   await opts.publish?.({ type: EVENT_TYPES.AGENT_LOOP_STARTED, taskId: run.taskId, payload: { runId: run.runId, sessionId: run.sessionId, role: run.role, goal: run.goal.slice(0, 200), message: `Agent loop started (${run.role})` } });
   return continueLoop(run, opts);
 }
@@ -303,13 +345,21 @@ async function continueLoop(run: AgentLoopRun, opts: AgentLoopOptions): Promise<
     let toolCalls: ChatToolCall[] = [];
     let usage = { tokensIn: 0, tokensOut: 0, tokensCached: 0, tokensReasoning: 0, tokensTotal: 0, costUsd: 0 };
     try {
-      const res = await opts.provider.chat({
+      const chatReq = {
         system: opts.systemPrompt,
         messages: run.messages,
         tools: opts.reasoningMode === 'native' ? toolDefs : [],
         model: opts.model,
         signal: AbortSignal.timeout(Math.max(5000, Date.parse(run.deadlineAt) - Date.now())),
-      });
+      };
+      /* Stream only when someone is listening AND the provider can. Both
+       * branches return the same `ChatResult`, so every line below — usage,
+       * cost records, budget arithmetic, tool dispatch — is written once and
+       * cannot drift between a streamed and an unstreamed turn. */
+      const onDelta = opts.onDelta;
+      const res = onDelta && opts.provider.chatStream
+        ? await opts.provider.chatStream(chatReq, (d: ChatDelta) => onDelta(d))
+        : await opts.provider.chat(chatReq);
       text = res.text;
       toolCalls = res.toolCalls;
       run.tokensIn += res.tokensIn;
@@ -427,6 +477,14 @@ async function continueLoop(run: AgentLoopRun, opts: AgentLoopOptions): Promise<
 
       const { invocation, result } = await executeGoverned(run, binding, call, opts.actor, workingSet, opts.publish);
       const raw = result?.summary ?? 'no result';
+      /* `tool.start` comes from the PROVIDER, as soon as the model names a
+       * tool — which is earlier than here, and earliness is the entire value.
+       * `tool.end` can only come from the loop, because only the loop knows
+       * whether the call was allowed, ran, and returned. They are therefore
+       * not a matched pair for a non-streaming provider: a start may be
+       * missing, and an end may arrive for a call the client never saw begin.
+       * Clients key on `callId` and treat either as sufficient. */
+      opts.onDelta?.({ kind: 'tool.end', toolName: binding.definition.name, callId: call.callId, ok: result?.ok ?? false, summary: raw.slice(0, 200) });
       const content = invocation.outputTrust === 'untrusted_external' ? fenceUntrusted(binding.definition.name, raw) : raw;
       run.messages.push({ role: 'tool', content, toolCalls: [], toolCallId: call.callId, toolName: call.toolName });
       await recordStep(run, { kind: 'tool_execution', summary: `${binding.definition.name}: ${raw.slice(0, 250)}`, toolName: binding.definition.name, toolInvocationId: invocation.invocationId, tokensIn: 0, tokensOut: 0, costUsd: 0, ok: result?.ok ?? false, detail: '' }, opts.publish);
@@ -454,6 +512,9 @@ export interface ResumeArgs {
  * Rejected → the model observes the rejection and replans.
  */
 export async function resumeAgentLoopAfterApproval(args: ResumeArgs): Promise<AgentLoopOutcome> {
+  // Same guarantee on the resume path: an approved turn finishes even if the
+  // surface that approved it has since gone away.
+  args = { ...args, opts: { ...args.opts, onDelta: safeDelta(args.opts.onDelta) } };
   const run = await runs().findOne({ runId: args.runId });
   if (!run) throw new Error(`run ${args.runId} not found`);
   if (run.status !== 'waiting_approval' || !run.pendingToolCall) throw new Error(`run ${args.runId} is not waiting for approval`);

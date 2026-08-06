@@ -13,7 +13,7 @@
  * management keep working (offline mandate); intelligence never pretends.
  */
 import type { AgentToolRegistry } from '../agentcore/registry.js';
-import { startAgentLoop, resumeAgentLoopAfterApproval, type AgentLoopOptions } from '../agentcore/loop.js';
+import { startAgentLoop, resumeAgentLoopAfterApproval, type AgentLoopOptions, type LoopDelta } from '../agentcore/loop.js';
 import type { ModelProviderSelection, ToolCallingProvider } from '../llm/toolcalling.js';
 import { modelRegistryFromEnv, toolCallingProviderFor, type ModelRegistry } from '../llm/toolcalling.js';
 import { llmHttpConfigFromEnv } from '../llm/config.js';
@@ -166,6 +166,8 @@ export interface JarvisTurnDeps {
   registry: AgentToolRegistry;
   publish?: Publish;
   isSafeMode?: () => Promise<boolean>;
+  /** Live turn progress for a caller holding an open connection (D-213). */
+  onDelta?: (d: LoopDelta) => void;
   env?: NodeJS.ProcessEnv;
   /** Injected for tests; defaults from env. */
   provider?: ToolCallingProvider | null;
@@ -379,6 +381,7 @@ export async function runJarvisTurn(
     turnId: turn.turnId,
     publish: deps.publish,
     isSafeMode: deps.isSafeMode,
+    onDelta: deps.onDelta,
   });
 
   const status: JarvisTurnResult['status'] = outcome.stopReason === 'waiting_approval' ? 'waiting_approval' : outcome.run.status === 'completed' ? 'completed' : 'failed';

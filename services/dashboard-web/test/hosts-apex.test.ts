@@ -23,7 +23,7 @@ describe('hosts — Jarvis apex vs factory control room', () => {
   });
 
   it('honours JARVIS_PUBLIC_HOSTS override', () => {
-    const env = { JARVIS_PUBLIC_HOSTS: 'assistant.example.com', ROOT_DOMAIN: 'example.com' } as NodeJS.ProcessEnv;
+    const env = { JARVIS_PUBLIC_HOSTS: 'assistant.example.com', ROOT_DOMAIN: 'example.com' } as unknown as NodeJS.ProcessEnv;
     expect(jarvisApexHosts(env)).toEqual(['assistant.example.com']);
     expect(isJarvisApexHost('assistant.example.com', env)).toBe(true);
     expect(isJarvisApexHost('simorx.com', env)).toBe(false);
@@ -32,6 +32,6 @@ describe('hosts — Jarvis apex vs factory control room', () => {
   it('uses .simorx.com cookie domain in production', () => {
     expect(dashboardCookieDomain({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toBe('.simorx.com');
     expect(dashboardCookieDomain({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toBeUndefined();
-    expect(dashboardCookieDomain({ DASHBOARD_COOKIE_DOMAIN: '.example.com' } as NodeJS.ProcessEnv)).toBe('.example.com');
+    expect(dashboardCookieDomain({ DASHBOARD_COOKIE_DOMAIN: '.example.com' } as unknown as NodeJS.ProcessEnv)).toBe('.example.com');
   });
 });
