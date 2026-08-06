@@ -28,7 +28,26 @@ describe('provider selection', () => {
     expect(llmRouterFromEnv({} as NodeJS.ProcessEnv).activeProvider).toBe('mock');
     expect(llmRouterFromEnv({ OPENAI_API_KEY: 'k' } as unknown as NodeJS.ProcessEnv).activeProvider).toBe('openai');
   });
-  it('local OpenAI-compatible endpoint has highest priority and honors model tiers', () => {
+  /* A CONFIGURED LOCAL ENDPOINT NO LONGER OUTRANKS A WORKING CLOUD KEY.
+   *
+   * This test used to assert the opposite, and was left behind when
+   * `llmRouterFromEnv` changed one commit later (test last touched in
+   * `5cc1eb2`, the code in `1022b64`). The reversal was deliberate and is
+   * documented in two other places — `modelRegistryFromEnv` ("never the silent
+   * override of a working OpenAI default") and `JarvisConversation`'s stored
+   * provider migration ("`auto` used to prefer a slow/unreachable local
+   * endpoint and made Jarvis look broken").
+   *
+   * The reason is a real failure mode: `LLM_LOCAL_BASE_URL` pointing at an
+   * Ollama host that is merely SET is not the same as one that is UP. Ranking
+   * it first meant a stopped container silently demoted a paid, healthy cloud
+   * model into a ten-minute timeout. Presence of configuration is not evidence
+   * of availability.
+   *
+   * Local is still reachable — explicitly via LLM_PROVIDER_MODE=local or
+   * LLM_DEFAULT_PROVIDER=local, and as the fallback when no cloud key exists.
+   */
+  it('a configured local endpoint does not outrank a cloud key by default', () => {
     const env = {
       LLM_LOCAL_BASE_URL: 'http://127.0.0.1:11434/v1/',
       LLM_LOCAL_MODEL: 'reasoning-local',
@@ -36,13 +55,27 @@ describe('provider selection', () => {
       ANTHROPIC_API_KEY: 'cloud-key',
       OPENAI_API_KEY: 'cloud-key-2',
     } as unknown as NodeJS.ProcessEnv;
+    expect(llmRouterFromEnv(env).activeProvider).toBe('openai');
+    expect(llmStatusFromEnv(env)).toMatchObject({ configured: true, mode: 'real', provider: 'openai' });
+  });
+
+  it('local is chosen when asked for explicitly', () => {
+    const base = {
+      LLM_LOCAL_BASE_URL: 'http://127.0.0.1:11434/v1/',
+      LLM_LOCAL_MODEL: 'reasoning-local',
+      OPENAI_API_KEY: 'cloud-key-2',
+    };
+    expect(llmRouterFromEnv({ ...base, LLM_DEFAULT_PROVIDER: 'local' } as unknown as NodeJS.ProcessEnv).activeProvider).toBe('local');
+    expect(llmRouterFromEnv({ ...base, LLM_PROVIDER_MODE: 'local' } as unknown as NodeJS.ProcessEnv).activeProvider).toBe('local');
+  });
+
+  it('local is the fallback when no cloud key is configured', () => {
+    const env = {
+      LLM_LOCAL_BASE_URL: 'http://127.0.0.1:11434/v1/',
+      LLM_LOCAL_MODEL: 'reasoning-local',
+    } as unknown as NodeJS.ProcessEnv;
     expect(llmRouterFromEnv(env).activeProvider).toBe('local');
-    expect(llmStatusFromEnv(env)).toMatchObject({
-      configured: true,
-      mode: 'real',
-      provider: 'local',
-      defaultProvider: 'local',
-    });
+    expect(llmStatusFromEnv(env)).toMatchObject({ configured: true, provider: 'local' });
   });
 });
 

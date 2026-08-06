@@ -241,20 +241,79 @@ export async function assembleTurnContext(
   const identity = await buildOwnerIdentityContext();
   // One source of truth for zone, language, currency and calendar (D-202).
   const prefs = await getPreferences();
-  /* Transcript LAST, not first (D-200). It is the context most likely to
-   * answer a follow-up, and the nearer it sits to the question the more
-   * reliably it is used. Standing facts — who the owner is, what they have
-   * recorded — go above it, because they do not change turn to turn. */
-  const parts = [
-    // First, and non-negotiable: the model cannot read a clock (D-201).
-    nowContext(new Date(), prefs),
-    identity.text,
-    mem.text ? `OWNER MEMORY (provenance-tagged — [CONFIRMED] owner-stated, [INFERRED] concluded, [TEMP] conversational):\n${mem.text}` : 'OWNER MEMORY: none recorded yet.',
-    missions.text ? `ACTIVE MISSION HIERARCHY (today's work connects upward through these):\n${missions.text}` : 'ACTIVE MISSIONS: none yet.',
-    `SYSTEM STATUS: research coverage=${coverage.coverage}${coverage.searxng ? '' : ' (SearXNG not configured)'}.`,
-    transcript.text,
-  ].filter(Boolean);
-  return { text: parts.join('\n\n'), usedMemoryIds: mem.usedMemoryIds };
+  /* ORDER IS A CACHING DECISION AS WELL AS A PROMPTING ONE (D-212).
+   *
+   * Both providers cache on a LITERAL PREFIX of the request. Everything up to
+   * the first byte that differs from the previous call is reusable; everything
+   * after it is not. `nowContext` carries the current instant, so it differs on
+   * every single turn — and while it sat FIRST it invalidated the entire packet
+   * behind it. Identity, memory, missions and status are rewritten to the
+   * provider in full, every turn, at full price, despite being byte-identical
+   * to the turn before.
+   *
+   * So the packet is now ordered stable → volatile:
+   *
+   *   identity · memory · missions · status   ← changes only when the owner's
+   *                                             records change; cacheable
+   *   transcript                              ← grows by APPENDING, which
+   *                                             preserves the prefix
+   *   nowContext                              ← differs every turn; last
+   *
+   * D-201 is not weakened by the move — it required that the model be TOLD the
+   * time unambiguously, not that the clock come first. If anything the clock is
+   * now stronger: it sits immediately before the goal, in the same position
+   * D-200 chose for the transcript and for the same reason — the nearer a fact
+   * sits to the question, the more reliably it is used. Time arithmetic is
+   * exactly the thing that kept breaking (D-201, D-210), so it gets that slot.
+   *
+   * Transcript stays below the standing facts, per D-200. */
+  return {
+    text: composeTurnContext({
+      identity: identity.text,
+      memory: mem.text ? `OWNER MEMORY (provenance-tagged — [CONFIRMED] owner-stated, [INFERRED] concluded, [TEMP] conversational):\n${mem.text}` : 'OWNER MEMORY: none recorded yet.',
+      missions: missions.text ? `ACTIVE MISSION HIERARCHY (today's work connects upward through these):\n${missions.text}` : 'ACTIVE MISSIONS: none yet.',
+      status: `SYSTEM STATUS: research coverage=${coverage.coverage}${coverage.searxng ? '' : ' (SearXNG not configured)'}.`,
+      transcript: transcript.text,
+      // Last, and non-negotiable: the model cannot read a clock (D-201).
+      now: nowContext(new Date(), prefs),
+    }),
+    usedMemoryIds: mem.usedMemoryIds,
+  };
+}
+
+/** The pieces of a turn context packet, named by how often each one changes. */
+export interface TurnContextParts {
+  /** Stable — the owner's CIN entity. */
+  identity: string;
+  /** Semi-stable — changes when a memory is recorded or corrected. */
+  memory: string;
+  /** Semi-stable — changes when the mission hierarchy moves. */
+  missions: string;
+  /** Stable — configured retrieval coverage. */
+  status: string;
+  /** Append-growing — new turns are added at the end, prefix survives. */
+  transcript: string;
+  /** VOLATILE — differs on every turn. Must be last; see composeTurnContext. */
+  now: string;
+}
+
+/**
+ * Assemble the packet stable-first, volatile-last (D-212).
+ *
+ * Extracted as a pure function so the ordering is testable: the property that
+ * matters is that two turns differing ONLY in the clock share every byte up to
+ * the clock. That is the whole of prompt caching, and it is invisible from the
+ * outside — a wrong order costs money and latency without failing anything.
+ */
+export function composeTurnContext(parts: TurnContextParts): string {
+  return [
+    parts.identity,
+    parts.memory,
+    parts.missions,
+    parts.status,
+    parts.transcript,
+    parts.now,
+  ].filter(Boolean).join('\n\n');
 }
 
 /**

@@ -207,6 +207,26 @@ function toAnthropicMessages(messages: LoopMessage[]): Array<{ role: 'user' | 'a
   return out;
 }
 
+/**
+ * The system prompt as a cacheable content block (D-212).
+ *
+ * Anthropic's cache hierarchy is tools → system → messages, and a breakpoint
+ * covers everything ABOVE it. One breakpoint on the system block therefore
+ * caches the tool schemas too — and the tool schemas are the expensive part
+ * here: ~30 JSON Schemas resent verbatim on every step of every turn.
+ *
+ * A single breakpoint is deliberate. Anthropic allows four, but each one is a
+ * separate cache entry with its own write cost, and the packet below system
+ * (the context) is rebuilt per turn anyway. Paying to cache something that
+ * changes is worse than not caching it.
+ *
+ * Below the model's minimum cacheable length the field is ignored rather than
+ * rejected, so this is safe on short prompts.
+ */
+export function anthropicSystemBlocks(system: string): Array<Record<string, unknown>> {
+  return [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
+}
+
 export class AnthropicToolsProvider implements ToolCallingProvider {
   readonly name = 'anthropic';
   constructor(private readonly apiKey: string, private readonly isLocal = false) {}
@@ -220,7 +240,7 @@ export class AnthropicToolsProvider implements ToolCallingProvider {
         model: req.model,
         max_tokens: req.maxTokens ?? 2048,
         temperature: req.temperature ?? 0.2,
-        system: req.system,
+        system: anthropicSystemBlocks(req.system),
         messages: toAnthropicMessages(req.messages),
         tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })),
       }),

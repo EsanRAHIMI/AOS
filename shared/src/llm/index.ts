@@ -343,9 +343,20 @@ export class LlmRouter {
 /** Build a router from standard env (LLM_* / *_API_KEY). */
 export function llmRouterFromEnv(env: NodeJS.ProcessEnv = process.env): LlmRouter {
   const mode = env.LLM_PROVIDER_MODE;
+  /* `LLM_DEFAULT_PROVIDER=local` has to mean the same thing here as it does in
+   * `modelRegistryFromEnv` (D-212). It did not: `LlmRouterConfig.defaultProvider`
+   * is typed 'anthropic' | 'openai', so the value fell through the cast, the
+   * router kept its cloud keys, and the owner's stated preference was ignored
+   * — while the tool-calling path on the very same env chose local. One env
+   * var, two answers, depending on which module read it.
+   *
+   * Expressed by withholding the cloud keys rather than by widening the type:
+   * that is exactly how `LLM_PROVIDER_MODE=local` already works below, so both
+   * spellings now travel one code path instead of two. */
+  const preferLocal = mode === 'local' || (!mode && env.LLM_DEFAULT_PROVIDER === 'local');
   const allowLocal = mode !== 'openai' && mode !== 'anthropic';
-  const allowOpenAi = mode !== 'local' && mode !== 'anthropic';
-  const allowAnthropic = mode !== 'local' && mode !== 'openai';
+  const allowOpenAi = !preferLocal && mode !== 'local' && mode !== 'anthropic';
+  const allowAnthropic = !preferLocal && mode !== 'local' && mode !== 'openai';
   const defaultProvider = (
     mode === 'openai' || mode === 'anthropic'
       ? mode

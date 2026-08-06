@@ -2,6 +2,63 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-08-06 — the packet was ordered so that nothing could be cached (D-212)
+
+Both providers cache on a literal prefix: everything up to the first byte that
+differs from the previous call is reusable. `assembleTurnContext` put
+`nowContext` — the current instant — FIRST, and D-201's comment above it said
+"first, and non-negotiable".
+
+The clock differs on every turn. So the first line of every packet was the one
+line guaranteed to change, and identity, memory, missions and status were
+re-sent in full, at full price, on every step of every turn despite being
+byte-identical to the step before. The tool schemas — roughly thirty JSON
+Schemas — went with them.
+
+Nothing failed. Every answer was correct. That is the whole difficulty: a
+mis-ordered prompt has no symptom except a bill and a slower first token,
+neither of which any test was watching.
+
+The packet is now ordered stable → volatile: identity, memory, missions and
+status; then the transcript, which grows by APPENDING and so preserves its own
+prefix; then the clock, last, immediately before the goal. D-201 is not
+weakened — it required that the model be TOLD the time unambiguously, not that
+the clock come first. It is arguably strengthened: the clock now sits where
+D-200 put the transcript, and for D-200's reason. Time arithmetic is precisely
+what kept breaking (D-201, D-210), so it gets the slot nearest the question.
+
+Ordering moved into a pure `composeTurnContext`, because the property worth
+protecting is invisible from outside: two turns differing only in the clock
+must share every earlier byte. That is now a contract test rather than a
+comment. Anthropic additionally gets one `cache_control` breakpoint on the
+system block — one, not four, because a breakpoint below system would be
+paying to cache a packet that is rebuilt anyway.
+
+### Two things found on the way, both pre-existing
+
+**A stale test encoding a reversed rule.** `llm-router.contract.test.ts`
+asserted that a configured local endpoint outranks a cloud key. That priority
+had been deliberately reversed in `1022b64` — one commit after the test was
+last touched — because `LLM_LOCAL_BASE_URL` being SET is not the same as the
+host being UP, and ranking it first let a stopped Ollama container demote a
+healthy paid model into a ten-minute timeout. The test was updated to the rule
+the code actually implements, with the reason written down, plus the two cases
+it was missing: local chosen explicitly, and local as the no-cloud-key
+fallback.
+
+**One env var, two answers.** `LLM_DEFAULT_PROVIDER=local` selected local in
+`modelRegistryFromEnv` and was silently ignored in `llmRouterFromEnv`, whose
+config type is `'anthropic' | 'openai'` — the value fell through the cast.
+Fixed by withholding the cloud keys rather than widening the type, which is how
+`LLM_PROVIDER_MODE=local` already worked; both spellings now travel one path.
+
+**Model ids are not written down any more.** A superseded id does not degrade,
+it 404s and the turn fails, and the failure reads like an outage. `pnpm
+models:list` asks the configured providers what they can actually reach today,
+prints the exact env line, and states the trap that follows: a model absent
+from `PRICES` costs $0 in the ledger, so `maxCostUsd` can never trip and the
+owner's spend cap quietly stops existing.
+
 ## 2026-08-01 — Calendar freshness follows the owner's write pattern (D-214)
 
 The Google connection was healthy, but the mirror had no autonomous freshness
