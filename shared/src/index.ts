@@ -75,6 +75,7 @@ export * from './agentcore/index.js';
 export * from './llm/toolcalling.js';
 // K2 Memory v2 (D-177)
 export * from './memory2/index.js';
+export * from './memory2/retrieval.js';
 // K2 Mission hierarchy (D-177)
 export * from './missions/index.js';
 // K2 Independent research stack (D-177)

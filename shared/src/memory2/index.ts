@@ -24,6 +24,11 @@ import { COLLECTIONS, EVENT_TYPES } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { IsoDate } from '../schemas/common.js';
 import { ScopeFieldsSchema } from '../schemas/scope.js';
+import {
+  memoryScore, isRetainable, unionById, retrievalModeFromEnv,
+  IN_PROCESS_CANDIDATE_LIMIT, MEMORY_TEXT_INDEX, MEMORY_VECTOR_INDEX,
+  type RetrievalMode,
+} from './retrieval.js';
 
 /* -------------------------------- schema -------------------------------- */
 
@@ -352,6 +357,8 @@ export interface MemorySearchOpts {
   kinds?: MemoryKind[];
   includeSuperseded?: boolean;
   queryVector?: number[] | null;
+  /** Override the env default — used by the verify script to compare paths. */
+  mode?: RetrievalMode;
 }
 
 export interface ScoredMemory {
@@ -361,11 +368,91 @@ export interface ScoredMemory {
   vector: number;
 }
 
+/**
+ * Gather candidates by RELEVANCE using Atlas search indexes (D-215).
+ *
+ * Returns null — never throws — when the indexes are absent or the cluster is
+ * a plain mongod. A missing index is a deployment fact, not an error, and the
+ * only acceptable response to it is to fall back to a search that works. The
+ * alternative is an owner whose memories become unreachable because someone
+ * forgot to create an index.
+ */
+async function atlasCandidates(
+  filter: Record<string, unknown>,
+  query: string,
+  queryVector: number[] | null | undefined,
+  want: number,
+): Promise<MemoryRecord[] | null> {
+  try {
+    const textHits = await records().aggregate([
+      {
+        $search: {
+          index: MEMORY_TEXT_INDEX,
+          text: { query, path: ['subject', 'content', 'tags'] },
+        },
+      },
+      { $limit: want },
+      { $match: filter },
+      { $project: { _id: 0 } },
+    ] as never).toArray() as MemoryRecord[];
+
+    let vectorHits: MemoryRecord[] = [];
+    if (queryVector?.length) {
+      /* Vectors live in their own collection, so this is a second ranked
+       * retrieval joined by id rather than one `$rankFusion` stage. Keeping
+       * the embeddings separate is what lets a correction delete a stale
+       * vector without rewriting the memory row (see `correctMemory`). */
+      const ids = (await embeddings().aggregate([
+        {
+          $vectorSearch: {
+            index: MEMORY_VECTOR_INDEX,
+            path: 'vector',
+            queryVector,
+            numCandidates: want * 5,
+            limit: want,
+          },
+        },
+        { $project: { _id: 0, memoryId: 1 } },
+      ] as never).toArray() as Array<{ memoryId: string }>).map((r) => r.memoryId);
+      if (ids.length) {
+        vectorHits = await records().find({ ...filter, memoryId: { $in: ids } } as never).toArray();
+      }
+    }
+    return unionById(textHits, vectorHits);
+  } catch {
+    return null;
+  }
+}
+
 export async function searchMemories(actor: MemoryActor, query: string, opts: MemorySearchOpts = {}): Promise<ScoredMemory[]> {
   const filter: Record<string, unknown> = { ...scopeFilter(actor), deletedAt: null };
   if (!opts.includeSuperseded) filter.supersededBy = null;
   if (opts.kinds?.length) filter.kind = { $in: opts.kinds };
-  const candidates = await records().find(filter as never).sort({ updatedAt: -1 }).limit(400).toArray();
+
+  const want = Math.max(IN_PROCESS_CANDIDATE_LIMIT, (opts.limit ?? 12) * 10);
+  const mode = opts.mode ?? retrievalModeFromEnv();
+
+  const relevant = mode === 'atlas_hybrid'
+    ? await atlasCandidates(filter, query, opts.queryVector, want)
+    : null;
+
+  /* The recency window remains the fallback and the default. It is not wrong,
+   * only partial — which is exactly why its partiality went unnoticed. */
+  const recent = relevant
+    ? []
+    : await records().find(filter as never).sort({ updatedAt: -1 }).limit(IN_PROCESS_CANDIDATE_LIMIT).toArray();
+
+  /* Pinned memories are fetched unconditionally, in BOTH modes.
+   *
+   * The final filter below promises that a pinned record always survives, and
+   * a recency window quietly broke that promise: pin something, then record
+   * four hundred other things, and the pin stopped being returned. Pinning is
+   * the owner saying "never lose this", so it cannot be subject to a window.
+   * The set is small by construction — it is the one thing the owner curates
+   * by hand. */
+  const pinned = await records().find({ ...filter, pinned: true } as never).limit(200).toArray();
+
+  const candidates = unionById(relevant ?? recent, pinned);
   const lex = lexicalScores(query, candidates);
 
   let vecScores = new Map<string, number>();
@@ -378,20 +465,10 @@ export async function searchMemories(actor: MemoryActor, query: string, opts: Me
   const scored: ScoredMemory[] = candidates.map((r) => {
     const lexical = lex.get(r.memoryId) ?? 0;
     const vector = vecScores.get(r.memoryId) ?? 0;
-    const recency = Math.exp(-((now - Date.parse(r.lastConfirmedAt)) / 86_400_000) / 45); // ~45-day half-ish decay
-    const statusBoost = r.status === 'confirmed' ? 0.25 : r.status === 'inferred' ? 0 : -0.15;
-    const score =
-      lexical * 1.0 +
-      vector * 1.2 +
-      recency * 0.35 +
-      r.importance * 0.5 +
-      (r.confidence ?? 0.7) * 0.2 +
-      (r.pinned ? 0.8 : 0) +
-      statusBoost;
-    return { record: r, score, lexical, vector };
+    return { record: r, score: memoryScore(r, { lexical, vector, now }), lexical, vector };
   });
   return scored
-    .filter((s) => s.score > 0.15 || s.record.pinned)
+    .filter((s) => isRetainable(s.record, s.score))
     .sort((a, b) => b.score - a.score)
     .slice(0, opts.limit ?? 12);
 }

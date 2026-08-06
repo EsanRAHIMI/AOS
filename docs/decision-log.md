@@ -2,6 +2,58 @@
 
 Records significant engineering decisions and why. Newest first.
 
+## 2026-08-06 — memory had a ceiling nobody could see (D-215)
+
+`searchMemories` selected candidates with
+`.sort({ updatedAt: -1 }).limit(400)` and scored them in Node. Relevance was
+therefore only ever computed over the four hundred most recently touched rows.
+A memory older than that was unreachable no matter how well it matched.
+
+Nothing failed. Jarvis answered confidently from an incomplete search, which is
+the worst available behaviour — an error would at least have been visible. And
+it degrades with use: the more the owner tells the system, the more of what
+they told it drops out of reach. A memory that gets worse the longer you use it
+is not a memory.
+
+**It also broke a promise made two lines below it.** The final filter reads
+`score > 0.15 || record.pinned` — pinned memories always survive. But the
+candidate query cannot return a row it never selected, so a pinned record that
+had aged out of the window was gone. Pinning is the owner saying "never lose
+this"; it cannot be subject to a window. Pinned rows are now fetched
+unconditionally, in BOTH modes. That fix needs no Atlas and applies to every
+deployment.
+
+**Two paths, one opinion.** `MEMORY_RETRIEVAL_MODE=atlas_hybrid` asks Atlas
+Search to rank by relevance across the whole collection, with optional vector
+recall joined from `memory_embeddings`. `in_process` stays the default and is
+byte-for-byte the old query. Both then run the SAME `memoryScore` — because
+retrieval decides which memories MATCH, while recency, importance, confidence,
+pinning and status decide which ones MATTER, and Jarvis's sense of what matters
+must not change depending on which indexes happen to exist on the cluster.
+
+**Vectors were left in their own collection.** `$rankFusion` would need the
+vector on the record itself. Keeping `memory_embeddings` separate is what lets
+`correctMemory` delete a stale vector without rewriting the memory row, so the
+semantic half is a second ranked retrieval joined by id instead. The text index
+alone already removes the window; the vector index only adds semantic recall.
+
+**Failing soft is right at runtime and terrible as a diagnostic.** A missing
+index falls back rather than erroring, because a missing index must never mean
+a missing memory — but that means setting the env var and seeing no error
+proves nothing. Hence `pnpm check:memory-indexes`, which says plainly whether
+the mode would work or silently fall back, and how many memories are currently
+past the window.
+
+**The window constant was left at 400.** Raising it would trade a silent
+correctness bug for a silent performance one — every candidate is scored in
+Node — and it would still be a window. A test asserts the number, with that
+reason attached.
+
+The pinned test was written twice. The first version created one memory, so
+the 400-row limit never engaged and it passed without the fix. It now fills the
+window, asserts the record really is buried, and was confirmed to fail when the
+fix is removed.
+
 ## 2026-08-06 — the stop button that already existed everywhere but the screen (D-214)
 
 `cancelAgentLoop` was written, tested, and read by the loop between every pair

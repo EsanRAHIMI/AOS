@@ -20,6 +20,7 @@
     "check:runtime:strict": "node --env-file=.env scripts/runtime-readiness.mjs --strict",
     "eval:model": "pnpm run build:shared && node --env-file-if-exists=.env scripts/model-evaluation-gate.mjs",
     "models:list": "node --env-file-if-exists=.env scripts/list-provider-models.mjs",
+    "check:memory-indexes": "node --env-file-if-exists=.env scripts/verify-memory-indexes.mjs",
     "dev": "echo 'Run a specific service: pnpm --filter <service> run dev'",
     "dev:free-ports": "node scripts/dev-free-ports.mjs",
     "dev:all": "pnpm sync:env && pnpm run build:deps && pnpm run dev:free-ports && node scripts/dev-all.mjs",
