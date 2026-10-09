@@ -198,28 +198,6 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
-  services/documentation-service:
-    dependencies:
-      '@factory/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@factory/shared':
-        specifier: workspace:*
-        version: link:../../shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.15.0
-        version: 22.20.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
-
   services/event-bus-service:
     dependencies:
       '@factory/service-kit':
@@ -262,28 +240,6 @@ importers:
         version: 5.9.3
 
   services/gateway-api:
-    dependencies:
-      '@factory/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@factory/shared':
-        specifier: workspace:*
-        version: link:../../shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.15.0
-        version: 22.20.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
-
-  services/internet-research-service:
     dependencies:
       '@factory/service-kit':
         specifier: workspace:*
@@ -350,72 +306,6 @@ importers:
         version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
 
   services/orchestrator-agent:
-    dependencies:
-      '@factory/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@factory/shared':
-        specifier: workspace:*
-        version: link:../../shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.15.0
-        version: 22.20.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
-
-  services/qa-agent:
-    dependencies:
-      '@factory/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@factory/shared':
-        specifier: workspace:*
-        version: link:../../shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.15.0
-        version: 22.20.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
-
-  services/report-agent:
-    dependencies:
-      '@factory/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@factory/shared':
-        specifier: workspace:*
-        version: link:../../shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.15.0
-        version: 22.20.0
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.0)(vite@8.1.4(@types/node@22.20.0)(esbuild@0.28.1)(tsx@4.22.4))
-
-  services/reviewer-agent:
     dependencies:
       '@factory/service-kit':
         specifier: workspace:*

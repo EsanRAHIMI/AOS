@@ -40,7 +40,7 @@ export const manifest: ServiceManifest = {
     'define_env_vars',
     'create_deployment_requirements',
   ],
-  dependencies: ['gateway-api', 'memory-agent', 'documentation-service', 'event-bus-service', 'service-registry'],
+  dependencies: ['gateway-api', 'memory-agent', 'event-bus-service', 'service-registry'],
   requiredEnv: ['MONGODB_URI', 'MONGODB_DB_NAME', 'FACTORY_INTERNAL_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'],
 };
 

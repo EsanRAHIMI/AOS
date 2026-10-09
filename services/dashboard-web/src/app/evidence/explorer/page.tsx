@@ -7,10 +7,10 @@ export const dynamic = 'force-dynamic';
 
 /** Plain-language meaning for each real evidence type. */
 const PROVES: Record<string, { label: string; proves: string; by: string }> = {
-  research_report: { label: 'Research', proves: 'the kernel gathered cited, reliability-scored sources', by: 'internet-research-service' },
-  review_report: { label: 'Review', proves: 'a plan was independently reviewed for risk and security', by: 'reviewer-agent / architect-agent' },
-  qa_report: { label: 'QA', proves: 'acceptance criteria were checked against real evidence', by: 'qa-agent' },
-  intelligence_report: { label: 'Report', proves: 'an executive intelligence report was produced', by: 'report-agent' },
+  research_report: { label: 'Research', proves: 'the kernel gathered cited, reliability-scored sources', by: 'in-process research' },
+  review_report: { label: 'Review', proves: 'a plan was independently reviewed for risk and security', by: 'in-process review' },
+  qa_report: { label: 'QA', proves: 'acceptance criteria were checked against real evidence', by: 'in-process QA' },
+  intelligence_report: { label: 'Report', proves: 'an executive intelligence report was produced', by: 'in-process report' },
   validation_report: { label: 'Validation', proves: 'a capability passed a real runtime validation', by: 'builder-agent' },
   health_check_result: { label: 'Health', proves: 'a service responded to a health check', by: 'monitor-agent' },
   manifest_check_result: { label: 'Manifest', proves: 'a service exposed its manifest with the internal token', by: 'monitor-agent' },

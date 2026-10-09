@@ -14,7 +14,7 @@ import type {
 /** Core services that must never be modified silently — owner approval required. */
 export const PROTECTED_CORE_SERVICES = new Set<string>([
   'dashboard-web', 'gateway-api', 'orchestrator-agent', 'service-registry',
-  'event-bus-service', 'monitor-agent', 'memory-agent', 'documentation-service', 'devops-agent',
+  'event-bus-service', 'monitor-agent', 'memory-agent', 'devops-agent',
 ]);
 
 export function isProtectedCore(serviceId: string | undefined | null): boolean {

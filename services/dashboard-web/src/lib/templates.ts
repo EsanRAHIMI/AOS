@@ -29,7 +29,7 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     id: 'research-plan', title: 'Research best practices & create an improvement plan',
     prompt: 'Research current best practices for securing autonomous agent dashboards and create an improvement plan.',
     what: 'Governed research with cited sources → evidence-grounded plan → review → QA → executive report.',
-    services: ['internet-research-service', 'architect-agent', 'reviewer-agent', 'qa-agent', 'report-agent'],
+    services: ['orchestrator-agent', 'architect-agent'],
     outputs: ['Research report', 'Improvement plan', 'Review', 'QA', 'Intelligence report', 'Evidence'],
     risk: 'low', approval: false, resultsAt: '/research', category: 'Intelligence',
   },
@@ -58,7 +58,7 @@ export const ACTION_TEMPLATES: ActionTemplate[] = [
     id: 'intel-report', title: 'Generate an operational intelligence report',
     prompt: 'Research the current state of the kernel and generate an executive intelligence report.',
     what: 'Synthesizes real system/research inputs into an executive report (grounded only in real data).',
-    services: ['internet-research-service', 'report-agent'], outputs: ['Intelligence report', 'Evidence'],
+    services: ['orchestrator-agent'], outputs: ['Intelligence report', 'Evidence'],
     risk: 'low', approval: false, resultsAt: '/reports/center', category: 'Intelligence',
   },
 ];

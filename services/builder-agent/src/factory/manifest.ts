@@ -20,7 +20,6 @@ export const manifest: ServiceManifest = {
     'gateway-api',
     'architect-agent',
     'memory-agent',
-    'documentation-service',
     'event-bus-service',
     'service-registry',  ],
   requiredEnv: [

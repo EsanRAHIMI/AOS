@@ -1,7 +1,7 @@
 {
   "name": "@factory/aos-agent-runtime",
   "version": "0.1.0",
-  "description": "K1 Consolidation Prep (D-168/D-172): hosts the architect-agent, qa-agent, reviewer-agent, report-agent, documentation-service, memory-agent, and internet-research-service workers as one deployable, each still bound to its historical port/domain/serviceId. CODE-LEVEL CANDIDATE ONLY — production topology unchanged. See docs/deployment-plan.md for cutover status.",
+  "description": "Hosts architect-agent and memory-agent in one process. Research, review, QA, report, and documentation run in-process inside orchestrator-agent and gateway-api.",
   "type": "module",
   "private": true,
   "main": "dist/index.js",

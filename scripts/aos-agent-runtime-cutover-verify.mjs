@@ -52,9 +52,7 @@ const orchestratorUrl = orchestratorUrlFlagIndex >= 0 ? args[orchestratorUrlFlag
 
 const WORKERS = [
   { serviceId: 'architect-agent', envKey: 'ARCHITECT_AGENT_URL', defaultUrl: 'https://architect.simorx.com', domainFragment: 'architect' },
-  { serviceId: 'reviewer-agent', envKey: 'REVIEWER_AGENT_URL', defaultUrl: 'https://reviewer.simorx.com', domainFragment: 'reviewer' },
-  { serviceId: 'qa-agent', envKey: 'QA_AGENT_URL', defaultUrl: 'https://qa.simorx.com', domainFragment: 'qa' },
-  { serviceId: 'report-agent', envKey: 'REPORT_AGENT_URL', defaultUrl: 'https://reports.simorx.com', domainFragment: 'reports' },
+  { serviceId: 'memory-agent', envKey: 'MEMORY_AGENT_URL', defaultUrl: 'https://memory.simorx.com', domainFragment: 'memory' },
 ];
 
 async function checkWorker(worker) {

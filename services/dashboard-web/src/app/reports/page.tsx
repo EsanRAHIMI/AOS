@@ -9,9 +9,9 @@ export default async function ReportsPage() {
   const list = rows ?? [];
   return (
     <>
-      <PageHeader title="Intelligence Reports" subtitle="Executive/system reports from the report-agent, grounded in research, plans, reviews, QA, costs and system state." />
+      <PageHeader title="Intelligence Reports" subtitle="Executive and system reports grounded in research, plans, reviews, QA, costs and system state." />
       {list.length === 0 ? (
-        <div className="card"><EmptyState icon="✦" title="No reports yet" hint="The report-agent writes a report at the end of an intelligence task." /></div>
+        <div className="card"><EmptyState icon="✦" title="No reports yet" hint="An intelligence task writes a report when it finishes." /></div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {list.map((r, i) => {

@@ -34,7 +34,7 @@ export const manifest: ServiceManifest = {
     'store_task_history', 'store_decisions', 'store_patterns', 'extract_skills',
     'generate_compact_summaries', 'reduce_token_usage',
   ],
-  dependencies: ['gateway-api', 'documentation-service', 'file-asset-service', 'event-bus-service', 'service-registry'],
+  dependencies: ['gateway-api', 'file-asset-service', 'event-bus-service', 'service-registry'],
   requiredEnv: ['MONGODB_URI', 'MONGODB_DB_NAME', 'FACTORY_INTERNAL_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'],
 };
 
@@ -88,7 +88,7 @@ export const handleTask: TaskHandler = async (req, ctx) => {
         category: 'self_expansion',
         triggerConditions: ['A required capability is missing for a goal'],
         requiredCapabilities: ['cap_service_generation', 'cap_infrastructure_request'],
-        requiredServices: ['builder-agent', 'devops-agent', 'documentation-service', 'memory-agent'],
+        requiredServices: ['builder-agent', 'devops-agent', 'memory-agent'],
         steps: [
           'Detect capability gap', 'Create expansion proposal', 'Get human approval', 'Scaffold service from template',
           'Create Dokploy infrastructure request', 'Update documentation', 'Store memory', 'Evaluate result',

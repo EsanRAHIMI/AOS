@@ -66,7 +66,7 @@ export function buildEvaluation(input: BuildEvaluationInput): Evaluation {
     weaknesses.push('No runtime validation of the new capability yet.');
     recommendations.push('Add automated smoke-test generation and execution for new services.');
   }
-  if (!s.docsUpdated) recommendations.push('Ensure documentation-service is reachable to record outcomes.');
+  if (!s.docsUpdated) recommendations.push('Task documentation was not recorded.');
   if ((s.delegationsAttempted ?? 0) > 0 && ratio < 1) {
     weaknesses.push('Some delegations did not complete.');
     recommendations.push('Check peer service URLs and health before delegating.');

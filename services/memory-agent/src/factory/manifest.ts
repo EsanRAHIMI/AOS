@@ -17,7 +17,6 @@ export const manifest: ServiceManifest = {
     'reduce_token_usage',  ],
   dependencies: [
     'gateway-api',
-    'documentation-service',
     'file-asset-service',
     'event-bus-service',
     'service-registry',  ],

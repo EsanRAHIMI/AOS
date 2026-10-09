@@ -22,7 +22,8 @@
 import {
   classifyResearchFetchFailure, interpretResearchTaskResponse,
 } from '../shared/dist/research/index.js';
-import { peerUrl, peerEnvKey } from '../shared/dist/discovery/index.js';
+import { peerUrl } from '../shared/dist/discovery/index.js';
+import { SERVICE_IDS } from '../shared/dist/constants/index.js';
 import { LOCAL_SERVICES } from './local-services.mjs';
 
 let pass = 0, fail = 0;
@@ -33,17 +34,14 @@ const check = (name, ok, detail = '') => {
 
 console.log('Phase AG.2 — research service reachability smoke\n');
 
-console.log('— Service catalog: internet-research-service is actually started locally —');
-const entry = LOCAL_SERVICES.find((s) => s.id === 'internet-research-service');
-check('Present in LOCAL_SERVICES (drives pnpm dev:all)', Boolean(entry));
-check('Correct dir/pkg/port (matches shared/src/constants SERVICE_PORTS)', entry?.dir === 'internet-research-service' && entry?.pkg === '@factory/internet-research-service' && entry?.port === 4115, JSON.stringify(entry));
+console.log('— Service catalog: research is in-process, not a local service —');
+check('internet-research-service is not started by pnpm dev:all', !LOCAL_SERVICES.some((s) => s.id === 'internet-research-service'));
+check('Removed specialist ids are absent from SERVICE_IDS', !['documentation-service', 'internet-research-service', 'report-agent', 'qa-agent', 'reviewer-agent'].some((id) => Object.values(SERVICE_IDS).includes(id)));
 check('Every LOCAL_SERVICES entry has a unique port (no silent collision)', new Set(LOCAL_SERVICES.map((s) => s.port)).size === LOCAL_SERVICES.length);
 check('Every LOCAL_SERVICES id is unique', new Set(LOCAL_SERVICES.map((s) => s.id)).size === LOCAL_SERVICES.length);
 
-console.log('— Peer URL construction (gateway dispatchResearch uses this) —');
-check('Default (no env override) resolves to localhost:4115', peerUrl('internet-research-service', {}) === 'http://localhost:4115');
-check('Env override wins when set', peerUrl('internet-research-service', { [peerEnvKey('internet-research-service')]: 'https://research.simorx.com' }) === 'https://research.simorx.com');
-check('Env override key name matches the documented convention', peerEnvKey('internet-research-service') === 'INTERNET_RESEARCH_SERVICE_URL');
+console.log('— Peer URL construction still works for a live service —');
+check('Default (no env override) resolves gateway-api to localhost:4101', peerUrl('gateway-api', {}) === 'http://localhost:4101');
 
 console.log('— classifyResearchFetchFailure: connection failure vs other thrown errors —');
 const f1 = classifyResearchFetchFailure('http://localhost:4115', 'fetch failed');

@@ -16,12 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vites
 import type { Db } from 'mongodb';
 import { setTestDb, EventPublisher, SERVICE_PORTS } from '@factory/shared';
 import { buildArchitectWorker, manifest as architectManifest } from '../src/workers/architect-agent.js';
-import { buildQaWorker, manifest as qaManifest } from '../src/workers/qa-agent.js';
-import { buildReviewerWorker, manifest as reviewerManifest } from '../src/workers/reviewer-agent.js';
-import { buildReportWorker, manifest as reportManifest } from '../src/workers/report-agent.js';
-import { buildDocumentationServiceWorker, manifest as docsManifest } from '../src/workers/documentation-service.js';
 import { buildMemoryAgentWorker, manifest as memoryManifest } from '../src/workers/memory-agent.js';
-import { buildInternetResearchServiceWorker, manifest as researchManifest } from '../src/workers/internet-research-service.js';
 import type { FactoryService } from '@factory/service-kit';
 
 const INTERNAL_TOKEN = 'test-internal-token';
@@ -95,50 +90,6 @@ describe('aos-agent-runtime Batch 2A workers — equivalence to baseline', () =>
     vi.restoreAllMocks();
   });
 
-  describe('documentation-service', () => {
-    it('GET /health / manifest / status / capabilities match the original', async () => {
-      const { db } = createFakeDb();
-      setTestDb(db);
-      const service = await buildDocumentationServiceWorker(WORKER_ENV);
-      expect((await service.app.inject({ method: 'GET', url: '/health' })).json()).toEqual({ status: 'ok', serviceId: 'documentation-service' });
-      const manifestRes = await service.app.inject({ method: 'GET', url: '/.factory/manifest' });
-      expect(manifestRes.json().data.serviceId).toBe('documentation-service');
-      expect(manifestRes.json().data.domain).toContain('docs');
-      expect((await service.app.inject({ method: 'GET', url: '/.factory/status' })).json().data.serviceId).toBe('documentation-service');
-      expect((await service.app.inject({ method: 'GET', url: '/.factory/capabilities' })).json().data.capabilities).toEqual(docsManifest.capabilities);
-    });
-
-    it('POST /.factory/task upserts phase-log/decision-log/task doc and publishes DOC_UPDATED x3', async () => {
-      const { db, writes } = createFakeDb();
-      setTestDb(db);
-      const service = await buildDocumentationServiceWorker(WORKER_ENV);
-      const res = await service.app.inject({
-        method: 'POST', url: '/.factory/task',
-        headers: { 'x-factory-internal-token': INTERNAL_TOKEN },
-        payload: { taskId: 'task-1', goal: 'document the pipeline', input: { summary: 'pipeline documented' } },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().data.updated).toEqual(['phase-log', 'decision-log', 'task-task-1']);
-      expect(writes('documents').map((d) => d.slug)).toEqual(expect.arrayContaining(['phase-log', 'decision-log', 'task-task-1']));
-      expect(publishSpy.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual(['doc.updated', 'doc.updated', 'doc.updated']);
-    });
-
-    it('custom /docs routes: unauthorized -> 401, then POST + GET round-trip', async () => {
-      const { db } = createFakeDb();
-      setTestDb(db);
-      const service = await buildDocumentationServiceWorker(WORKER_ENV);
-      expect((await service.app.inject({ method: 'POST', url: '/docs', payload: { slug: 'x', title: 'X', category: 'g', body: 'b' } })).statusCode).toBe(401);
-      const post = await service.app.inject({
-        method: 'POST', url: '/docs',
-        headers: { 'x-factory-internal-token': INTERNAL_TOKEN },
-        payload: { slug: 'my-doc', title: 'My Doc', category: 'general', body: 'hello' },
-      });
-      expect(post.json().data).toEqual({ slug: 'my-doc', version: 1 });
-      const get = await service.app.inject({ method: 'GET', url: '/docs/my-doc', headers: { 'x-factory-internal-token': INTERNAL_TOKEN } });
-      expect(get.json().data.slug).toBe('my-doc');
-    });
-  });
-
   describe('memory-agent', () => {
     it('GET /health / manifest / status / capabilities match the original', async () => {
       const { db } = createFakeDb();
@@ -188,51 +139,15 @@ describe('aos-agent-runtime Batch 2A workers — equivalence to baseline', () =>
     });
   });
 
-  describe('internet-research-service', () => {
-    it('GET /health / manifest / status / capabilities match the original', async () => {
-      const { db } = createFakeDb();
-      setTestDb(db);
-      const service = await buildInternetResearchServiceWorker(WORKER_ENV);
-      expect((await service.app.inject({ method: 'GET', url: '/health' })).json()).toEqual({ status: 'ok', serviceId: 'internet-research-service' });
-      const manifestRes = await service.app.inject({ method: 'GET', url: '/.factory/manifest' });
-      expect(manifestRes.json().data.serviceId).toBe('internet-research-service');
-      expect(manifestRes.json().data.domain).toContain('research');
-      expect((await service.app.inject({ method: 'GET', url: '/.factory/capabilities' })).json().data.capabilities).toEqual(researchManifest.capabilities);
-    });
-
-    it('POST /.factory/task (forceFallback) writes traces/cost/run/report/evidence and publishes started/research.completed', async () => {
-      const { db, writes } = createFakeDb();
-      setTestDb(db);
-      const service = await buildInternetResearchServiceWorker(WORKER_ENV);
-      const res = await service.app.inject({
-        method: 'POST', url: '/.factory/task',
-        headers: { 'x-factory-internal-token': INTERNAL_TOKEN },
-        payload: { taskId: 'task-1', goal: 'securing autonomous-agent dashboards', input: { forceFallback: true } },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().data.research.mode).toBe('fallback');
-      expect(res.json().data.research.sourceMode).toBe('curated_fallback');
-      expect(writes('llm_traces')).toHaveLength(1);
-      expect(writes('research_runs')).toHaveLength(1);
-      expect(writes('research_reports')).toHaveLength(1);
-      expect(writes('evidence_records')).toHaveLength(1);
-      expect(publishSpy.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual(['agent.run.started', 'intel.research.completed']);
-    });
-  });
 });
 
 describe('aos-agent-runtime — Batch 2A multi-instance-in-one-process correctness proofs', () => {
   const ALL = [
     { label: 'architect-agent', build: buildArchitectWorker, manifest: architectManifest },
-    { label: 'qa-agent', build: buildQaWorker, manifest: qaManifest },
-    { label: 'reviewer-agent', build: buildReviewerWorker, manifest: reviewerManifest },
-    { label: 'report-agent', build: buildReportWorker, manifest: reportManifest },
-    { label: 'documentation-service', build: buildDocumentationServiceWorker, manifest: docsManifest },
     { label: 'memory-agent', build: buildMemoryAgentWorker, manifest: memoryManifest },
-    { label: 'internet-research-service', build: buildInternetResearchServiceWorker, manifest: researchManifest },
   ] as const;
 
-  it('each of the 3 new workers keeps its own correct serviceId even when process.env.SERVICE_ID/SERVICE_PORT are poisoned', async () => {
+  it('architect-agent and memory-agent keep their own serviceId even when process.env.SERVICE_ID/SERVICE_PORT are poisoned', async () => {
     const originalId = process.env.SERVICE_ID;
     const originalPort = process.env.SERVICE_PORT;
     process.env.SERVICE_ID = 'aos-agent-runtime';
@@ -241,9 +156,8 @@ describe('aos-agent-runtime — Batch 2A multi-instance-in-one-process correctne
       const { db } = createFakeDb();
       setTestDb(db);
       const news = [
-        { build: buildDocumentationServiceWorker, id: 'documentation-service' },
+        { build: buildArchitectWorker, id: 'architect-agent' },
         { build: buildMemoryAgentWorker, id: 'memory-agent' },
-        { build: buildInternetResearchServiceWorker, id: 'internet-research-service' },
       ];
       const services = await Promise.all(news.map((n) => n.build(WORKER_ENV)));
       for (const [i, service] of services.entries()) {
@@ -257,21 +171,21 @@ describe('aos-agent-runtime — Batch 2A multi-instance-in-one-process correctne
     }
   });
 
-  describe('real port binding — all 7 workers (Batch 1 + Batch 2A) together, one process', () => {
+  describe('real port binding — architect-agent and memory-agent together', () => {
     let services: FactoryService[] = [];
 
     afterAll(async () => {
       await Promise.all(services.map((s) => s.close().catch(() => undefined)));
     });
 
-    it('all 7 workers bind their own distinct historical port simultaneously in one process', async () => {
+    it('architect-agent and memory-agent bind distinct historical ports in one process', async () => {
       const { db } = createFakeDb();
       setTestDb(db);
       services = await Promise.all(ALL.map((c) => c.build(WORKER_ENV)));
       await Promise.all(services.map((s) => s.listen()));
 
       const expectedPorts = ALL.map((c) => SERVICE_PORTS[c.manifest.serviceId as keyof typeof SERVICE_PORTS]);
-      expect(new Set(expectedPorts).size).toBe(ALL.length); // all 7 ports distinct
+      expect(new Set(expectedPorts).size).toBe(ALL.length);
 
       for (const [i, service] of services.entries()) {
         const address = service.app.server.address();

@@ -76,7 +76,7 @@ export const handleTask: TaskHandler = async (req, ctx) => {
         category: 'self_expansion',
         triggerConditions: ['A required capability is missing for a goal'],
         requiredCapabilities: ['cap_service_generation', 'cap_infrastructure_request'],
-        requiredServices: ['builder-agent', 'devops-agent', 'documentation-service', 'memory-agent'],
+        requiredServices: ['builder-agent', 'devops-agent', 'memory-agent'],
         steps: [
           'Detect capability gap',
           'Create expansion proposal',

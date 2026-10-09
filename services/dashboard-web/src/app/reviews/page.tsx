@@ -9,7 +9,7 @@ export default async function ReviewsPage() {
   const list = rows ?? [];
   return (
     <>
-      <PageHeader title="Reviews" subtitle="Independent reviewer-agent reports on plans, architecture, security and policy. The reviewer is allowed to fail an output." />
+      <PageHeader title="Reviews" subtitle="Independent reviews of plans, architecture, security and policy. A review is allowed to fail an output." />
       {list.length === 0 ? (
         <div className="card"><EmptyState icon="◇" title="No reviews yet" hint="Reviews appear when the kernel produces a plan to review." /></div>
       ) : (

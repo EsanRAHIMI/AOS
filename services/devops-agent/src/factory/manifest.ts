@@ -18,7 +18,6 @@ export const manifest: ServiceManifest = {
     'gateway-api',
     'architect-agent',
     'service-registry',
-    'documentation-service',
     'event-bus-service',  ],
   requiredEnv: [
     'MONGODB_URI',

@@ -1,7 +1,7 @@
 # Dokploy: Agent Services (shared pattern)
 
-orchestrator-agent, architect-agent, builder-agent, devops-agent, memory-agent
-(and Phase 2: reviewer, qa, monitor, report) all deploy identically.
+orchestrator-agent, architect-agent, builder-agent, devops-agent, memory-agent, monitor-agent
+all deploy identically.
 
 | Setting | Value |
 |---|---|

@@ -19,7 +19,7 @@ export default async function ResearchPage() {
   const list = rows ?? [];
   return (
     <>
-      <PageHeader title="Research" subtitle="Governed, read-only research reports with cited, reliability-scored sources from the internet-research-service." />
+      <PageHeader title="Research" subtitle="Governed, read-only research reports with cited, reliability-scored sources." />
       {list.length === 0 ? (
         <div className="card"><EmptyState icon="✦" title="No research yet" hint='Run a goal like "Research current best practices for securing autonomous agent dashboards".' /></div>
       ) : (

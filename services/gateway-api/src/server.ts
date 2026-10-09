@@ -27,7 +27,6 @@ import {
   ROLE_HEADER,
   REQUEST_ID_HEADER,
   peerUrl,
-  resolvePeerUrl,
   TaskRequestSchema,
   hasValidInternalToken,
   hasValidAdminToken,
@@ -168,7 +167,7 @@ import {
   llmStatusFromEnv,
   gitHubDeliveryFromEnv,
   webSearchStatusFromEnv,
-  classifyResearchFetchFailure,
+  executeResearch,
   interpretResearchTaskResponse,
   type ServiceActivation,
   type DeploymentChecklist,
@@ -921,41 +920,16 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
       // provider_not_configured vs real search_api) is delegated to pure,
       // unit-testable helpers in shared/src/research (see decision-log D-140).
       const dispatchResearch = async (topic: string): Promise<{ ok: boolean; summary: string; data?: unknown }> => {
-        const svc = await ctx.registry.resolve('internet-research-service');
-        // Phase AG.4 — svc?.domain is the service's SELF-REGISTERED manifest
-        // domain, which is hardcoded to its PRODUCTION subdomain regardless
-        // of environment (see internet-research-service/src/factory/
-        // manifest.ts). Once the service actually starts locally and
-        // registers with a reachable local service-registry (true only
-        // since Phase AG.2 added it to LOCAL_SERVICES), naively preferring
-        // that domain over peerUrl()'s localhost default made gateway-api
-        // silently fetch a real, unrelated production host — reachable, but
-        // not this service, which is exactly what produced "internet-
-        // research-service returned 404: unknown error". resolvePeerUrl()
-        // lets an explicit INTERNET_RESEARCH_SERVICE_URL env override (set
-        // for local dev in scripts/local-services.mjs, same mechanism
-        // already used for ORCHESTRATOR_AGENT_URL) win over the registry
-        // domain, while leaving production (no override set) unchanged.
-        const url = resolvePeerUrl('internet-research-service', svc?.domain);
-        const taskUrl = `${url}/.factory/task`;
-        let r: Response;
         try {
-          r = await fetch(taskUrl, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: env.FACTORY_INTERNAL_TOKEN },
-            body: JSON.stringify({ taskId: genId('task'), goal: topic, input: { topic } }),
-            signal: AbortSignal.timeout(45000),
+          const result = await executeResearch({
+            topic,
+            taskId: null,
+            publish: (e) => ctx.publisher.publish(e),
           });
+          return interpretResearchTaskResponse(200, true, { data: { research: result.research } });
         } catch (e) {
-          return classifyResearchFetchFailure(url, e instanceof Error ? e.message : 'request failed');
+          return { ok: false, summary: e instanceof Error ? e.message : 'research failed' };
         }
-        // Phase AG.4 — read the raw text first so a non-JSON body (e.g. an
-        // HTML 404 page from a misrouted host) is still visible in the
-        // error summary instead of silently collapsing to "unknown error".
-        const rawText = await r.text().catch(() => '');
-        let body: Parameters<typeof interpretResearchTaskResponse>[2] = {};
-        try { body = rawText ? JSON.parse(rawText) : {}; } catch { /* non-JSON — surfaced via rawBodySnippet below */ }
-        return interpretResearchTaskResponse(r.status, r.ok, body, { url: taskUrl, method: 'POST', rawBodySnippet: rawText });
       };
       let codeWorkspaceProbe: { at: number; configured: boolean } = { at: 0, configured: false };
       const codeWorkspaceConfigured = async (): Promise<boolean> => {
@@ -1560,7 +1534,7 @@ export async function buildGatewayService(env: GatewayEnv, opts: BuildGatewayOpt
           const topic = String(args.goal ?? '').trim() || 'high-value income and career opportunities';
           const research = await dispatchResearch(topic);
           if (research.ok) return { ok: true, summary: `No opportunities recorded in your scope yet — researched live instead. ${research.summary}`, data: research.data };
-          return { ok: true, summary: `No opportunities recorded in your scope yet, and live research failed: ${research.summary} Ingest opportunity candidates directly (POST /v1/me/reality/ingest), or fix internet-research-service/TAVILY_API_KEY.` };
+          return { ok: true, summary: `No opportunities recorded in your scope yet, and live research failed: ${research.summary} Ingest opportunity candidates directly (POST /v1/me/reality/ingest), or fix TAVILY_API_KEY.` };
         },
         propose_aos_build: async (_args, role) => {
           const actor = legacyRoleToAuthContext(role);

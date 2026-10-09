@@ -51,10 +51,9 @@ export interface ToolProposal {
 /** Short aliases → canonical service ids (for spoken targets). */
 const SERVICE_ALIASES: Record<string, string> = {
   gateway: 'gateway-api', api: 'gateway-api', dashboard: 'dashboard-web', orchestrator: 'orchestrator-agent',
-  architect: 'architect-agent', builder: 'builder-agent', devops: 'devops-agent', reviewer: 'reviewer-agent',
-  qa: 'qa-agent', registry: 'service-registry', memory: 'memory-agent', documentation: 'documentation-service',
-  docs: 'documentation-service', events: 'event-bus-service', 'event bus': 'event-bus-service', assets: 'file-asset-service',
-  files: 'file-asset-service', monitor: 'monitor-agent', reports: 'report-agent', research: 'internet-research-service',
+  architect: 'architect-agent', builder: 'builder-agent', devops: 'devops-agent',
+  registry: 'service-registry', memory: 'memory-agent', events: 'event-bus-service', 'event bus': 'event-bus-service', assets: 'file-asset-service',
+  files: 'file-asset-service', monitor: 'monitor-agent',
   browser: 'browser-testing-agent', 'browser testing': 'browser-testing-agent', voice: 'voice-operator-agent',
 };
 

@@ -23,7 +23,6 @@ export const manifest: ServiceManifest = {
     'builder-agent',
     'devops-agent',
     'memory-agent',
-    'documentation-service',
     'service-registry',
     'event-bus-service',  ],
   requiredEnv: [

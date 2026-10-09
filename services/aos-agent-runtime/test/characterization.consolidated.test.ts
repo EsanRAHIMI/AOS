@@ -23,9 +23,6 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vites
 import type { Db } from 'mongodb';
 import { setTestDb, EventPublisher, SERVICE_PORTS } from '@factory/shared';
 import { buildArchitectWorker, manifest as architectManifest } from '../src/workers/architect-agent.js';
-import { buildQaWorker, manifest as qaManifest } from '../src/workers/qa-agent.js';
-import { buildReviewerWorker, manifest as reviewerManifest } from '../src/workers/reviewer-agent.js';
-import { buildReportWorker, manifest as reportManifest } from '../src/workers/report-agent.js';
 import type { FactoryService } from '@factory/service-kit';
 
 const INTERNAL_TOKEN = 'test-internal-token';
@@ -75,45 +72,6 @@ const CASES: WorkerCase[] = [
     writesCollections: ['agent_runs'],
     eventTypes: ['agent.run.started', 'agent.run.finished'],
     resultKey: 'design',
-  },
-  {
-    label: 'qa-agent',
-    build: buildQaWorker,
-    manifest: qaManifest,
-    domainFragment: 'qa',
-    taskPayload: {
-      taskId: 'task-1', goal: 'verify the retry logic',
-      input: { goal: 'verify the retry logic', evidenceSummary: 'research evidence present, plan evidence present, review evidence present', forceFallback: true },
-    },
-    writesCollections: ['llm_traces', 'llm_cost_records', 'evidence_records', 'qa_reports', 'agent_runs'],
-    eventTypes: ['agent.run.started', 'intel.qa.completed'],
-    resultKey: 'qa',
-  },
-  {
-    label: 'reviewer-agent',
-    build: buildReviewerWorker,
-    manifest: reviewerManifest,
-    domainFragment: 'reviewer',
-    taskPayload: {
-      taskId: 'task-1', goal: 'review the improvement plan',
-      input: { target: 'improvement plan', content: 'plan content', forceFallback: true },
-    },
-    writesCollections: ['llm_traces', 'llm_cost_records', 'evidence_records', 'review_reports', 'agent_runs'],
-    eventTypes: ['agent.run.started', 'intel.review.completed'],
-    resultKey: 'review',
-  },
-  {
-    label: 'report-agent',
-    build: buildReportWorker,
-    manifest: reportManifest,
-    domainFragment: 'reports',
-    taskPayload: {
-      taskId: 'task-1', goal: 'summarize this phase',
-      input: { title: 'Executive report: phase summary', kind: 'executive', inputs: { goal: 'summarize this phase' }, forceFallback: true },
-    },
-    writesCollections: ['llm_traces', 'llm_cost_records', 'evidence_records', 'intelligence_reports', 'agent_runs'],
-    eventTypes: ['agent.run.started', 'intel.report.generated'],
-    resultKey: 'report',
   },
 ];
 
@@ -249,14 +207,14 @@ describe('aos-agent-runtime — multi-instance-in-one-process correctness proofs
     }
   });
 
-  describe('real port binding (historical ports, unchanged from the original 4 services)', () => {
+  describe('real port binding', () => {
     let services: FactoryService[] = [];
 
     afterAll(async () => {
       await Promise.all(services.map((s) => s.close().catch(() => undefined)));
     });
 
-    it('all four workers bind their own historical port simultaneously in one process', async () => {
+    it('architect-agent binds its historical port', async () => {
       const { db } = createMinimalFakeDb();
       setTestDb(db);
       services = await Promise.all(CASES.map((c) => c.build(WORKER_ENV)));
@@ -264,9 +222,6 @@ describe('aos-agent-runtime — multi-instance-in-one-process correctness proofs
 
       const expectedPorts = [
         SERVICE_PORTS['architect-agent'],
-        SERVICE_PORTS['qa-agent'],
-        SERVICE_PORTS['reviewer-agent'],
-        SERVICE_PORTS['report-agent'],
       ];
       for (const [i, service] of services.entries()) {
         const address = service.app.server.address();

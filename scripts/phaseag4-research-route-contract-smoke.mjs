@@ -32,9 +32,9 @@ try {
   console.error(e.message);
   process.exit(1);
 }
-const { resolvePeerUrl, peerUrl, peerEnvKey } = discovery;
+const { resolvePeerUrl } = discovery;
 const { interpretResearchTaskResponse } = research;
-const { FACTORY_ENDPOINTS, SERVICE_PORTS, SERVICE_SUBDOMAINS } = constants;
+const { FACTORY_ENDPOINTS, SERVICE_IDS } = constants;
 const { LOCAL_SERVICES } = require('./local-services.mjs');
 
 let pass = 0, fail = 0;
@@ -46,24 +46,22 @@ const check = (name, ok, detail = '') => {
 console.log('Phase AG.4 — research route/host contract smoke\n');
 
 console.log('— The actual bug: manifest.domain is a real production subdomain, not a placeholder —');
-check('internet-research-service manifest domain is research.simorx.com (real, hardcoded, env-independent)', SERVICE_SUBDOMAINS['internet-research-service'] === 'research.simorx.com', SERVICE_SUBDOMAINS['internet-research-service']);
-check('FACTORY_ENDPOINTS.TASK is /.factory/task (the route internet-research-service actually registers via createFactoryService)', FACTORY_ENDPOINTS.TASK === '/.factory/task');
-check('internet-research-service local port is 4115 (matches LOCAL_SERVICES + peerUrl default)', SERVICE_PORTS['internet-research-service'] === 4115);
+check('research, review, QA, report, and documentation are not production service ids', !['documentation-service', 'internet-research-service', 'report-agent', 'qa-agent', 'reviewer-agent'].some((id) => Object.values(SERVICE_IDS).includes(id)));
+check('FACTORY_ENDPOINTS.TASK is /.factory/task', FACTORY_ENDPOINTS.TASK === '/.factory/task');
 
-console.log('\n— resolvePeerUrl(): the fix — explicit override beats the registry-resolved production domain —');
-const registryDomain = `https://${SERVICE_SUBDOMAINS['internet-research-service']}`; // what ctx.registry.resolve() actually returns once the service self-registers
-check('With NO env override: registry domain (production) is used — correct default/production behavior', resolvePeerUrl('internet-research-service', registryDomain, {}) === registryDomain, resolvePeerUrl('internet-research-service', registryDomain, {}));
-check('With the local env override set: it wins over the registry domain — THIS is the fix', resolvePeerUrl('internet-research-service', registryDomain, { INTERNET_RESEARCH_SERVICE_URL: 'http://localhost:4115' }) === 'http://localhost:4115');
-check('With NO registry domain AND no override: falls back to peerUrl() localhost default', resolvePeerUrl('internet-research-service', null, {}) === 'http://localhost:4115');
-check('With NO registry domain but WITH an override: override still wins', resolvePeerUrl('internet-research-service', undefined, { INTERNET_RESEARCH_SERVICE_URL: 'http://localhost:9999' }) === 'http://localhost:9999');
-check('Trailing slashes are stripped consistently from both override and registry domain', resolvePeerUrl('internet-research-service', 'https://research.simorx.com/', {}) === 'https://research.simorx.com' && resolvePeerUrl('x', null, { X_URL: 'http://localhost:1/' }) === 'http://localhost:1');
+console.log('\n— resolvePeerUrl(): override still beats a registry domain for a live service —');
+const registryDomain = 'https://orchestrator.simorx.com';
+check('With NO env override: registry domain is used', resolvePeerUrl('orchestrator-agent', registryDomain, {}) === registryDomain, resolvePeerUrl('orchestrator-agent', registryDomain, {}));
+check('With the local env override set: it wins over the registry domain', resolvePeerUrl('orchestrator-agent', registryDomain, { ORCHESTRATOR_AGENT_URL: 'http://localhost:4102' }) === 'http://localhost:4102');
+check('With NO registry domain AND no override: falls back to peerUrl() localhost default', resolvePeerUrl('orchestrator-agent', null, {}) === 'http://localhost:4102');
+check('With NO registry domain but WITH an override: override still wins', resolvePeerUrl('orchestrator-agent', undefined, { ORCHESTRATOR_AGENT_URL: 'http://localhost:9999' }) === 'http://localhost:9999');
+check('Trailing slashes are stripped consistently from both override and registry domain', resolvePeerUrl('orchestrator-agent', 'https://orchestrator.simorx.com/', {}) === 'https://orchestrator.simorx.com' && resolvePeerUrl('x', null, { X_URL: 'http://localhost:1/' }) === 'http://localhost:1');
 
 console.log('\n— scripts/local-services.mjs: the local override is actually wired for gateway-api —');
 const gw = LOCAL_SERVICES.find((s) => s.id === 'gateway-api');
 check('gateway-api entry exists', Boolean(gw));
-check('gateway-api extra sets INTERNET_RESEARCH_SERVICE_URL to the correct local port', /INTERNET_RESEARCH_SERVICE_URL=http:\/\/localhost:4115/.test(gw?.extra ?? ''), gw?.extra);
-check('The env key matches peerEnvKey()\'s exact naming convention (no typo)', peerEnvKey('internet-research-service') === 'INTERNET_RESEARCH_SERVICE_URL');
-check('gateway-api extra still retains the pre-existing ORCHESTRATOR_AGENT_URL override (no regression)', /ORCHESTRATOR_AGENT_URL=http:\/\/localhost:4102/.test(gw?.extra ?? ''));
+check('gateway-api extra does not point research at a removed service', !/INTERNET_RESEARCH_SERVICE_URL/.test(gw?.extra ?? ''), gw?.extra);
+check('gateway-api extra still retains ORCHESTRATOR_AGENT_URL', /ORCHESTRATOR_AGENT_URL=http:\/\/localhost:4102/.test(gw?.extra ?? ''));
 
 console.log('\n— interpretResearchTaskResponse(): 404 is now diagnosable, not "unknown error" —');
 const notFound = interpretResearchTaskResponse(404, false, {}, { url: 'https://research.simorx.com/.factory/task', method: 'POST' });

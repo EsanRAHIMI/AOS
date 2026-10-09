@@ -19,7 +19,6 @@ export const manifest: ServiceManifest = {
   dependencies: [
     'gateway-api',
     'memory-agent',
-    'documentation-service',
     'event-bus-service',
     'service-registry',  ],
   requiredEnv: [

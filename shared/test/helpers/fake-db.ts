@@ -114,6 +114,7 @@ export function createFakeDb(): { db: Db; store: Map<string, Doc[]>; dump: (name
     const rows = () => { let a = store.get(name); if (!a) { a = []; store.set(name, a); } return a; };
     return {
       insertOne: async (doc: Doc) => { rows().push({ ...doc }); return { acknowledged: true, insertedId: 'fake' }; },
+      insertMany: async (docs: Doc[]) => { for (const doc of docs) rows().push({ ...doc }); return { acknowledged: true, insertedCount: docs.length }; },
       findOne: async (filter?: Doc, opts?: { projection?: Doc }) => {
         const found = rows().find((d) => matches(d, filter));
         return found ? project(found, opts?.projection) : null;

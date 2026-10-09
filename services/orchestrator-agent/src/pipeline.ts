@@ -16,6 +16,11 @@ import {
   nowIso,
   sleep,
   llmRouterFromEnv,
+  executeResearch,
+  executeReview,
+  executeQa,
+  executeReport,
+  recordTaskDocumentation,
   detectRequiredCapabilities,
   templateForCapability,
   capabilityTitle,
@@ -136,6 +141,14 @@ async function persistTrace(trace: LlmTrace, ctx: ServiceContext): Promise<void>
  * exact same `peer.dispatchTask` HTTP call on any queue-path failure (Redis
  * disabled, enqueue error, or wait timeout) unless `dispatchMode==='queue_only'`.
  */
+async function runInProcess<T>(fn: () => Promise<T>): Promise<{ ok: true; data: T } | { ok: false }> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export async function dispatchPeerTask<T = Record<string, unknown>>(
   args: PipelineArgs,
   serviceId: string,
@@ -190,11 +203,12 @@ async function runResearchPipeline(args: PipelineArgs, steps: ReportStep[], step
 
   // 1) Research (read-only, cited sources).
   await step('orchestrator-agent', 'Strategic planner: research is required for this goal', 'info');
-  const r = await dispatchPeerTask<{ research?: { reportId: string; mode: string; sourceCount: number; evidenceId: string; summary: string; findings: string[]; recommendations: string[]; sources: Array<{ title: string; url: string; reliability: string }> } }>(
-    args, 'internet-research-service', { taskId, goal, input: { topic: goal, forceFallback }, priority: 'normal' });
-  const research = r.data?.research;
-  if (research) { evidenceIds.push(research.evidenceId); await step('internet-research-service', `Research complete (${research.mode}): ${research.sourceCount} sources, ${research.findings.length} findings`, 'success', research.reportId); }
-  else await step('internet-research-service', 'Research unavailable', 'warn');
+  const r = await runInProcess(() => executeResearch({
+    topic: goal, taskId, forceFallback, publish: (e) => ctx.publisher.publish(e),
+  }));
+  const research = r.ok ? r.data.research : undefined;
+  if (research) { evidenceIds.push(research.evidenceId); await step('research', `Research complete (${research.mode}): ${research.sourceCount} sources, ${research.findings.length} findings`, 'success', research.reportId); }
+  else await step('research', 'Research unavailable', 'warn');
   await checkBudget();
   await sleep(PACE_MS);
 
@@ -209,30 +223,40 @@ async function runResearchPipeline(args: PipelineArgs, steps: ReportStep[], step
 
   // 3) Reviewer reviews the plan (may FAIL).
   const planContent = plan?.content ?? goal;
-  const rev = await dispatchPeerTask<{ review?: { reviewId: string; passed: boolean; mode: string; issues: unknown[]; evidenceId: string } }>(
-    args, 'reviewer-agent', { taskId, goal, input: { target: 'improvement plan', content: planContent, evidenceIds, forceFallback }, priority: 'normal' });
-  const review = rev.data?.review;
-  if (review) { evidenceIds.push(review.evidenceId); await step('reviewer-agent', `Review ${review.passed ? 'passed' : 'found issues'} (${review.mode}): ${Array.isArray(review.issues) ? review.issues.length : 0} issues`, review.passed ? 'success' : 'warn', review.reviewId); }
-  else await step('reviewer-agent', 'Review unavailable', 'warn');
+  const rev = await runInProcess(() => executeReview({
+    target: 'improvement plan', content: planContent, taskId, evidenceIds, forceFallback, publish: (e) => ctx.publisher.publish(e),
+  }));
+  const review = rev.ok ? rev.data.review : undefined;
+  if (review) { evidenceIds.push(review.evidenceId); await step('review', `Review ${review.passed ? 'passed' : 'found issues'} (${review.mode}): ${Array.isArray(review.issues) ? review.issues.length : 0} issues`, review.passed ? 'success' : 'warn', review.reviewId); }
+  else await step('review', 'Review unavailable', 'warn');
   await checkBudget();
   await sleep(PACE_MS);
 
   // 4) QA verifies acceptance against the evidence (must not rubber-stamp).
   const evidenceSummary = `research:${research?.reportId ?? 'none'}; plan:${plan?.planId ?? 'none'}; review:${review?.reviewId ?? 'none'}(${review?.passed ? 'passed' : 'failed'})`;
-  const q = await dispatchPeerTask<{ qa?: { qaId: string; passed: boolean; mode: string; gaps: string[]; verdict: string; evidenceId: string } }>(
-    args, 'qa-agent', { taskId, goal, input: { goal, evidenceSummary, evidenceIds, forceFallback }, priority: 'normal' });
-  const qa = q.data?.qa;
-  if (qa) { evidenceIds.push(qa.evidenceId); await step('qa-agent', `QA ${qa.passed ? 'passed' : 'failed'} (${qa.mode})`, qa.passed ? 'success' : 'warn', qa.qaId); }
-  else await step('qa-agent', 'QA unavailable', 'warn');
+  const q = await runInProcess(() => executeQa({
+    goal, evidenceSummary, taskId, evidenceIds, forceFallback, publish: (e) => ctx.publisher.publish(e),
+  }));
+  const qa = q.ok ? q.data.qa : undefined;
+  if (qa) { evidenceIds.push(qa.evidenceId); await step('qa', `QA ${qa.passed ? 'passed' : 'failed'} (${qa.mode})`, qa.passed ? 'success' : 'warn', qa.qaId); }
+  else await step('qa', 'QA unavailable', 'warn');
   await checkBudget();
   await sleep(PACE_MS);
 
   // 5) Executive report synthesizing everything.
-  const rep = await dispatchPeerTask<{ report?: { reportId: string; title: string; headline: string; mode: string; evidenceId: string } }>(
-    args, 'report-agent', { taskId, goal, input: { title: `Executive report: ${goal}`, kind: 'executive', inputs: { goal, research: research?.summary, findings: research?.findings, recommendations: research?.recommendations, planObjective: plan?.objective, reviewPassed: review?.passed, qaPassed: qa?.passed }, evidenceIds, forceFallback }, priority: 'normal' });
-  const report = rep.data?.report;
-  if (report) { evidenceIds.push(report.evidenceId); await step('report-agent', `Executive report generated (${report.mode})`, 'success', report.reportId); }
-  else await step('report-agent', 'Report unavailable', 'warn');
+  const rep = await runInProcess(() => executeReport({
+    title: `Executive report: ${goal}`,
+    goal,
+    kind: 'executive',
+    inputs: { goal, research: research?.summary, findings: research?.findings, recommendations: research?.recommendations, planObjective: plan?.objective, reviewPassed: review?.passed, qaPassed: qa?.passed },
+    taskId,
+    evidenceIds,
+    forceFallback,
+    publish: (e) => ctx.publisher.publish(e),
+  }));
+  const report = rep.ok ? rep.data.report : undefined;
+  if (report) { evidenceIds.push(report.evidenceId); await step('report', `Executive report generated (${report.mode})`, 'success', report.reportId); }
+  else await step('report', 'Report unavailable', 'warn');
 
   const spent = await taskSpend();
   const anyReal = !forceFallback && (research?.mode === 'real' || plan?.mode === 'real');
@@ -522,8 +546,10 @@ async function runDelegationPipeline(
   }
 
   await step('orchestrator-agent', 'Delegating to Documentation Service');
-  const doc = await dispatchPeerTask<{ updated?: string[] }>(args, 'documentation-service', { taskId, goal, input: { action: 'record_task', summary: `Task ${taskId}: ${goal}`, infrastructureRequestId }, priority: 'normal' });
-  await step('documentation-service', doc.ok ? 'Documentation updated' : 'Documentation unreachable', doc.ok ? 'success' : 'warn');
+  const doc = await runInProcess(() => recordTaskDocumentation({
+    taskId, goal, summary: `Task ${taskId}: ${goal}`, infrastructureRequestId, publish: (e) => ctx.publisher.publish(e),
+  }));
+  await step('documentation', doc.ok ? 'Documentation updated' : 'Documentation unreachable', doc.ok ? 'success' : 'warn');
   await sleep(PACE_MS);
 
   await step('orchestrator-agent', 'Delegating to Memory Agent');
@@ -596,8 +622,14 @@ export async function runBuildPipeline(args: PipelineArgs): Promise<void> {
 
   // 3) Documentation update.
   await step('orchestrator-agent', 'Delegating to Documentation Service');
-  const doc = await dispatchPeerTask<{ updated?: string[] }>(args, 'documentation-service', { taskId, goal: `Document ${proposal.proposedServiceName}`, input: { action: 'record_task', summary: `Generated ${proposal.proposedServiceName} for capability ${proposal.missingCapability}`, infrastructureRequestId }, priority: 'normal' });
-  await step('documentation-service', doc.ok ? 'Documentation updated' : 'Documentation unreachable', doc.ok ? 'success' : 'warn');
+  const doc = await runInProcess(() => recordTaskDocumentation({
+    taskId,
+    goal: `Document ${proposal.proposedServiceName}`,
+    summary: `Generated ${proposal.proposedServiceName} for capability ${proposal.missingCapability}`,
+    infrastructureRequestId,
+    publish: (e) => ctx.publisher.publish(e),
+  }));
+  await step('documentation', doc.ok ? 'Documentation updated' : 'Documentation unreachable', doc.ok ? 'success' : 'warn');
   await sleep(PACE_MS);
 
   // 4) Memory + skill extraction.
@@ -738,8 +770,13 @@ export async function runActivationPipeline(
   await sleep(PACE_MS);
 
   // 4) Docs + 5) memory + skill.
-  const doc = await dispatchPeerTask<{ updated?: string[] }>(args, 'documentation-service', { taskId, goal: `Document activation of ${capabilityId}`, input: { action: 'record_task', summary: `Activated capability ${capabilityId} (${serviceName}): validated + delivered + browser-tested` }, priority: 'normal' });
-  await step('documentation-service', doc.ok ? 'Documentation updated' : 'Documentation unreachable', doc.ok ? 'success' : 'warn');
+  const doc = await runInProcess(() => recordTaskDocumentation({
+    taskId,
+    goal: `Document activation of ${capabilityId}`,
+    summary: `Activated capability ${capabilityId} (${serviceName}): validated + delivered + browser-tested`,
+    publish: (e) => ctx.publisher.publish(e),
+  }));
+  await step('documentation', doc.ok ? 'Documentation updated' : 'Documentation unreachable', doc.ok ? 'success' : 'warn');
   const mem = await dispatchPeerTask<{ memoryId?: string }>(args, 'memory-agent', { taskId, goal: `Learn from activating ${capabilityId}`, input: { summary: `Activated ${capabilityId} via validate→deliver→browser-test`, capability: capabilityId, skill: 'activate_capability' }, priority: 'normal' });
   const memoryId = mem.data?.memoryId ?? null;
   await step('memory-agent', memoryId ? `Memory + skill stored (${memoryId})` : 'Memory unreachable', memoryId ? 'success' : 'warn');
