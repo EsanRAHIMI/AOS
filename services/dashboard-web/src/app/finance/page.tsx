@@ -3,6 +3,7 @@ import { DomainRoom, type DomainRoomItem } from '@/components/domains/DomainRoom
 import { DEEPER_LINKS } from '@/lib/domainRoomLinks';
 import { FinanceFlow } from '@/components/domains/FinanceFlow';
 import { EmptyState } from '@/components/ui';
+import { FamilyFinanceConnect, type FamilyFinancePanelState } from './FamilyFinanceConnect';
 
 /** Phase AF.5 — dedicated Money & Commitments room. Was `/me/opportunities`
  *  — the most clearly mismatched zone link identified in
@@ -10,9 +11,31 @@ import { EmptyState } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export default async function FinanceDomainPage() {
-  const data = await gateway.universeDetail();
+  const [data, status, snapshot] = await Promise.all([
+    gateway.universeDetail(),
+    gateway.familyFinanceStatus(),
+    gateway.familyFinanceSnapshot(),
+  ]);
+  const panel: FamilyFinancePanelState = {
+    vaultConfigured: status?.vaultConfigured ?? false,
+    vaultReason: status?.vaultReason || 'وضعیت اتصال در دسترس نیست.',
+    connected: status?.connected ?? false,
+    accountLabel: status?.accountLabel ?? '',
+    familyId: status?.familyId ?? '',
+    familyName: status?.familyName ?? '',
+    families: status?.families ?? [],
+    lastError: status?.lastError ?? '',
+    summary: snapshot?.summary ?? '',
+  };
   const zone = data?.zones.find((z) => z.zoneId === 'finance');
-  if (!data || !zone) return <EmptyState icon="·" title="Command Universe data unavailable" hint="Sign in and try again." />;
+  if (!data || !zone) {
+    return (
+      <>
+        <FamilyFinanceConnect state={panel} />
+        <EmptyState icon="·" title="Command Universe data unavailable" hint="Sign in and try again." />
+      </>
+    );
+  }
 
   const items: DomainRoomItem[] = data.finance.items.map((f) => ({
     label: String(f.title ?? ''),
@@ -22,6 +45,8 @@ export default async function FinanceDomainPage() {
   }));
 
   return (
+    <>
+    <FamilyFinanceConnect state={panel} />
     <DomainRoom
       zone={zone}
       visual={<FinanceFlow zone={zone} />}
@@ -30,5 +55,6 @@ export default async function FinanceDomainPage() {
       deeperLinks={DEEPER_LINKS.finance}
       itemsEmptyHint="Ingest kind=finance_item (itemType income|expense|bill|installment|obligation|investment, amount, cadence, dueDate). Amounts are never invented."
     />
+    </>
   );
 }

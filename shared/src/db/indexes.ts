@@ -255,6 +255,12 @@ export const INDEX_PLAN: IndexPlanEntry[] = [
     reason: 'CONSTRAINT: one Google grant per owner. Two rows would mean two refresh tokens racing to refresh each other into invalidity.',
   },
   {
+    collection: COLLECTIONS.FAMILY_FINANCE_GRANTS,
+    keys: { actorId: 1, provider: 1 },
+    options: { unique: true, name: 'family_finance_actor_provider_unique' },
+    reason: 'CONSTRAINT: one Family Finance session per owner. A second row would refresh the same account twice and invalidate the first token.',
+  },
+  {
     collection: COLLECTIONS.CALENDAR_SYNC_STATE,
     keys: { actorId: 1, resourceId: 1 },
     options: { unique: true, name: 'actor_resource_unique' },

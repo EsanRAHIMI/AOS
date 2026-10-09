@@ -33,6 +33,7 @@ import { verifyChain } from '../cin/ledger.js';
 import { listDocuments } from '../cin/documents.js';
 import { buildOwnerIdentityContext } from '../cin/context.js';
 import { registerCalendarTools } from './calendar-tools.js';
+import { registerFamilyFinanceTools } from '../finance/tools.js';
 import { getPreferences, setPreferences, isValidTimezone, PreferencesPatchSchema } from '../settings/index.js';
 
 type Publish = (e: { type: string; taskId: string | null; payload: Record<string, unknown> }) => Promise<boolean> | boolean;
@@ -705,6 +706,7 @@ export function buildCoreToolFamilies(deps: CoreFamilyDeps = {}): AgentToolRegis
   /* ------------------------------ calendar ------------------------------- */
   // D-195: the owner's actual week. Reads are mirror-local and free to call.
   registerCalendarTools(registry);
+  registerFamilyFinanceTools(registry);
 
   return registry;
 }

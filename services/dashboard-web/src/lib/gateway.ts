@@ -399,6 +399,20 @@ export const gateway = {
       method: 'PUT', body: JSON.stringify({ data, ...(visibility ? { visibility } : {}) }),
     }),
   // --- D-192b: Google Calendar + Tasks ---
+  familyFinanceStatus: () => call<{
+    vaultConfigured: boolean; vaultReason: string; connected: boolean;
+    accountLabel: string; familyId: string; familyName: string;
+    families: Array<{ id: string; name: string }>; lastError: string;
+  }>('/v1/finance/family/status'),
+  familyFinanceConnect: (identifier: string, password: string) => callStrict<{
+    connected: true; accountLabel: string; familyId: string; familyName: string;
+    families: Array<{ id: string; name: string }>;
+  }>('/v1/finance/family/connect', { method: 'POST', body: JSON.stringify({ identifier, password }) }),
+  familyFinanceSelect: (familyId: string) => callStrict<{ id: string; name: string }>(
+    '/v1/finance/family/select', { method: 'POST', body: JSON.stringify({ familyId }) }),
+  familyFinanceDisconnect: () => callStrict<{ removed: boolean }>('/v1/finance/family/disconnect', { method: 'POST', body: '{}' }),
+  familyFinanceSnapshot: (month?: string) => call<{ month: string; familyId: string; familyName: string; summary: string }>(
+    `/v1/finance/family/snapshot${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   calendarStatus: () => call<{
     setup: { oauthConfigured: boolean; oauthMissing: string[]; vaultConfigured: boolean; vaultReason: string };
     connected: boolean; accountEmail: string; scopes: string[]; revokedAt: string | null; lastError: string;
