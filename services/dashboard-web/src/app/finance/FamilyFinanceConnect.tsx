@@ -13,7 +13,6 @@ export interface FamilyFinancePanelState {
   familyName: string;
   families: Array<{ id: string; name: string }>;
   lastError: string;
-  summary: string;
 }
 
 export function FamilyFinanceConnect({ state }: { state: FamilyFinancePanelState }) {
@@ -57,14 +56,13 @@ export function FamilyFinanceConnect({ state }: { state: FamilyFinancePanelState
             وصل به {state.accountLabel || 'حساب'}
             {state.familyName ? ` · ${state.familyName}` : ' · خانوار انتخاب نشده'}
           </p>
-          {!state.familyId && state.families.length > 0 ? (
+          {state.families.length > 1 ? (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
               {state.families.map((f) => (
-                <button key={f.id} type="button" className="btn btn-ghost" disabled={busy} onClick={() => select(f.id)}>{f.name}</button>
+                <button key={f.id} type="button" className={f.id === state.familyId ? 'btn btn-ok' : 'btn btn-ghost'} disabled={busy || f.id === state.familyId} onClick={() => select(f.id)}>{f.name}</button>
               ))}
             </div>
           ) : null}
-          {state.summary ? <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, lineHeight: 1.6 }}>{state.summary}</pre> : null}
           {state.lastError ? <p style={{ color: '#ffb4b4' }}>{state.lastError}</p> : null}
           <button type="button" className="btn btn-ghost" disabled={busy} onClick={disconnect}>قطع اتصال</button>
         </div>

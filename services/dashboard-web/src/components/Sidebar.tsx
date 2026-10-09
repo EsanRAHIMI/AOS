@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutAction } from '@/app/login/actions';
@@ -29,38 +30,54 @@ function isActive(pathname: string, href: string): boolean {
 
 export function Sidebar({ user }: { user?: { email: string; role: string } }) {
   const pathname = usePathname() ?? '/';
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => { setOpen(false); }, [pathname]);
+
   return (
-    <aside className="sidebar" data-no-auto-dir="">
-      <div className="brand">
-        <span className="logo" />
-        <span>
-          FACTORY
-          <small>autonomous-os-kernel</small>
-        </span>
-      </div>
-      <nav className="nav">
-        {GROUPS.map((g) => (
-          <div className="nav-group" key={g.title}>
-            <div className="nav-title">{g.title}</div>
-            {g.items.map(([href, label]) => (
-              <Link key={href} href={href} className={isActive(pathname, href) ? 'active' : ''}>
-                {label}
-              </Link>
+    <>
+      {open && <button type="button" className="sidebar-scrim" aria-label="بستن منو" onClick={() => setOpen(false)} />}
+      <aside className={`sidebar${open ? ' is-open' : ''}`} data-no-auto-dir="">
+        <button
+          type="button"
+          className="sidebar-tab"
+          aria-expanded={open}
+          aria-label={open ? 'بستن منو' : 'باز کردن منو'}
+          onClick={() => setOpen((v) => !v)}
+        />
+        <div className="sidebar-body">
+          <div className="brand">
+            <span className="logo" />
+            <span>
+              FACTORY
+              <small>autonomous-os-kernel</small>
+            </span>
+          </div>
+          <nav className="nav">
+            {GROUPS.map((g) => (
+              <div className="nav-group" key={g.title}>
+                <div className="nav-title">{g.title}</div>
+                {g.items.map(([href, label]) => (
+                  <Link key={href} href={href} className={isActive(pathname, href) ? 'active' : ''}>
+                    {label}
+                  </Link>
+                ))}
+              </div>
             ))}
-          </div>
-        ))}
-      </nav>
-      {user && (
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 12.5, color: 'var(--text)', wordBreak: 'break-all' }}>{user.email}</div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
-            <span className={`badge ${user.role === 'owner' ? 'ok' : user.role === 'viewer' ? '' : 'warn'}`}>{user.role}</span>
-            <form action={logoutAction}>
-              <button type="submit" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12.5 }}>Sign out</button>
-            </form>
-          </div>
+          </nav>
+          {user && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12.5, color: 'var(--text)', wordBreak: 'break-all' }}>{user.email}</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
+                <span className={`badge ${user.role === 'owner' ? 'ok' : user.role === 'viewer' ? '' : 'warn'}`}>{user.role}</span>
+                <form action={logoutAction}>
+                  <button type="submit" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12.5 }}>Sign out</button>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
-      )}
-    </aside>
+      </aside>
+    </>
   );
 }

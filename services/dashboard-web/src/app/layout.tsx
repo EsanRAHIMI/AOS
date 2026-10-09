@@ -62,6 +62,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <main className="main main--apex">
             {children}
           </main>
+          <MobileTabBar />
           <JarvisRudder role={session.role} />
           <p className="apex-factory-link" dir="rtl">
             <Link href="https://factory.simorx.com/">اتاق کنترل Factory</Link>

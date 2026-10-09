@@ -11,7 +11,7 @@
  *
  * THE THREE PLACES A CARD CAN BE
  * ------------------------------
- *   1. FOCUS   — it just happened. Full size, centre of the stage, readable.
+ *   1. FOCUS   — it just happened. Full size, top of the work dock, readable.
  *   2. FLIGHT  — its dwell expired. It animates from where it sits to its
  *                destination, shrinking as it goes.
  *   3. SETTLED — it lives under its parent (nested) or in its category pile.
@@ -82,7 +82,10 @@ const STATUS_LABEL_FA: Record<Happening['status'], string> = {
 
 function timeFa(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+    const d = new Date(iso);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    if (sameDay) return d.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString('fa-IR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch {
     return '';
   }
@@ -187,12 +190,18 @@ export default function HappeningLayer() {
   const [reducedMotion, setReducedMotion] = useState(false);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const [openCategory, setOpenCategory] = useState<HappeningCategory | null>(null);
+  const [listOpen, setListOpen] = useState(false);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
   const [flights, setFlights] = useState<Record<string, FlightStyle>>({});
 
+  const settledRef = useRef<HTMLElement>(null);
   const focusRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const targetRefs = useRef<Map<string, HTMLElement>>(new Map());
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    if (listOpen && settledRef.current) settledRef.current.scrollTop = 0;
+  }, [listOpen]);
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -302,10 +311,27 @@ export default function HappeningLayer() {
   // A card in flight is still drawn in focus (it is the thing moving), so the
   // settled column must not draw a second copy of it at the same time.
   const inFlightOrFocus = new Set([...focusCards.map((h) => h.happeningId), ...flyingIds]);
+  const waiting = items.some((h) => h.status === 'waiting');
+  const badge = items.length > 99 ? '99+' : String(items.length);
 
   return (
     <div className="hp-layer" dir="rtl">
-      {/* ------------------------- category rail ------------------------- */}
+      <div className={`hp-dock ${listOpen ? 'is-open' : ''}`}>
+      <button
+        type="button"
+        className={`hp-bell ${listOpen ? 'is-open' : ''} ${waiting ? 'hp-bell--alert' : ''}`}
+        aria-expanded={listOpen}
+        aria-label={listOpen ? 'بستن اعلان‌ها' : 'اعلان‌ها'}
+        onClick={() => setListOpen((v) => !v)}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+          <path d="M6.2 9.2a5.8 5.8 0 1 1 11.6 0c0 6.2 1.7 6.6 1.7 8.2H4.5c0-1.6 1.7-2 1.7-8.2z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+          <path d="M10 19.6a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+        {items.length > 0 ? <span className="hp-bell-count" dir="ltr">{badge}</span> : null}
+      </button>
+      {listOpen ? (
+      <div className="hp-dock-panel">
       <aside className="hp-rail" aria-label="دسته‌بندی اتفاق‌ها">
         <div className="hp-rail-head">
           <span className={`hp-live-dot ${live ? 'is-live' : ''}`} aria-hidden />
@@ -349,7 +375,8 @@ export default function HappeningLayer() {
       </div>
 
       {/* -------------------------- settled column ------------------------ */}
-      <section className="hp-settled" aria-label="تاریخچهٔ اتفاق‌ها">
+      <section ref={settledRef} className="hp-settled" dir="ltr" aria-label="تاریخچهٔ اتفاق‌ها">
+        <div className="hp-settled-in" dir="rtl">
         {/* Standing conditions sit ABOVE the scrolling history: a gap that
             scrolled away with old cards would be a gap nobody ever fixes. */}
         <ReadinessPanel />
@@ -405,7 +432,11 @@ export default function HappeningLayer() {
             );
           })
         )}
+        </div>
       </section>
+      </div>
+      ) : null}
+      </div>
     </div>
   );
 }

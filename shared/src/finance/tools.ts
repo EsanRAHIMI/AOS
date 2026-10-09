@@ -28,13 +28,13 @@ export function registerFamilyFinanceTools(registry: AgentToolRegistry): void {
   });
 
   registry.register({
-    definition: def('family_finance_read', 'Read the connected Family Finance household for one month: dashboard, transactions, bills, goals, budgets. Never writes.'),
+    definition: def('family_finance_read', 'Read the connected Family Finance household for one month: cash, categories, bills, installments, budgets, goals, settlement, and every transaction. Never writes.'),
     inputSchema: z.object({ month: z.string().optional().describe('YYYY-MM; defaults to the current UTC month') }),
     executor: async (args, ctx): Promise<ToolResult> => {
       if (!ctx.isOwner) return { ok: false, summary: 'Family Finance فقط برای مالک سیستم در دسترس است.' };
       try {
         const read = await readFamilyFinance({ month: args.month as string | undefined });
-        return { ok: true, summary: read.summary, data: { month: read.month, familyId: read.familyId } };
+        return { ok: true, summary: read.summary, data: read };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message === 'not_connected') return { ok: false, summary: 'Family Finance وصل نیست. از صفحهٔ /finance وصل کنید.' };

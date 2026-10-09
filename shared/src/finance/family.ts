@@ -19,6 +19,8 @@ const GrantSchema = z.object({
   accountLabel: z.string().default(''),
   familyId: z.string().default(''),
   familyName: z.string().default(''),
+  timezone: z.string().default(''),
+  baseCurrency: z.string().default(''),
   refreshTokenEnc: z.string(),
   accessTokenEnc: z.string().default(''),
   createdAt: z.string(),
@@ -31,6 +33,8 @@ type Grant = z.infer<typeof GrantSchema>;
 export interface FamilyFinanceHousehold {
   id: string;
   name: string;
+  timezone: string;
+  baseCurrency: string;
 }
 
 export interface FamilyFinanceConnectResult {
@@ -134,7 +138,7 @@ function householdsFrom(body: unknown): FamilyFinanceHousehold[] {
     const r = asRecord(row);
     const id = String(r.id ?? r.familyId ?? '');
     if (!id) return [];
-    return [{ id, name: String(r.name ?? r.title ?? id) }];
+    return [{ id, name: String(r.name ?? r.title ?? id), timezone: String(r.timezone ?? ''), baseCurrency: String(r.baseCurrency ?? '') }];
   });
 }
 
@@ -152,6 +156,8 @@ async function saveGrant(actorId: string, patch: Partial<Grant> & { refreshToken
     accountLabel: patch.accountLabel ?? existing?.accountLabel ?? '',
     familyId: patch.familyId ?? existing?.familyId ?? '',
     familyName: patch.familyName ?? existing?.familyName ?? '',
+    timezone: patch.timezone ?? existing?.timezone ?? '',
+    baseCurrency: patch.baseCurrency ?? existing?.baseCurrency ?? '',
     refreshTokenEnc: encrypt(patch.refreshToken, env),
     accessTokenEnc: encrypt(patch.accessToken, env),
     createdAt: existing?.createdAt ?? now,
@@ -194,6 +200,8 @@ export async function connectFamilyFinance(input: {
     accountLabel: label,
     familyId: only?.id ?? '',
     familyName: only?.name ?? '',
+    timezone: only?.timezone ?? '',
+    baseCurrency: only?.baseCurrency ?? '',
   }, env);
   return { connected: true, accountLabel: label, familyId: only?.id ?? '', familyName: only?.name ?? '', families };
 }
@@ -206,31 +214,53 @@ export async function selectFamilyFinanceHousehold(familyId: string, actorId = F
   if (!grant?.refreshTokenEnc) throw new Error('not_connected');
   await col(actorId).updateOne(
     { provider: 'family_finance' },
-    { $set: { familyId: found.id, familyName: found.name, updatedAt: nowIso(), lastError: '' } },
+    { $set: { familyId: found.id, familyName: found.name, timezone: found.timezone, baseCurrency: found.baseCurrency, updatedAt: nowIso(), lastError: '' } },
   );
   return found;
 }
 
-async function authorized<T>(actorId: string, env: NodeJS.ProcessEnv, fn: (accessToken: string) => Promise<T>): Promise<T> {
-  const grant = await loadGrant(actorId);
-  if (!grant || grant.revokedAt || !grant.refreshTokenEnc) throw new Error('not_connected');
-  const access = grant.accessTokenEnc ? decrypt(grant.accessTokenEnc, env) : '';
-  const refreshToken = decrypt(grant.refreshTokenEnc, env);
-  const run = async (token: string) => fn(token);
-  try {
-    if (!access) throw new FamilyFinanceError('TOKEN_EXPIRED', 'no access token');
-    return await run(access);
-  } catch (err) {
-    if (!(err instanceof FamilyFinanceError) || err.code !== 'TOKEN_EXPIRED') throw err;
-    const next = tokensOf(await request('/v1/auth/refresh', { method: 'POST', json: { refreshToken }, env }));
+const refreshInFlight = new Map<string, Promise<string>>();
+
+function sessionExpired(err: unknown): boolean {
+  return err instanceof FamilyFinanceError && (err.code === 'UNAUTHENTICATED' || err.code === 'TOKEN_EXPIRED');
+}
+
+async function refreshAccess(actorId: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const existing = refreshInFlight.get(actorId);
+  if (existing) return existing;
+  const job = (async () => {
+    const grant = await loadGrant(actorId);
+    if (!grant?.refreshTokenEnc) throw new Error('not_connected');
+    const next = tokensOf(await request('/v1/auth/refresh', {
+      method: 'POST',
+      json: { refreshToken: decrypt(grant.refreshTokenEnc, env) },
+      env,
+    }));
     await saveGrant(actorId, {
       refreshToken: next.refreshToken,
       accessToken: next.accessToken,
       accountLabel: grant.accountLabel,
       familyId: grant.familyId,
       familyName: grant.familyName,
+      timezone: grant.timezone,
+      baseCurrency: grant.baseCurrency,
     }, env);
-    return run(next.accessToken);
+    return next.accessToken;
+  })().finally(() => refreshInFlight.delete(actorId));
+  refreshInFlight.set(actorId, job);
+  return job;
+}
+
+async function authorized<T>(actorId: string, env: NodeJS.ProcessEnv, fn: (accessToken: string) => Promise<T>): Promise<T> {
+  const grant = await loadGrant(actorId);
+  if (!grant || grant.revokedAt || !grant.refreshTokenEnc) throw new Error('not_connected');
+  const access = grant.accessTokenEnc ? decrypt(grant.accessTokenEnc, env) : '';
+  try {
+    if (!access) throw new FamilyFinanceError('UNAUTHENTICATED', 'no access token');
+    return await fn(access);
+  } catch (err) {
+    if (!sessionExpired(err)) throw err;
+    return fn(await refreshAccess(actorId, env));
   }
 }
 
@@ -276,53 +306,413 @@ export async function disconnectFamilyFinance(actorId = FAMILY_FINANCE_ACTOR_ID,
   return { removed: (res.deletedCount ?? 0) > 0 };
 }
 
-function monthNow(): string {
+const MINOR_EXPONENT: Record<string, number> = {
+  AED: 2, USD: 2, EUR: 2, GBP: 2, SAR: 2, QAR: 2, OMR: 3, BHD: 3, KWD: 3,
+  IRR: 0, INR: 2, PKR: 2, TRY: 2, CHF: 2, JPY: 0, CNY: 2, CAD: 2, AUD: 2,
+};
+
+function num(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+export function formatFamilyMoney(minor: number, currency: string): string {
+  if (!currency) return '';
+  const exp = MINOR_EXPONENT[currency] ?? 2;
+  const sign = minor < 0 ? '-' : '';
+  const abs = Math.abs(Math.trunc(minor));
+  if (exp === 0) return `${sign}${abs} ${currency}`;
+  const scale = 10 ** exp;
+  return `${sign}${Math.floor(abs / scale)}.${String(abs % scale).padStart(exp, '0')} ${currency}`;
+}
+
+function money(minor: unknown, currency: unknown): string {
+  return formatFamilyMoney(num(minor), String(currency || ''));
+}
+
+function monthInTimeZone(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'Asia/Dubai', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    if (year && month) return `${year}-${month}`;
+  } catch { /* invalid zone falls through */ }
   return new Date().toISOString().slice(0, 7);
 }
 
-function section(label: string, body: unknown, limit: number): string {
-  const rows = Array.isArray(body) ? body : asRecord(body).items ?? asRecord(body).transactions ?? asRecord(body).bills ?? asRecord(body).goals ?? asRecord(body).budgets ?? asRecord(body).data;
-  if (!Array.isArray(rows)) {
-    const text = JSON.stringify(body ?? null);
-    return `${label}: ${text.length > 1600 ? `${text.slice(0, 1600)}…` : text}`;
-  }
-  const lines = rows.slice(0, limit).map((row) => {
-    const r = asRecord(row);
-    const title = r.title ?? r.name ?? r.merchant ?? r.description ?? r.category ?? r.categoryName ?? '';
-    const amount = r.amount ?? r.total ?? r.balance ?? r.spent ?? '';
-    const currency = r.currency ?? '';
-    const when = r.date ?? r.occurredAt ?? r.dueDate ?? r.month ?? '';
-    return `- ${[title, amount, currency, when].filter((v) => v !== '' && v != null).join(' · ')}`;
-  });
-  const more = rows.length > limit ? `\n… ${rows.length - limit} more` : '';
-  return `${label} (${rows.length}):\n${lines.join('\n') || '- none'}${more}`;
+export interface FamilyFinanceCash {
+  currency: string;
+  incomeMinor: number;
+  expenseMinor: number;
+  sharedExpenseMinor: number;
+  personalExpenseMinor: number;
+  transferMinor: number;
+  netCashFlowMinor: number;
 }
 
-export async function readFamilyFinance(input: { month?: string; actorId?: string; env?: NodeJS.ProcessEnv } = {}): Promise<{ month: string; familyId: string; familyName: string; summary: string }> {
+export interface FamilyFinanceCategorySpend {
+  slug: string;
+  name: string;
+  spentMinor: number;
+  currency: string;
+}
+
+export interface FamilyFinanceBillRow {
+  id: string;
+  title: string;
+  category: string;
+  allocation: string;
+  amountMinor: number;
+  currency: string;
+  dueOn: string;
+  status: string;
+  overdue: boolean;
+}
+
+export interface FamilyFinancePlanRow {
+  id: string;
+  title: string;
+  status: string;
+  currency: string;
+  totalMinor: number;
+  paidMinor: number;
+  remainingMinor: number;
+  installmentCount: number;
+  openCount: number;
+  overdueCount: number;
+  nextDueOn: string;
+  nextAmountMinor: number;
+}
+
+export interface FamilyFinanceBudgetRow {
+  id: string;
+  label: string;
+  currency: string;
+  amountMinor: number;
+  spentMinor: number;
+  remainingMinor: number;
+  percentUsed: number;
+  exceeded: boolean;
+}
+
+export interface FamilyFinanceGoalRow {
+  id: string;
+  name: string;
+  currency: string;
+  currentMinor: number;
+  targetMinor: number;
+  remainingMinor: number;
+  percentComplete: number;
+  status: string;
+  targetOn: string;
+}
+
+export interface FamilyFinanceSettlementRow {
+  name: string;
+  paidMinor: number;
+  shareMinor: number;
+  balanceMinor: number;
+  currency: string;
+  removed: boolean;
+}
+
+export interface FamilyFinanceTransferRow {
+  from: string;
+  to: string;
+  amountMinor: number;
+  currency: string;
+}
+
+export interface FamilyFinanceTxRow {
+  id: string;
+  type: string;
+  title: string;
+  category: string;
+  allocation: string;
+  payer: string;
+  amountMinor: number;
+  currency: string;
+  occurredOn: string;
+  status: string;
+  reversal: boolean;
+}
+
+export interface FamilyFinanceSnapshot {
+  month: string;
+  familyId: string;
+  familyName: string;
+  accountLabel: string;
+  currency: string;
+  cash: FamilyFinanceCash;
+  categories: FamilyFinanceCategorySpend[];
+  bills: FamilyFinanceBillRow[];
+  plans: FamilyFinancePlanRow[];
+  budgets: FamilyFinanceBudgetRow[];
+  goals: FamilyFinanceGoalRow[];
+  settlement: FamilyFinanceSettlementRow[];
+  transfers: FamilyFinanceTransferRow[];
+  transactions: FamilyFinanceTxRow[];
+  warnings: string[];
+  summary: string;
+}
+
+function rowsOf(body: unknown, key?: string): Record<string, unknown>[] {
+  if (Array.isArray(body)) return body.map(asRecord);
+  if (!key) return [];
+  const list = asRecord(body)[key];
+  return Array.isArray(list) ? list.map(asRecord) : [];
+}
+
+function namedMap(body: unknown, idKey: string, labelKey: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rowsOf(body)) {
+    const id = String(row[idKey] ?? '');
+    if (id) map.set(id, String(row[labelKey] ?? id));
+  }
+  return map;
+}
+
+function cashOf(body: unknown, fallbackCurrency: string): FamilyFinanceCash {
+  const r = asRecord(body);
+  const currency = String(r.currency || fallbackCurrency || '');
+  const expenseMinor = num(r.expenseMinor);
+  const sharedExpenseMinor = num(r.sharedExpenseMinor);
+  return {
+    currency,
+    incomeMinor: num(r.incomeMinor),
+    expenseMinor,
+    sharedExpenseMinor,
+    personalExpenseMinor: r.personalExpenseMinor == null ? Math.max(expenseMinor - sharedExpenseMinor, 0) : num(r.personalExpenseMinor),
+    transferMinor: num(r.transferMinor),
+    netCashFlowMinor: num(r.netCashFlowMinor),
+  };
+}
+
+function categoriesOf(dashboard: unknown, names: Map<string, string>, currency: string): FamilyFinanceCategorySpend[] {
+  return Object.entries(asRecord(asRecord(dashboard).byCategory))
+    .map(([slug, spent]) => ({ slug, name: names.get(slug) || slug, spentMinor: num(spent), currency }))
+    .filter((row) => row.spentMinor !== 0)
+    .sort((a, b) => b.spentMinor - a.spentMinor);
+}
+
+function billsOf(body: unknown, names: Map<string, string>): FamilyFinanceBillRow[] {
+  return rowsOf(body, 'bills').flatMap((row) => {
+    const id = String(row.id ?? '');
+    if (!id) return [];
+    const occurrence = asRecord(row.occurrence);
+    const slug = String(row.categorySlug ?? '');
+    return [{
+      id,
+      title: String(row.title ?? ''),
+      category: names.get(slug) || slug,
+      allocation: String(row.allocation ?? ''),
+      amountMinor: occurrence.amountMinor == null ? num(row.expectedAmountMinor) : num(occurrence.amountMinor),
+      currency: String(occurrence.currency || row.currency || ''),
+      dueOn: String(occurrence.dueOn ?? ''),
+      status: String(occurrence.status ?? 'open'),
+      overdue: occurrence.overdue === true,
+    }];
+  });
+}
+
+function plansOf(body: unknown): FamilyFinancePlanRow[] {
+  return rowsOf(body, 'plans').flatMap((row) => {
+    const id = String(row.id ?? '');
+    if (!id) return [];
+    const schedule = rowsOf(row.schedule);
+    const open = schedule.filter((item) => String(item.status ?? '') === 'open');
+    const next = [...open].sort((a, b) => String(a.dueOn ?? '').localeCompare(String(b.dueOn ?? '')))[0];
+    const merchant = String(row.merchantName ?? '').trim();
+    const provider = String(row.provider ?? '').trim();
+    return [{
+      id,
+      title: [provider, merchant].filter(Boolean).join(' · ') || merchant || provider || 'installment',
+      status: String(row.status ?? ''),
+      currency: String(row.currency ?? ''),
+      totalMinor: num(row.totalMinor),
+      paidMinor: num(row.paidMinor),
+      remainingMinor: num(row.remainingMinor),
+      installmentCount: num(row.installmentCount) || schedule.length,
+      openCount: open.length,
+      overdueCount: schedule.filter((item) => item.overdue === true).length,
+      nextDueOn: next ? String(next.dueOn ?? '') : '',
+      nextAmountMinor: next ? num(next.amountMinor) : 0,
+    }];
+  });
+}
+
+function budgetsOf(body: unknown, names: Map<string, string>): FamilyFinanceBudgetRow[] {
+  return rowsOf(body, 'budgets').flatMap((row) => {
+    const id = String(row.id ?? row.scopeKey ?? row.categorySlug ?? 'household');
+    if (!id) return [];
+    const slug = row.categorySlug == null ? '' : String(row.categorySlug);
+    return [{
+      id,
+      label: slug ? (names.get(slug) || slug) : 'household',
+      currency: String(row.currency ?? ''),
+      amountMinor: num(row.amountMinor),
+      spentMinor: num(row.spentMinor),
+      remainingMinor: num(row.remainingMinor),
+      percentUsed: num(row.percentUsed),
+      exceeded: row.exceeded === true,
+    }];
+  });
+}
+
+function goalsOf(body: unknown): FamilyFinanceGoalRow[] {
+  return rowsOf(body, 'goals').flatMap((row) => {
+    const id = String(row.id ?? row.name ?? '');
+    if (!id) return [];
+    return [{
+      id,
+      name: String(row.name ?? ''),
+      currency: String(row.currency ?? ''),
+      currentMinor: num(row.currentMinor),
+      targetMinor: num(row.targetMinor),
+      remainingMinor: num(row.remainingMinor),
+      percentComplete: num(row.percentComplete),
+      status: String(row.status ?? ''),
+      targetOn: String(row.targetOn ?? ''),
+    }];
+  });
+}
+
+function settlementOf(body: unknown, currency: string): { positions: FamilyFinanceSettlementRow[]; transfers: FamilyFinanceTransferRow[] } {
+  const root = asRecord(body);
+  const code = String(root.currency || currency);
+  const mapRow = (row: Record<string, unknown>, removed: boolean): FamilyFinanceSettlementRow | null => {
+    const name = String(row.displayName ?? row.membershipId ?? '');
+    if (!name) return null;
+    return {
+      name,
+      paidMinor: num(row.paidMinor),
+      shareMinor: num(row.shareMinor),
+      balanceMinor: num(row.balanceMinor),
+      currency: String(row.currency || code),
+      removed,
+    };
+  };
+  return {
+    positions: [
+      ...rowsOf(root.positions).flatMap((row) => { const mapped = mapRow(row, false); return mapped ? [mapped] : []; }),
+      ...rowsOf(root.removedPositions).flatMap((row) => { const mapped = mapRow(row, true); return mapped ? [mapped] : []; }),
+    ],
+    transfers: rowsOf(root.transfers).flatMap((row) => {
+      const from = String(row.fromDisplayName ?? row.fromMembershipId ?? '');
+      const to = String(row.toDisplayName ?? row.toMembershipId ?? '');
+      if (!from && !to) return [];
+      return [{ from, to, amountMinor: num(row.amountMinor), currency: String(row.currency || code) }];
+    }),
+  };
+}
+
+function transactionsOf(body: unknown, categories: Map<string, string>, members: Map<string, string>): FamilyFinanceTxRow[] {
+  return rowsOf(body).flatMap((row) => {
+    const id = String(row.id ?? '');
+    if (!id) return [];
+    const slug = String(row.categorySlug ?? '');
+    const payerId = String(row.payerMembershipId ?? '');
+    const merchant = String(row.merchantName ?? '').trim();
+    const notes = String(row.notes ?? '').trim();
+    return [{
+      id,
+      type: String(row.type ?? ''),
+      title: merchant || notes || categories.get(slug) || slug || String(row.type ?? ''),
+      category: categories.get(slug) || slug,
+      allocation: String(row.allocation ?? ''),
+      payer: members.get(payerId) || '',
+      amountMinor: num(row.amountMinor),
+      currency: String(row.currency ?? ''),
+      occurredOn: String(row.occurredOn ?? ''),
+      status: String(row.status ?? ''),
+      reversal: row.isReversal === true,
+    }];
+  });
+}
+
+function snapshotSummary(snapshot: Omit<FamilyFinanceSnapshot, 'summary'>): string {
+  const c = snapshot.cash;
+  const line = (parts: Array<string | number>) => parts.filter((part) => part !== '').join(' ');
+  const block = (title: string, rows: string[]) => `${title} (${rows.length}):\n${rows.join('\n') || '- none'}`;
+  return [
+    `Household: ${snapshot.familyName || snapshot.familyId} (${snapshot.familyId})`,
+    `Month: ${snapshot.month}`,
+    `Account: ${snapshot.accountLabel}`,
+    [
+      'Dashboard:',
+      `Income: ${money(c.incomeMinor, c.currency)}`,
+      `Expense: ${money(c.expenseMinor, c.currency)}`,
+      `Shared expense: ${money(c.sharedExpenseMinor, c.currency)}`,
+      `Personal expense: ${money(c.personalExpenseMinor, c.currency)}`,
+      `Transfer: ${money(c.transferMinor, c.currency)}`,
+      `Net: ${money(c.netCashFlowMinor, c.currency)}`,
+    ].join('\n'),
+    block('Categories', snapshot.categories.map((row) => line(['-', row.name, money(row.spentMinor, row.currency)]))),
+    block('Bills', snapshot.bills.map((row) => line(['-', row.title, money(row.amountMinor, row.currency), 'due', row.dueOn, row.overdue ? 'overdue' : row.status]))),
+    block('Installments', snapshot.plans.map((row) => line(['-', row.title, money(row.remainingMinor, row.currency), 'left of', money(row.totalMinor, row.currency), row.status, row.nextDueOn ? `next ${row.nextDueOn}` : '']))),
+    block('Budgets', snapshot.budgets.map((row) => line(['-', row.label, 'spent', money(row.spentMinor, row.currency), 'of', money(row.amountMinor, row.currency), `${row.percentUsed}%`]))),
+    block('Goals', snapshot.goals.map((row) => line(['-', row.name, money(row.currentMinor, row.currency), '/', money(row.targetMinor, row.currency), `${row.percentComplete}%`, row.status]))),
+    block('Settlement', snapshot.settlement.map((row) => line(['-', row.removed ? `${row.name} (removed)` : row.name, 'paid', money(row.paidMinor, row.currency), 'share', money(row.shareMinor, row.currency), 'balance', money(row.balanceMinor, row.currency)]))),
+    block('Transfers', snapshot.transfers.map((row) => line(['-', row.from, '->', row.to, money(row.amountMinor, row.currency)]))),
+    block('Transactions', snapshot.transactions.map((row) => line(['-', row.type, row.title, money(row.amountMinor, row.currency), row.occurredOn, row.allocation, row.payer, row.reversal ? 'reversal' : row.status]))),
+    snapshot.warnings.length ? `Warnings:\n${snapshot.warnings.map((warning) => `- ${warning}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+export async function readFamilyFinance(input: { month?: string; actorId?: string; env?: NodeJS.ProcessEnv } = {}): Promise<FamilyFinanceSnapshot> {
   const env = input.env ?? process.env;
   const actorId = input.actorId ?? FAMILY_FINANCE_ACTOR_ID;
-  const month = input.month ?? monthNow();
-  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('month must be YYYY-MM');
   const grant = await loadGrant(actorId);
   if (!grant?.familyId) throw new Error(grant ? 'family_not_selected' : 'not_connected');
+  const month = input.month ?? monthInTimeZone(grant.timezone || 'Asia/Dubai');
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('month must be YYYY-MM');
   const familyId = grant.familyId;
   const q = `month=${encodeURIComponent(month)}`;
-  const [dashboard, transactions, bills, goals, budgets] = await authorized(actorId, env, async (accessToken) => Promise.all([
-    request(`/v1/families/${familyId}/dashboard?${q}`, { accessToken, env }),
-    request(`/v1/families/${familyId}/transactions?${q}`, { accessToken, env }),
-    request(`/v1/families/${familyId}/bills?${q}`, { accessToken, env }),
-    request(`/v1/families/${familyId}/goals`, { accessToken, env }),
-    request(`/v1/families/${familyId}/budgets?${q}`, { accessToken, env }),
-  ]));
-  const summary = [
-    `Household: ${grant.familyName || familyId} (${familyId})`,
-    `Month: ${month}`,
-    `Account: ${grant.accountLabel}`,
-    section('Dashboard', dashboard, 12),
-    section('Transactions', transactions, 40),
-    section('Bills', bills, 20),
-    section('Goals', goals, 10),
-    section('Budgets', budgets, 15),
-  ].join('\n\n');
-  return { month, familyId, familyName: grant.familyName, summary };
+  const base = `/v1/families/${familyId}`;
+  const pulled = await authorized(actorId, env, async (accessToken) => {
+    const warnings: string[] = [];
+    const grab = async (label: string, path: string): Promise<unknown> => {
+      try {
+        return await request(path, { accessToken, env });
+      } catch (err) {
+        if (sessionExpired(err)) throw err;
+        warnings.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      }
+    };
+    const [dashboard, transactions, bills, plans, goals, budgets, settlement, categories, members] = await Promise.all([
+      grab('dashboard', `${base}/dashboard?${q}`),
+      grab('transactions', `${base}/transactions?${q}`),
+      grab('bills', `${base}/bills?${q}`),
+      grab('installments', `${base}/installment-plans`),
+      grab('goals', `${base}/goals`),
+      grab('budgets', `${base}/budgets?${q}`),
+      grab('settlement', `${base}/settlement?${q}`),
+      grab('categories', `${base}/categories`),
+      grab('members', `${base}/members`),
+    ]);
+    return { dashboard, transactions, bills, plans, goals, budgets, settlement, categories, members, warnings };
+  });
+  const names = namedMap(pulled.categories, 'slug', 'name');
+  const people = namedMap(pulled.members, 'id', 'displayName');
+  const cash = cashOf(pulled.dashboard, grant.baseCurrency);
+  const books = settlementOf(pulled.settlement, cash.currency);
+  const snapshot: Omit<FamilyFinanceSnapshot, 'summary'> = {
+    month,
+    familyId,
+    familyName: grant.familyName,
+    accountLabel: grant.accountLabel,
+    currency: cash.currency || grant.baseCurrency,
+    cash,
+    categories: categoriesOf(pulled.dashboard, names, cash.currency || grant.baseCurrency),
+    bills: billsOf(pulled.bills, names),
+    plans: plansOf(pulled.plans),
+    budgets: budgetsOf(pulled.budgets, names),
+    goals: goalsOf(pulled.goals),
+    settlement: books.positions,
+    transfers: books.transfers,
+    transactions: transactionsOf(pulled.transactions, names, people),
+    warnings: pulled.warnings,
+  };
+  return { ...snapshot, summary: snapshotSummary(snapshot) };
 }

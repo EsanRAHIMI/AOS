@@ -357,7 +357,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     if (!el || !stage) return;
     const onWheelNative = (e: WheelEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest('.jboard-panel')) return; // let the panel scroll
+      if (target?.closest('.jboard-panel, .hp-dock')) return; // let the panel and the notice list scroll
       e.preventDefault();
       e.stopPropagation(); // the singularity must not zoom itself
       const rect = el.getBoundingClientRect();
@@ -375,7 +375,7 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
     const pts = pinchRef.current;
     const onDownCap = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest('.jboard-hud, .jboard-panel')) return;
+      if (target?.closest('.jboard-hud, .jboard-panel, .hp-dock')) return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
@@ -756,7 +756,11 @@ export default function JarvisBoard({ onOriginChange, dimmed = false }: JarvisBo
             >
               <header className="jboard-card-h">
                 <span className="jboard-card-dot" style={{ background: rgba(card.accent, 0.55 + card.activity * 0.45) }} />
-                <span className="jboard-card-title" {...bidiProps(card.title)}>{card.title}</span>
+                {card.href ? (
+                  <a className="jboard-card-title" href={card.href} onClick={(e) => e.stopPropagation()} {...bidiProps(card.title)}>{card.title}</a>
+                ) : (
+                  <span className="jboard-card-title" {...bidiProps(card.title)}>{card.title}</span>
+                )}
                 {(pinned || card.activity > 0.6) && (
                   <span className="jboard-card-live" style={{ color: rgba(card.accent, 0.9) }}>
                     {pinned ? '📌' : '●'}

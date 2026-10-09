@@ -7,6 +7,7 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { SESSION_COOKIE, verifySession, sessionSecret } from './session';
 import { buildAuthHeaders } from './gateway-session';
+import type { FamilyFinanceSnapshot } from './familyFinanceSnapshot';
 
 const API = process.env.FACTORY_API_URL ?? 'http://localhost:4101';
 const ADMIN = process.env.FACTORY_ADMIN_TOKEN ?? '';
@@ -411,7 +412,7 @@ export const gateway = {
   familyFinanceSelect: (familyId: string) => callStrict<{ id: string; name: string }>(
     '/v1/finance/family/select', { method: 'POST', body: JSON.stringify({ familyId }) }),
   familyFinanceDisconnect: () => callStrict<{ removed: boolean }>('/v1/finance/family/disconnect', { method: 'POST', body: '{}' }),
-  familyFinanceSnapshot: (month?: string) => call<{ month: string; familyId: string; familyName: string; summary: string }>(
+  familyFinanceSnapshot: (month?: string) => call<FamilyFinanceSnapshot>(
     `/v1/finance/family/snapshot${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   calendarStatus: () => call<{
     setup: { oauthConfigured: boolean; oauthMissing: string[]; vaultConfigured: boolean; vaultReason: string };

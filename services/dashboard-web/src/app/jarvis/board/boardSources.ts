@@ -38,8 +38,18 @@ const ACCENT = {
 function n(v: unknown): number { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
 function s(v: unknown): string { return typeof v === 'string' ? v : ''; }
 
+function moneyLabel(minor: number, currency: string): string {
+  const exp = currency === 'JPY' || currency === 'IRR' ? 0 : currency === 'OMR' || currency === 'BHD' || currency === 'KWD' ? 3 : 2;
+  const sign = minor < 0 ? '-' : '';
+  const abs = Math.abs(Math.trunc(minor));
+  if (!currency) return `${sign}${abs}`;
+  if (exp === 0) return `${sign}${abs} ${currency}`;
+  const scale = 10 ** exp;
+  return `${sign}${Math.floor(abs / scale)}.${String(abs % scale).padStart(exp, '0')} ${currency}`;
+}
+
 export async function loadBoardGraphAction(): Promise<BoardGraph> {
-  const [loopCycles, loopInbox, cinEntities, cinChain, memories, research, services, universe, meCtx] =
+  const [loopCycles, loopInbox, cinEntities, cinChain, memories, research, services, universe, meCtx, familyStatus, familySnap] =
     await Promise.all([
       gateway.loopCycles(12).catch(() => null),
       gateway.loopInbox().catch(() => null),
@@ -50,6 +60,8 @@ export async function loadBoardGraphAction(): Promise<BoardGraph> {
       gateway.services().catch(() => null),
       gateway.universeDetail().catch(() => null),
       gateway.meContext().catch(() => null),
+      gateway.familyFinanceStatus().catch(() => null),
+      gateway.familyFinanceSnapshot().catch(() => null),
     ]);
 
   const cards: BoardCard[] = [];
@@ -84,21 +96,38 @@ export async function loadBoardGraphAction(): Promise<BoardGraph> {
   // rings by definition — they are the most "mine".
   if (universe) {
     const fin = universe.finance;
+    const books = familyStatus?.connected && familyStatus.familyId && familySnap ? familySnap : null;
+    const currency = books?.currency || books?.cash.currency || '';
     add({
       id: 'finance', sourceId: 'finance', scope: 'personal',
-      title: 'مالی', subtitle: 'درآمد، تعهدات و جریان نقدی',
-      metrics: fin?.aggregate?.hasAmounts
+      title: 'مالی',
+      subtitle: books
+        ? `${books.familyName || 'خانوار'} · ${books.month}`
+        : familyStatus?.connected
+          ? 'Family Finance وصل است'
+          : 'درآمد، تعهدات و جریان نقدی',
+      metrics: books
         ? [
-          { k: 'in', v: String(n(fin.aggregate.monthlyIn)) },
-          { k: 'out', v: String(n(fin.aggregate.monthlyOut)) },
-          { k: 'net', v: String(n(fin.aggregate.net)), heat: n(fin.aggregate.net) < 0 ? 0.9 : 0.2 },
+          { k: 'درآمد', v: moneyLabel(books.cash.incomeMinor, currency) },
+          { k: 'هزینه', v: moneyLabel(books.cash.expenseMinor, currency) },
+          { k: 'خالص', v: moneyLabel(books.cash.netCashFlowMinor, currency), heat: books.cash.netCashFlowMinor < 0 ? 0.9 : 0.2 },
         ]
-        : [{ k: 'items', v: String(fin?.items?.length ?? 0) }],
-      activity: Math.min(1, (fin?.items?.length ?? 0) / 8),
+        : fin?.aggregate?.hasAmounts
+          ? [
+            { k: 'in', v: String(n(fin.aggregate.monthlyIn)) },
+            { k: 'out', v: String(n(fin.aggregate.monthlyOut)) },
+            { k: 'net', v: String(n(fin.aggregate.net)), heat: n(fin.aggregate.net) < 0 ? 0.9 : 0.2 },
+          ]
+          : (fin?.items?.length ?? 0) > 0
+            ? [{ k: 'items', v: String(fin.items.length) }]
+            : [],
+      activity: books ? 0.8 : Math.min(1, (fin?.items?.length ?? 0) / 8),
       updatedAt: universe.generatedAt ?? null, href: '/finance', accent: ACCENT.finance,
-      emptyHint: 'هنوز رکورد مالی ثبت نشده — از /finance اضافه کنید',
+      emptyHint: familyStatus?.connected && !familyStatus.familyId
+        ? 'خانوار را در /finance انتخاب کنید'
+        : 'دفتر Family Finance از /finance وصل می‌شود',
     });
-    link('finance', 'self', 'data', 0.9, Math.min(1, (fin?.items?.length ?? 0) / 10), 'cash-flow');
+    link('finance', 'self', 'data', 0.9, books ? 0.7 : Math.min(1, (fin?.items?.length ?? 0) / 10), 'cash-flow');
 
     const ventures = universe.ventures?.projects ?? [];
     add({

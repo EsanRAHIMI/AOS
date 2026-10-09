@@ -28,6 +28,7 @@ import { useAmbientVoice } from '@/lib/useAmbientVoice';
 import { useEventAlerts } from '@/lib/useEventAlerts';
 import { archiveAlertAction } from '@/app/calendar/announce-action';
 import { submit as submitToJarvis } from '@/lib/jarvisEngine';
+import { onJarvisOpen, onJarvisToggle } from '@/lib/jarvisDock';
 
 const BRIEFING_REFRESH_MS = 300_000;
 
@@ -79,6 +80,9 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
   }, []);
 
   /* ⌘K opens it from anywhere; Esc closes without losing the conversation. */
+  useEffect(() => onJarvisOpen(() => setOpen(true)), []);
+  useEffect(() => onJarvisToggle(() => setOpen((v) => !v)), []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -128,13 +132,6 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
     },
   });
 
-  const nextLabel = (() => {
-    if (!alerts.enabled || !alerts.next?.start) return '';
-    const mins = Math.round((new Date(alerts.next.start).getTime() - Date.now()) / 60_000);
-    if (mins < 0 || mins > 180) return '';
-    return `${alerts.next.summary || 'رویداد'} — ${mins} دقیقهٔ دیگر`;
-  })();
-
   return (
     <>
       {/* A click-catcher rather than a modal backdrop: the page below stays
@@ -164,9 +161,9 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
         </div>
       )}
 
-      <div className={`jrud${open ? ' jrud--open' : ''}`} dir="rtl">
+      {open && (
+      <div className="jrud jrud--open" dir="rtl">
         <div className="jrud-glass" ref={panelRef}>
-          {open && (
             <header className="jrud-head">
               <span className={`jrud-dot jrud-dot--${state}`} />
               <strong>جارویس</strong>
@@ -176,39 +173,18 @@ function RudderBody({ role, pathname }: { role: string; pathname: string }) {
               <AmbientToggle ambient={ambient} />
               <button type="button" className="jrud-x" onClick={() => setOpen(false)} aria-label="بستن">×</button>
             </header>
-          )}
-
-          {open ? (
             <JarvisConversation
               variant="rudder"
               autoFocus
               onState={setState}
-              /* The page is real context: "این را باز کن" means something
-               * different on /finance than on /loop. */
               contextNote={`current page: ${pathname}`}
               emptyHint={priority
                 ? `اولویت امروز: ${priority}`
                 : 'بپرسید یا دستور بدهید — به همهٔ سرویس‌ها، حافظه، مأموریت‌ها، هویت و حلقهٔ زنده دسترسی دارم.'}
             />
-          ) : (
-            <button type="button" className="jrud-bar" onClick={() => setOpen(true)} title="جارویس (⌘K)">
-              <span className={`jrud-dot jrud-dot--${state}`} />
-              <span className="jrud-bar-text" {...bidiProps(nextLabel || priority || 'جارویس')}>
-                {nextLabel || priority || 'جارویس — بپرسید، بگویید یا دستور بدهید'}
-              </span>
-              {alerts.enabled && <span className="jrud-watch" title="مراقب تقویم" aria-hidden />}
-              {ambient.hearing && (
-                <span
-                  className={`jrud-ear${ambient.awake ? ' jrud-ear--awake' : ''}`}
-                  title={ambient.awake ? 'در حال شنیدن دستور' : 'منتظر کلمهٔ «جارویس»'}
-                  aria-hidden
-                />
-              )}
-              <kbd className="jrud-kbd" dir="ltr">⌘K</kbd>
-            </button>
-          )}
         </div>
       </div>
+      )}
     </>
   );
 }
