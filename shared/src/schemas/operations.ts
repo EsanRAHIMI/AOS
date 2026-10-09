@@ -74,7 +74,10 @@ export const MonitorRunSchema = z.object({
   healthyCount: z.number(),
   unhealthyCount: z.number(),
   incidentIds: z.array(z.string()).default([]),
+  /** ISO string. Not a TTL field — MongoDB only expires BSON Dates. */
   createdAt: IsoDate,
+  /** BSON Date written at insert. The monitor_runs TTL index keys this field. */
+  ttlAt: z.date(),
 });
 export type MonitorRun = z.infer<typeof MonitorRunSchema>;
 

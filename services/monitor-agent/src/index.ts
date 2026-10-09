@@ -21,6 +21,8 @@ import {
   type RepairTask,
   type MonitorRun,
   type EvidenceRecord,
+  MONITOR_RUN_TTL_SECONDS,
+  MONITOR_RUN_TTL_INDEX_NAME,
 } from '@factory/shared';
 import { createFactoryService, type TaskHandler, type ServiceContext } from '@factory/service-kit';
 import { manifest } from './factory/manifest.js';
@@ -70,6 +72,10 @@ const handleTask: TaskHandler = async (req, ctx: ServiceContext) => {
 
   // Default / monitor_scan
   const run = await runMonitorScan({ internalToken: env.FACTORY_INTERNAL_TOKEN, registryUrl: env.SERVICE_REGISTRY_URL, publish });
+  if (!run) {
+    await finishAgentRun(runId, { status: 'succeeded', summary: 'Scan skipped: previous scan still running' });
+    return { taskId, accepted: true, agentRunId: runId, skipped: true };
+  }
   await finishAgentRun(runId, { status: 'succeeded', summary: `Scan: ${run.healthyCount} healthy / ${run.unhealthyCount} unhealthy` });
   return { taskId, accepted: true, agentRunId: runId, monitorRunId: run.monitorRunId, healthy: run.healthyCount, unhealthy: run.unhealthyCount };
 };
@@ -80,6 +86,10 @@ async function main(): Promise<void> {
   await collection<Incident>(COLLECTIONS.INCIDENTS).createIndex({ incidentId: 1 }, { unique: true });
   await collection<RepairTask>(COLLECTIONS.REPAIR_TASKS).createIndex({ repairTaskId: 1 }, { unique: true });
   await collection<MonitorRun>(COLLECTIONS.MONITOR_RUNS).createIndex({ createdAt: -1 });
+  await collection<MonitorRun>(COLLECTIONS.MONITOR_RUNS).createIndex(
+    { ttlAt: 1 },
+    { name: MONITOR_RUN_TTL_INDEX_NAME, expireAfterSeconds: MONITOR_RUN_TTL_SECONDS },
+  );
   await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).createIndex({ evidenceId: 1 }, { unique: true });
   await collection(COLLECTIONS.REPAIR_DIAGNOSES).createIndex({ diagnosisId: 1 }, { unique: true });
   await collection(COLLECTIONS.REPAIR_PLANS).createIndex({ repairPlanId: 1 }, { unique: true });
@@ -97,6 +107,7 @@ async function main(): Promise<void> {
   await service.listen();
 
   // Background health scan loop (disabled when MONITOR_INTERVAL_MS=0).
+  // runMonitorScan refuses re-entry, so a slow scan cannot overlap the next tick.
   if (INTERVAL > 0 && env.SERVICE_REGISTRY_URL) {
     setInterval(() => {
       void runMonitorScan({ internalToken: env.FACTORY_INTERNAL_TOKEN, registryUrl: env.SERVICE_REGISTRY_URL, publish: (e) => service.ctx.publisher.publish(e) }).catch((err) =>

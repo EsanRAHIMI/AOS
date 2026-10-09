@@ -22,8 +22,11 @@
  *     duplicate-key error and treats it as the truth it is.
  *
  * TTL is applied ONLY to pure telemetry that can be regenerated (heartbeat
- * runs). Nothing that is a record of truth — the ledger, documents, entities,
- * claims, cycles, memories — is ever expired automatically.
+ * runs, monitor health scans). Nothing that is a record of truth — the ledger,
+ * documents, entities, claims, cycles, memories, the events collection — is
+ * ever expired automatically. monitor_runs expires on `ttlAt` (a BSON Date).
+ * `createdAt` on that collection is an ISO string; a TTL index on it never
+ * deletes.
  *
  * `ensureIndexes()` is idempotent and safe to run on every boot: Mongo ignores
  * a createIndex for an index that already exists with the same spec.
@@ -42,6 +45,11 @@ export interface IndexPlanEntry {
 
 /** Days of heartbeat telemetry to keep. Runs are diagnostics, not evidence. */
 export const HEARTBEAT_RUN_TTL_DAYS = 30;
+
+/** Seconds of monitor_runs to keep. Keyed on ttlAt, never on createdAt. */
+export const MONITOR_RUN_TTL_SECONDS = 86400;
+
+export const MONITOR_RUN_TTL_INDEX_NAME = 'monitor_run_ttl';
 
 export const INDEX_PLAN: IndexPlanEntry[] = [
   /* ------------------------------- CIN core ------------------------------ */
@@ -164,6 +172,14 @@ export const INDEX_PLAN: IndexPlanEntry[] = [
     keys: { at: 1 },
     options: { name: 'heartbeat_ttl', expireAfterSeconds: HEARTBEAT_RUN_TTL_DAYS * 86400 },
     reason: 'TTL: pulse telemetry is diagnostics, not evidence. Without it this collection grows every few minutes forever. Nothing that is a record of truth gets a TTL',
+  },
+
+  /* --------------------------- monitor scans ------------------------------ */
+  {
+    collection: COLLECTIONS.MONITOR_RUNS,
+    keys: { ttlAt: 1 },
+    options: { name: MONITOR_RUN_TTL_INDEX_NAME, expireAfterSeconds: MONITOR_RUN_TTL_SECONDS },
+    reason: 'TTL: health-scan telemetry. Indexed on ttlAt (BSON Date). createdAt is an ISO string and a TTL index on it never deletes. Incidents and repair tasks live in other collections and are not expired here.',
   },
 
   /* --------------------------- K2 agent + memory -------------------------- */

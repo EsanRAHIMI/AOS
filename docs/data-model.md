@@ -210,7 +210,8 @@ createdAt, updatedAt`.
 
 ### MonitorRun / Incident / RepairTask
 MonitorRun: `monitorRunId, scope, services[ServiceHealth], healthyCount, unhealthyCount,
-incidentIds[], createdAt`. Incident: `incidentId, serviceName, capabilityId, taskId, title,
+incidentIds[], createdAt` (ISO string), `ttlAt` (BSON Date, 24h TTL index
+`monitor_run_ttl`). Incident: `incidentId, serviceName, capabilityId, taskId, title,
 detail, severity, status, source (activation|monitor), evidenceIds[], repairTaskId, …`.
 RepairTask: `repairTaskId, incidentId, serviceName, diagnosis, proposedFix,
 recommendedAction (redeploy|fix_env|rebuild|rescaffold|manual), requiresApproval, status, …`.
@@ -417,6 +418,7 @@ Two kinds of index, and the difference matters:
 | `cin_relations {from,to,type}` unique *partial* `status:'active'` | One active edge per relationship; superseded rows stay for history |
 | `cin_keys` active-key partial unique | One active signing key per entity |
 | `heartbeat_runs {at}` TTL | Pulse history self-expires instead of growing forever |
+| `monitor_runs {ttlAt}` TTL 24h | Health-scan telemetry. `createdAt` stays an ISO string; MongoDB only expires a BSON Date |
 
 Rules for anyone (human or agent) adding storage:
 

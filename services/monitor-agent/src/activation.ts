@@ -152,8 +152,39 @@ export interface ScanArgs {
   publish: Publish;
 }
 
-/** One health scan across all registered services. */
-export async function runMonitorScan(args: ScanArgs): Promise<MonitorRun> {
+/** monitor.run events older than this are deleted. Other event types stay. */
+export const MONITOR_RUN_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Delete only `monitor.run` events whose ISO createdAt is older than 24 hours.
+ * The events collection has no TTL index — task and approval history stays.
+ */
+export async function deleteExpiredMonitorRunEvents(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - MONITOR_RUN_EVENT_RETENTION_MS).toISOString();
+  const result = await collection(COLLECTIONS.EVENTS).deleteMany({
+    type: EVENT_TYPES.MONITOR_RUN,
+    createdAt: { $lt: cutoff },
+  });
+  return result.deletedCount;
+}
+
+let monitorScanInFlight = false;
+
+/**
+ * One health scan across all registered services.
+ * A second call while one scan is still running returns null and writes nothing.
+ */
+export async function runMonitorScan(args: ScanArgs): Promise<MonitorRun | null> {
+  if (monitorScanInFlight) return null;
+  monitorScanInFlight = true;
+  try {
+    return await executeMonitorScan(args);
+  } finally {
+    monitorScanInFlight = false;
+  }
+}
+
+async function executeMonitorScan(args: ScanArgs): Promise<MonitorRun> {
   let services: Array<{ serviceId: string; domain: string }> = [];
   try {
     const res = await fetch(`${args.registryUrl}/services`, { headers: { [INTERNAL_TOKEN_HEADER]: args.internalToken } });
@@ -199,8 +230,10 @@ export async function runMonitorScan(args: ScanArgs): Promise<MonitorRun> {
     unhealthyCount: healths.filter((h) => !h.healthy).length,
     incidentIds,
     createdAt: nowIso(),
+    ttlAt: new Date(),
   };
   await collection<MonitorRun>(COLLECTIONS.MONITOR_RUNS).insertOne(run);
   await args.publish({ type: EVENT_TYPES.MONITOR_RUN, taskId: null, payload: { monitorRunId: run.monitorRunId, healthy: run.healthyCount, unhealthy: run.unhealthyCount, message: `Monitor scan: ${run.healthyCount} healthy, ${run.unhealthyCount} unhealthy` } });
+  await deleteExpiredMonitorRunEvents();
   return run;
 }
