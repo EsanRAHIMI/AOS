@@ -3,7 +3,7 @@
  * pure; this module is the single write path (traces, cost, evidence, reports, events).
  */
 import type { Collection } from 'mongodb';
-import { collection } from '../db/index.js';
+import { globalCollection } from '../db/index.js';
 import { COLLECTIONS, EVENT_TYPES } from '../constants/index.js';
 import { genId, nowIso } from '../utils/index.js';
 import { startAgentRun, finishAgentRun } from '../agentrun/index.js';
@@ -19,8 +19,8 @@ import { runQa, runReport, runResearch, runReview } from './index.js';
 type Publish = EventPublisher['publish'];
 
 async function persistTrace(trace: LlmTrace): Promise<void> {
-  await collection<LlmTrace>(COLLECTIONS.LLM_TRACES).insertOne(trace);
-  await collection<LlmCostRecord>(COLLECTIONS.LLM_COST_RECORDS).insertOne(buildLlmCostRecord(trace));
+  await globalCollection<LlmTrace>(COLLECTIONS.LLM_TRACES).insertOne(trace);
+  await globalCollection<LlmCostRecord>(COLLECTIONS.LLM_COST_RECORDS).insertOne(buildLlmCostRecord(trace));
 }
 
 export async function executeResearch(args: {
@@ -71,10 +71,10 @@ export async function executeResearch(args: {
   });
   report.evidenceId = evidence.evidenceId;
 
-  await collection<ResearchRun>(COLLECTIONS.RESEARCH_RUNS).insertOne(run);
-  if (sources.length) await collection<ResearchSource>(COLLECTIONS.RESEARCH_SOURCES).insertMany(sources);
-  await collection<ResearchReport>(COLLECTIONS.RESEARCH_REPORTS).insertOne(report);
-  await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
+  await globalCollection<ResearchRun>(COLLECTIONS.RESEARCH_RUNS).insertOne(run);
+  if (sources.length) await globalCollection<ResearchSource>(COLLECTIONS.RESEARCH_SOURCES).insertMany(sources);
+  await globalCollection<ResearchReport>(COLLECTIONS.RESEARCH_REPORTS).insertOne(report);
+  await globalCollection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
 
   await finishAgentRun(runId, { status: 'succeeded', summary: `Research complete (${report.mode}, sources: ${report.sourceMode}, synthesis: ${report.synthesisMode}); ${sources.length} sources.` });
   await args.publish({
@@ -139,8 +139,8 @@ export async function executeReview(args: {
     data: { reviewId: report.reviewId, passed: report.passed, issueCount: report.issues.length, mode: report.mode },
   });
   report.evidenceIds = [...report.evidenceIds, evidence.evidenceId];
-  await collection<ReviewReport>(COLLECTIONS.REVIEW_REPORTS).insertOne(report);
-  await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
+  await globalCollection<ReviewReport>(COLLECTIONS.REVIEW_REPORTS).insertOne(report);
+  await globalCollection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
 
   await finishAgentRun(runId, { status: 'succeeded', summary: `Review ${report.passed ? 'passed' : 'failed'} (${report.mode}).` });
   await args.publish({
@@ -201,8 +201,8 @@ export async function executeQa(args: {
     data: { qaId: report.qaId, passed: report.passed, mode: report.mode },
   });
   report.evidenceIds = [...report.evidenceIds, evidence.evidenceId];
-  await collection<QaReport>(COLLECTIONS.QA_REPORTS).insertOne(report);
-  await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
+  await globalCollection<QaReport>(COLLECTIONS.QA_REPORTS).insertOne(report);
+  await globalCollection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
 
   await finishAgentRun(runId, { status: 'succeeded', summary: `QA ${report.passed ? 'passed' : 'failed'} (${report.mode}).` });
   await args.publish({
@@ -265,8 +265,8 @@ export async function executeReport(args: {
     data: { reportId: report.reportId, mode: report.mode },
   });
   report.evidenceIds = [...report.evidenceIds, evidence.evidenceId];
-  await collection<IntelligenceReport>(COLLECTIONS.INTELLIGENCE_REPORTS).insertOne(report);
-  await collection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
+  await globalCollection<IntelligenceReport>(COLLECTIONS.INTELLIGENCE_REPORTS).insertOne(report);
+  await globalCollection<EvidenceRecord>(COLLECTIONS.EVIDENCE_RECORDS).insertOne(evidence);
 
   await finishAgentRun(runId, { status: 'succeeded', summary: `Report ready (${report.mode}).` });
   await args.publish({
@@ -311,7 +311,7 @@ export async function recordTaskDocumentation(args: {
   docs?: Collection<TaskDoc>;
   publish: Publish;
 }): Promise<{ taskId: string; accepted: true; updated: string[]; versions: number[] }> {
-  const docs = args.docs ?? collection<TaskDoc>(COLLECTIONS.DOCUMENTS);
+  const docs = args.docs ?? globalCollection<TaskDoc>(COLLECTIONS.DOCUMENTS);
   const v1 = await appendLog(docs, 'phase-log', 'Phase Log', `Task ${args.taskId}: ${args.summary}`);
   const v2 = await appendLog(
     docs,
